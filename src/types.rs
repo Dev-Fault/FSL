@@ -15,6 +15,43 @@ pub enum FslType {
     None,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    Text(String),
+    Bool(bool),
+    List(Vec<Value>),
+    Var(String),
+    Command(Arc<Command>),
+    None,
+}
+
+pub struct VarMap(HashMap<String, Value>);
+
+#[derive(Debug, Clone)]
+pub enum ArgRange {
+    Index(usize),
+    Range(Range<usize>),
+    Infinite,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArgRule {
+    range: ArgRange,
+    fsl_types: Vec<FslType>,
+}
+
+type CommandFn = dyn Fn(Vec<Value>, &VarMap) -> Result<Value, Error> + Send + Sync;
+type Executor = Arc<CommandFn>;
+
+pub struct Command {
+    label: String,
+    arg_rules: Vec<ArgRule>,
+    args: Vec<Value>,
+    executor: Executor,
+}
+
 impl FslType {
     fn as_str(&self) -> &str {
         match self {
@@ -30,33 +67,10 @@ impl FslType {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum ArgRange {
-    Index(usize),
-    Range(Range<usize>),
-    Infinite,
-}
-
-#[derive(Debug, Clone)]
-pub struct ArgRule {
-    range: ArgRange,
-    fsl_types: Vec<FslType>,
-}
-
 impl ArgRule {
     pub fn new(range: ArgRange, fsl_types: Vec<FslType>) -> Self {
         Self { range, fsl_types }
     }
-}
-
-type CommandFn = dyn Fn(Vec<Value>, &VarMap) -> Result<Value, Error> + Send + Sync;
-type Executor = Arc<CommandFn>;
-
-pub struct Command {
-    label: String,
-    arg_rules: Vec<ArgRule>,
-    args: Vec<Value>,
-    executor: Executor,
 }
 
 impl Command {
@@ -185,20 +199,6 @@ impl Clone for Command {
         }
     }
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    Int(i64),
-    Float(f64),
-    Text(String),
-    Bool(bool),
-    List(Vec<Value>),
-    Var(String),
-    Command(Arc<Command>),
-    None,
-}
-
-pub struct VarMap(HashMap<String, Value>);
 
 impl VarMap {
     pub fn new() -> Self {

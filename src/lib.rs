@@ -44,13 +44,13 @@ struct FslInterpreter {
 impl FslInterpreter {
     pub fn new() -> Self {
         Self {
-            std_commands: Self::construct_std_lib(),
+            std_commands: Self::construct_std_commands(),
             custom_commands: CommandMap::new(),
             var_map: VarMap::new(),
         }
     }
 
-    fn construct_std_lib() -> CommandMap {
+    fn construct_std_commands() -> CommandMap {
         let mut lib = HashMap::new();
 
         let math_rules = vec![
@@ -84,7 +84,7 @@ impl FslInterpreter {
         lib
     }
 
-    pub fn add(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    fn add(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         if values.contains_float() {
             let mut sum: f64 = 0.0;
             for value in values {
@@ -100,7 +100,7 @@ impl FslInterpreter {
         }
     }
 
-    pub fn sub(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    fn sub(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         if values.contains_float() {
             let mut diff = values[0].as_float(vars)?;
             for value in &values[1..values.len()] {
@@ -116,7 +116,7 @@ impl FslInterpreter {
         }
     }
 
-    pub fn mul(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    fn mul(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         if values.contains_float() {
             let mut product = values[0].as_float(vars)?;
             for value in &values[1..values.len()] {
@@ -132,7 +132,7 @@ impl FslInterpreter {
         }
     }
 
-    pub fn div(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    fn div(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         if values.contains_float() {
             let mut quotient = values[0].as_float(vars)?;
             for value in &values[1..values.len()] {
@@ -156,7 +156,7 @@ impl FslInterpreter {
         }
     }
 
-    pub fn modulus(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    fn modulus(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         let mut remainder = values[0].as_int(vars)?;
         for value in &values[1..values.len()] {
             let value = value.as_int(vars)?;
@@ -168,7 +168,7 @@ impl FslInterpreter {
         Ok(Value::Int(remainder))
     }
 
-    pub fn repeat(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    fn repeat(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         let repetitions = values[0].as_int(vars)?;
         let command = values[1].as_command()?;
         let mut final_value = Value::None;
@@ -179,7 +179,7 @@ impl FslInterpreter {
         Ok(final_value)
     }
 
-    pub fn store(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    fn store(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         let mut values = values.clone();
         let var = values.pop().unwrap();
 
@@ -196,42 +196,42 @@ mod tests {
         &[FslType::Int, FslType::Float, FslType::Command, FslType::Var];
 
     fn get_add() -> Command {
-        FslInterpreter::construct_std_lib()
+        FslInterpreter::construct_std_commands()
             .get(ADD_LABEL)
             .cloned()
             .unwrap()
     }
 
     fn get_sub() -> Command {
-        FslInterpreter::construct_std_lib()
+        FslInterpreter::construct_std_commands()
             .get(SUB_LABEL)
             .cloned()
             .unwrap()
     }
 
     fn get_mul() -> Command {
-        FslInterpreter::construct_std_lib()
+        FslInterpreter::construct_std_commands()
             .get(MUL_LABEL)
             .cloned()
             .unwrap()
     }
 
     fn get_div() -> Command {
-        FslInterpreter::construct_std_lib()
+        FslInterpreter::construct_std_commands()
             .get(DIV_LABEL)
             .cloned()
             .unwrap()
     }
 
     fn get_mod() -> Command {
-        FslInterpreter::construct_std_lib()
+        FslInterpreter::construct_std_commands()
             .get(MOD_LABEL)
             .cloned()
             .unwrap()
     }
 
     fn get_repeat() -> Command {
-        FslInterpreter::construct_std_lib()
+        FslInterpreter::construct_std_commands()
             .get("repeat")
             .cloned()
             .unwrap()
