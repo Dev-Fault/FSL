@@ -1,6 +1,8 @@
 use core::fmt;
 use std::{collections::HashMap, ops::Range, sync::Arc};
 
+use rand::random_range;
+
 use crate::types::{ArgRange, ArgRule, Command, Error, FslType, Value, VarMap};
 
 mod types;
@@ -36,6 +38,7 @@ impl ContainsFloat for Vec<Value> {
 pub type CommandMap = HashMap<String, Command>;
 
 struct FslInterpreter {
+    std_out: String,
     std_commands: CommandMap,
     custom_commands: CommandMap,
     var_map: VarMap,
@@ -44,6 +47,7 @@ struct FslInterpreter {
 impl FslInterpreter {
     pub fn new() -> Self {
         Self {
+            std_out: String::new(),
             std_commands: Self::construct_std_commands(),
             custom_commands: CommandMap::new(),
             var_map: VarMap::new(),
@@ -168,6 +172,57 @@ impl FslInterpreter {
         Ok(Value::Int(remainder))
     }
 
+    fn store(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        let mut values = values.clone();
+        let var = values.pop().unwrap();
+
+        todo!();
+    }
+
+    fn clone(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn print(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn eq(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn gt(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn lt(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn not(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok((!values[0].as_bool()?).into())
+    }
+
+    fn and(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok((values[0].as_bool()? && values[1].as_bool()?).into())
+    }
+
+    fn or(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok((values[0].as_bool()? || values[1].as_bool()?).into())
+    }
+
+    fn if_then(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn if_then_else(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn while_loop(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
     fn repeat(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
         let repetitions = values[0].as_int(vars)?;
         let command = values[1].as_command()?;
@@ -179,11 +234,102 @@ impl FslInterpreter {
         Ok(final_value)
     }
 
-    fn store(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        let mut values = values.clone();
-        let var = values.pop().unwrap();
+    fn index_of(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
 
-        todo!();
+    fn length_of(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn swap_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn insert_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn remove_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn replace_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        todo!()
+    }
+
+    fn starts_with(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok(values[0]
+            .as_text()?
+            .starts_with(values[1].as_text()?)
+            .into())
+    }
+
+    fn ends_with(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok(values[0].as_text()?.ends_with(values[1].as_text()?).into())
+    }
+
+    fn concat(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        let mut cat_string = String::new();
+
+        for value in values {
+            cat_string.push_str(value.as_text()?);
+        }
+
+        Ok(cat_string.into())
+    }
+
+    fn capitalize(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        let text = values[0].as_text()?;
+        if text.len() < 1 {
+            Ok("".into())
+        } else {
+            Ok(format!("{}{}", text[0..1].to_uppercase(), text[1..].to_uppercase()).into())
+        }
+    }
+
+    fn upper(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok(values[0].as_text()?.to_uppercase().into())
+    }
+
+    fn lower(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok(values[0].as_text()?.to_lowercase().into())
+    }
+
+    fn remove_whitespace(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok(values[0]
+            .as_text()?
+            .split_whitespace()
+            .collect::<String>()
+            .into())
+    }
+
+    fn nl(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok("\n".into())
+    }
+
+    fn random_range(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        if values.contains_float() {
+            let min = values[0].as_float(vars)?;
+            let max = values[1].as_float(vars)?;
+            if min >= max {
+                Err("min must be greater than max".to_string())
+            } else {
+                Ok(random_range(min..max).into())
+            }
+        } else {
+            let min = values[0].as_int(vars)?;
+            let max = values[1].as_int(vars)?;
+            if min >= max {
+                Err("min must be greater than max".to_string())
+            } else {
+                Ok(random_range(min..max).into())
+            }
+        }
+    }
+
+    fn random_entry(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+        Ok(values[random_range(0..values.len())].clone())
     }
 }
 
