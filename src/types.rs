@@ -261,7 +261,7 @@ impl Value {
         }
     }
 
-    pub fn as_str(&self) -> Result<&str, Error> {
+    pub fn as_text(&self) -> Result<&str, Error> {
         if let Value::Text(value) = self {
             Ok(value)
         } else {
@@ -298,6 +298,21 @@ impl Value {
             Ok(value.clone())
         } else {
             Err("tried to get label of non Var type".into())
+        }
+    }
+}
+
+impl ToString for Value {
+    fn to_string(&self) -> String {
+        match self {
+            Value::Int(value) => value.to_string(),
+            Value::Float(value) => value.to_string(),
+            Value::Text(value) => value.to_string(),
+            Value::Bool(value) => value.to_string(),
+            Value::List(values) => format!("{:?}", values),
+            Value::Var(value) => value.to_string(),
+            Value::Command(command) => command.label.clone(),
+            Value::None => "".to_string(),
         }
     }
 }
