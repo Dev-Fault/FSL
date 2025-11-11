@@ -1,43 +1,46 @@
-use core::fmt;
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
+use async_recursion::async_recursion;
 use rand::random_range;
 
-use crate::types::{ArgRange, ArgRule, Command, Error, FslType, Value, VarMap};
+use crate::types::{
+    ALL_VALUES, ArgPos, ArgRule, Command, Error, Executor, FslType, LOGIC_TYPES, NON_NONE_VALUES,
+    NUMERIC_TYPES, Value, VarMap,
+};
 
 mod types;
 
-pub const ADD_LABEL: &str = "add";
-pub const SUB_LABEL: &str = "sub";
-pub const MUL_LABEL: &str = "mul";
-pub const DIV_LABEL: &str = "div";
-pub const MOD_LABEL: &str = "mod";
-
-const NUMBER_TYPES: &[FslType] = &[FslType::Int, FslType::Float, FslType::Command, FslType::Var];
-
-trait ContainsFloat {
-    fn contains_float(&self) -> bool;
-}
-
-impl ContainsFloat for Vec<Value> {
-    fn contains_float(&self) -> bool {
-        for value in self {
-            match value {
-                Value::Float(_) => {
-                    return true;
-                }
-                _ => {
-                    continue;
+#[async_recursion]
+async fn contains_float(values: &Vec<Value>, vars: Arc<VarMap>) -> Result<bool, Error> {
+    for value in values {
+        match value {
+            Value::Float(_) => return Ok(true),
+            Value::Text(text) => {
+                if text.contains('.') {
+                    match text.parse::<f64>() {
+                        Ok(_) => return Ok(true),
+                        Err(_) => continue,
+                    }
                 }
             }
+            Value::Var(_) => {
+                return contains_float(&vec![value.get_var_value(vars.clone())?], vars).await;
+            }
+            Value::Command(command) => match command.execute(vars.clone()).await {
+                Ok(value) => return contains_float(&vec![value], vars.clone()).await,
+                Err(e) => return Err(e),
+            },
+            _ => {
+                continue;
+            }
         }
-        false
     }
+    Ok(false)
 }
 
 pub type CommandMap = HashMap<String, Command>;
 
-struct FslInterpreter {
+pub struct FslInterpreter {
     std_out: String,
     std_commands: CommandMap,
     custom_commands: CommandMap,
@@ -54,93 +57,349 @@ impl FslInterpreter {
         }
     }
 
+    fn add_std_command(
+        label: &str,
+        rules: Vec<ArgRule>,
+        executor: Executor,
+        command_map: &mut CommandMap,
+    ) {
+        command_map.insert(
+            label.to_string(),
+            Command::new(label, rules.clone(), executor),
+        );
+    }
+
     fn construct_std_commands() -> CommandMap {
         let mut lib = HashMap::new();
 
-        let math_rules = vec![
-            ArgRule::new(ArgRange::Infinite, NUMBER_TYPES.into()),
-            ArgRule::new(ArgRange::Index(0), NUMBER_TYPES.into()),
-            ArgRule::new(ArgRange::Index(1), NUMBER_TYPES.into()),
-        ];
-
-        let add = Command::new(ADD_LABEL, math_rules.clone(), Arc::new(Self::add));
-        lib.insert(add.get_label(), add);
-
-        let sub = Command::new(SUB_LABEL, math_rules.clone(), Arc::new(Self::sub));
-        lib.insert(sub.get_label(), sub);
-
-        let mul = Command::new(MUL_LABEL, math_rules.clone(), Arc::new(Self::mul));
-        lib.insert(mul.get_label(), mul);
-
-        let div = Command::new(DIV_LABEL, math_rules.clone(), Arc::new(Self::div));
-        lib.insert(div.get_label(), div);
-
-        let modulus = Command::new(MOD_LABEL, math_rules.clone(), Arc::new(Self::modulus));
-        lib.insert(modulus.get_label(), modulus);
-
-        let repeat_rules = vec![
-            ArgRule::new(ArgRange::Index(0), NUMBER_TYPES.into()),
-            ArgRule::new(ArgRange::Index(1), vec![FslType::Command]),
-        ];
-        let repeat = Command::new("repeat", repeat_rules, Arc::new(Self::repeat));
-        lib.insert(repeat.get_label(), repeat);
+        Self::add_std_command(
+            "add",
+            ArgRule::math_rules(),
+            Arc::new(|values, vars| Box::pin(Self::add(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "sub",
+            ArgRule::math_rules(),
+            Arc::new(|values, vars| Box::pin(Self::sub(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "mul",
+            ArgRule::math_rules(),
+            Arc::new(|values, vars| Box::pin(Self::mul(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "div",
+            ArgRule::math_rules(),
+            Arc::new(|values, vars| Box::pin(Self::div(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "mod",
+            ArgRule::math_rules(),
+            Arc::new(|values, vars| Box::pin(Self::modulus(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "store",
+            vec![
+                ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES.into()),
+                ArgRule::new(ArgPos::Index(1), vec![FslType::Var]),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::store(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "list",
+            vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
+            Arc::new(|values, vars| Box::pin(Self::list(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "clone",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Var])],
+            Arc::new(|values, vars| Box::pin(Self::clone(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "drop",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Var])],
+            Arc::new(|values, vars| Box::pin(Self::drop(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "print",
+            vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
+            Arc::new(|values, vars| Box::pin(Self::print(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "eq",
+            vec![ArgRule::new(ArgPos::Any, ALL_VALUES.into())],
+            Arc::new(|values, vars| Box::pin(Self::eq(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "gt",
+            vec![
+                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::gt(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "lt",
+            vec![
+                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::lt(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "not",
+            vec![ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into())],
+            Arc::new(|values, vars| Box::pin(Self::not(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "and",
+            vec![
+                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), LOGIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::and(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "or",
+            vec![
+                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), LOGIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::or(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "if_then",
+            vec![
+                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::if_then(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "if_then_else",
+            vec![
+                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
+                ArgRule::new(ArgPos::Index(2), vec![FslType::Command]),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::if_then_else(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "while",
+            vec![
+                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::while_loop(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "repeat",
+            vec![
+                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::repeat(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "index_of",
+            vec![
+                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::index_of(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "length_of",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::List])],
+            Arc::new(|values, vars| Box::pin(Self::length_of(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "swap_indexes",
+            vec![
+                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::swap_indexes(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "insert_at",
+            vec![
+                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::insert_at(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "remove_at",
+            vec![
+                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::remove_at(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "replace_at",
+            vec![
+                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::replace_at(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "starts_with",
+            vec![
+                ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
+                ArgRule::new(ArgPos::Index(1), vec![FslType::Text]),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::starts_with(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "ends_with",
+            vec![
+                ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
+                ArgRule::new(ArgPos::Index(1), vec![FslType::Text]),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::ends_with(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "concat",
+            vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
+            Arc::new(|values, vars| Box::pin(Self::concat(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "capitalize",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
+            Arc::new(|values, vars| Box::pin(Self::capitalize(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "upper",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
+            Arc::new(|values, vars| Box::pin(Self::upper(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "lower",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
+            Arc::new(|values, vars| Box::pin(Self::lower(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "remove_whitespace",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
+            Arc::new(|values, vars| Box::pin(Self::remove_whitespace(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "nl",
+            vec![ArgRule::no_args_rule()],
+            Arc::new(|values, vars| Box::pin(Self::nl(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "random_range",
+            vec![
+                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
+                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
+            ],
+            Arc::new(|values, vars| Box::pin(Self::random_range(values, vars))),
+            &mut lib,
+        );
+        Self::add_std_command(
+            "random_entry",
+            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::List])],
+            Arc::new(|values, vars| Box::pin(Self::random_entry(values, vars))),
+            &mut lib,
+        );
 
         lib
     }
 
-    fn add(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        if values.contains_float() {
+    async fn add(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        if contains_float(&values, vars.clone()).await? {
             let mut sum: f64 = 0.0;
-            for value in values {
-                sum = sum + value.as_float(vars)?;
+            for value in values.iter() {
+                sum = sum + value.as_float(vars.clone()).await?;
             }
             Ok(Value::Float(sum))
         } else {
             let mut sum: i64 = 0;
-            for value in values {
-                sum = sum + value.as_int(vars)?;
+            for value in values.iter() {
+                sum = sum + value.as_int(vars.clone()).await?;
             }
             Ok(Value::Int(sum))
         }
     }
 
-    fn sub(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        if values.contains_float() {
-            let mut diff = values[0].as_float(vars)?;
+    async fn sub(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        if contains_float(&values, vars.clone()).await? {
+            let mut diff = values[0].as_float(vars.clone()).await?;
             for value in &values[1..values.len()] {
-                diff = diff - value.as_float(vars)?;
+                diff = diff - value.as_float(vars.clone()).await?;
             }
             Ok(Value::Float(diff))
         } else {
-            let mut diff = values[0].as_int(vars)?;
+            let mut diff = values[0].as_int(vars.clone()).await?;
             for value in &values[1..values.len()] {
-                diff = diff - value.as_int(vars)?;
+                diff = diff - value.as_int(vars.clone()).await?;
             }
             Ok(Value::Int(diff))
         }
     }
 
-    fn mul(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        if values.contains_float() {
-            let mut product = values[0].as_float(vars)?;
+    async fn mul(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        if contains_float(&values, vars.clone()).await? {
+            let mut product = values[0].as_float(vars.clone()).await?;
             for value in &values[1..values.len()] {
-                product = product * value.as_float(vars)?;
+                product = product * value.as_float(vars.clone()).await?;
             }
             Ok(Value::Float(product))
         } else {
-            let mut product = values[0].as_int(vars)?;
+            let mut product = values[0].as_int(vars.clone()).await?;
             for value in &values[1..values.len()] {
-                product = product * value.as_int(vars)?;
+                product = product * value.as_int(vars.clone()).await?;
             }
             Ok(Value::Int(product))
         }
     }
 
-    fn div(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        if values.contains_float() {
-            let mut quotient = values[0].as_float(vars)?;
+    async fn div(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        if contains_float(&values, vars.clone()).await? {
+            let mut quotient = values[0].as_float(vars.clone()).await?;
             for value in &values[1..values.len()] {
-                let value = value.as_float(vars)?;
+                let value = value.as_float(vars.clone()).await?;
                 if value == 0.0 {
                     return Err("division by zero".to_string());
                 };
@@ -148,9 +407,9 @@ impl FslInterpreter {
             }
             Ok(Value::Float(quotient))
         } else {
-            let mut quotient = values[0].as_int(vars)?;
+            let mut quotient = values[0].as_int(vars.clone()).await?;
             for value in &values[1..values.len()] {
-                let value = value.as_int(vars)?;
+                let value = value.as_int(vars.clone()).await?;
                 if value == 0 {
                     return Err("division by zero".to_string());
                 };
@@ -160,10 +419,10 @@ impl FslInterpreter {
         }
     }
 
-    fn modulus(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        let mut remainder = values[0].as_int(vars)?;
+    async fn modulus(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        let mut remainder = values[0].as_int(vars.clone()).await?;
         for value in &values[1..values.len()] {
-            let value = value.as_int(vars)?;
+            let value = value.as_int(vars.clone()).await?;
             if value == 0 {
                 return Err("division by zero".to_string());
             };
@@ -172,115 +431,133 @@ impl FslInterpreter {
         Ok(Value::Int(remainder))
     }
 
-    fn store(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        let mut values = values.clone();
-        let var = values.pop().unwrap();
+    pub async fn store(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        vars.insert_value(&values[1].as_var()?, &values[0]);
 
         todo!();
     }
 
-    fn clone(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn list(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        todo!();
+    }
+
+    async fn clone(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn print(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn drop(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn eq(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn print(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn gt(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn eq(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn lt(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn gt(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn not(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        Ok((!values[0].as_bool()?).into())
-    }
-
-    fn and(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        Ok((values[0].as_bool()? && values[1].as_bool()?).into())
-    }
-
-    fn or(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        Ok((values[0].as_bool()? || values[1].as_bool()?).into())
-    }
-
-    fn if_then(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn lt(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn if_then_else(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn not(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        Ok((!values[0].as_bool(vars).await?).into())
+    }
+
+    async fn and(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        Ok(
+            (values[0].as_bool(vars.clone()).await? && values[1].as_bool(vars.clone()).await?)
+                .into(),
+        )
+    }
+
+    async fn or(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        Ok(
+            (values[0].as_bool(vars.clone()).await? || values[1].as_bool(vars.clone()).await?)
+                .into(),
+        )
+    }
+
+    async fn if_then(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn while_loop(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn if_then_else(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn repeat(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        let repetitions = values[0].as_int(vars)?;
+    async fn while_loop(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        todo!()
+    }
+
+    async fn repeat(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        let repetitions = values[0].as_int(vars.clone()).await?;
         let command = values[1].as_command()?;
         let mut final_value = Value::None;
         for i in 0..repetitions {
-            final_value = command.execute(vars)?;
+            final_value = command.execute(vars.clone()).await?;
         }
 
         Ok(final_value)
     }
 
-    fn index_of(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn index_of(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn length_of(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn length_of(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn swap_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn swap_indexes(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn insert_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn insert_at(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn remove_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn remove_at(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn replace_at(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn replace_at(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         todo!()
     }
 
-    fn starts_with(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn starts_with(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         Ok(values[0]
-            .as_text()?
-            .starts_with(values[1].as_text()?)
+            .as_text(vars.clone())
+            .await?
+            .starts_with(&values[1].as_text(vars.clone()).await?)
             .into())
     }
 
-    fn ends_with(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        Ok(values[0].as_text()?.ends_with(values[1].as_text()?).into())
+    async fn ends_with(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        Ok(values[0]
+            .as_text(vars.clone())
+            .await?
+            .ends_with(&values[1].as_text(vars.clone()).await?)
+            .into())
     }
 
-    fn concat(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn concat(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         let mut cat_string = String::new();
 
-        for value in values {
-            cat_string.push_str(value.as_text()?);
+        for value in values.iter() {
+            cat_string.push_str(&value.as_text(vars.clone()).await?);
         }
 
         Ok(cat_string.into())
     }
 
-    fn capitalize(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        let text = values[0].as_text()?;
+    async fn capitalize(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        let text = values[0].as_text(vars).await?;
         if text.len() < 1 {
             Ok("".into())
         } else {
@@ -288,47 +565,48 @@ impl FslInterpreter {
         }
     }
 
-    fn upper(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        Ok(values[0].as_text()?.to_uppercase().into())
+    async fn upper(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        Ok(values[0].as_text(vars).await?.to_uppercase().into())
     }
 
-    fn lower(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        Ok(values[0].as_text()?.to_lowercase().into())
+    async fn lower(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        Ok(values[0].as_text(vars).await?.to_lowercase().into())
     }
 
-    fn remove_whitespace(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn remove_whitespace(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         Ok(values[0]
-            .as_text()?
+            .as_text(vars)
+            .await?
             .split_whitespace()
             .collect::<String>()
             .into())
     }
 
-    fn nl(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn nl(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         Ok("\n".into())
     }
 
-    fn random_range(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
-        if values.contains_float() {
-            let min = values[0].as_float(vars)?;
-            let max = values[1].as_float(vars)?;
+    async fn random_range(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
+        if contains_float(&values, vars.clone()).await? {
+            let min = values[0].as_float(vars.clone()).await?;
+            let max = values[1].as_float(vars.clone()).await?;
             if min >= max {
                 Err("min must be greater than max".to_string())
             } else {
-                Ok(random_range(min..max).into())
+                Ok(random_range(min..=max).into())
             }
         } else {
-            let min = values[0].as_int(vars)?;
-            let max = values[1].as_int(vars)?;
+            let min = values[0].as_int(vars.clone()).await?;
+            let max = values[1].as_int(vars.clone()).await?;
             if min >= max {
                 Err("min must be greater than max".to_string())
             } else {
-                Ok(random_range(min..max).into())
+                Ok(random_range(min..=max).into())
             }
         }
     }
 
-    fn random_entry(values: Vec<Value>, vars: &VarMap) -> Result<Value, Error> {
+    async fn random_entry(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
         Ok(values[random_range(0..values.len())].clone())
     }
 }
@@ -337,69 +615,32 @@ impl FslInterpreter {
 mod tests {
 
     use super::*;
+    use tokio;
 
-    const NUMBER_TYPES: &[FslType] =
-        &[FslType::Int, FslType::Float, FslType::Command, FslType::Var];
-
-    fn get_add() -> Command {
+    fn get_command(label: &str) -> Command {
         FslInterpreter::construct_std_commands()
-            .get(ADD_LABEL)
+            .get(label)
             .cloned()
             .unwrap()
     }
 
-    fn get_sub() -> Command {
-        FslInterpreter::construct_std_commands()
-            .get(SUB_LABEL)
-            .cloned()
-            .unwrap()
-    }
-
-    fn get_mul() -> Command {
-        FslInterpreter::construct_std_commands()
-            .get(MUL_LABEL)
-            .cloned()
-            .unwrap()
-    }
-
-    fn get_div() -> Command {
-        FslInterpreter::construct_std_commands()
-            .get(DIV_LABEL)
-            .cloned()
-            .unwrap()
-    }
-
-    fn get_mod() -> Command {
-        FslInterpreter::construct_std_commands()
-            .get(MOD_LABEL)
-            .cloned()
-            .unwrap()
-    }
-
-    fn get_repeat() -> Command {
-        FslInterpreter::construct_std_commands()
-            .get("repeat")
-            .cloned()
-            .unwrap()
-    }
-
-    fn test_math(
+    async fn test_math(
         args: &Vec<Value>,
         command: &mut Command,
         expected_value: Value,
-        vars: Option<&VarMap>,
+        vars: Option<Arc<VarMap>>,
     ) {
         let args = args.clone();
-        let no_vars = VarMap::new();
-        let vars = match vars {
+        let mut no_vars = VarMap::new();
+        let mut vars = match vars {
             Some(vars) => vars,
-            None => &no_vars,
+            None => Arc::new(no_vars),
         };
         match expected_value {
             Value::None => {
                 // Should be error
                 command.set_args(args);
-                let output = command.execute(&vars);
+                let output = command.execute(vars).await;
                 dbg!(&output);
                 match output {
                     Ok(_) => panic!(),
@@ -410,222 +651,303 @@ mod tests {
             }
             _ => {
                 command.set_args(args);
-                let output = command.execute(&vars).unwrap();
+                let output = command.execute(vars).await.unwrap();
                 dbg!(&output);
                 assert!(output == expected_value);
             }
         }
     }
 
-    #[test]
-    fn math_two_ints() {
+    #[tokio::test]
+    async fn math_two_ints() {
         test_math(
             &vec![5.into(), 4.into()],
-            &mut get_add(),
+            &mut get_command("add"),
             Value::Int(9),
             None,
-        );
+        )
+        .await;
         test_math(
             &vec![5.into(), 4.into()],
-            &mut get_sub(),
+            &mut get_command("sub"),
             Value::Int(1),
             None,
-        );
+        )
+        .await;
         test_math(
             &vec![5.into(), 4.into()],
-            &mut get_mul(),
+            &mut get_command("mul"),
             Value::Int(20),
             None,
-        );
+        )
+        .await;
         test_math(
             &vec![5.into(), 4.into()],
-            &mut get_div(),
+            &mut get_command("div"),
             Value::Int(1),
             None,
-        );
+        )
+        .await;
         test_math(
             &vec![5.into(), 4.into()],
-            &mut get_mod(),
+            &mut get_command("mod"),
             Value::Int(1),
             None,
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn math_two_floats() {
+    #[tokio::test]
+    async fn math_two_floats() {
         test_math(
             &vec![5.0.into(), 4.0.into()],
-            &mut get_add(),
+            &mut get_command("add"),
             Value::Float(9.0),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.0.into()],
-            &mut get_sub(),
+            &mut get_command("sub"),
             Value::Float(1.0),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.0.into()],
-            &mut get_mul(),
+            &mut get_command("mul"),
             Value::Float(20.0),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.0.into()],
-            &mut get_div(),
+            &mut get_command("div"),
             Value::Float(1.25),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.0.into()],
-            &mut get_mod(),
+            &mut get_command("mod"),
             Value::Int(1),
             None,
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn math_int_and_float() {
+    #[tokio::test]
+    async fn math_int_and_float() {
         test_math(
             &vec![5.0.into(), 4.into()],
-            &mut get_add(),
+            &mut get_command("add"),
             Value::Float(9.0),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.into()],
-            &mut get_sub(),
+            &mut get_command("sub"),
             Value::Float(1.0),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.into()],
-            &mut get_mul(),
+            &mut get_command("mul"),
             Value::Float(20.0),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.into()],
-            &mut get_div(),
+            &mut get_command("div"),
             Value::Float(1.25),
             None,
-        );
+        )
+        .await;
 
         test_math(
             &vec![5.0.into(), 4.into()],
-            &mut get_mod(),
+            &mut get_command("mod"),
             Value::Int(1),
             None,
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn math_no_args() {
-        test_math(&vec![], &mut get_add(), Value::None, None);
-        test_math(&vec![], &mut get_sub(), Value::None, None);
-        test_math(&vec![], &mut get_mul(), Value::None, None);
-        test_math(&vec![], &mut get_div(), Value::None, None);
-        test_math(&vec![], &mut get_mod(), Value::None, None);
+    #[tokio::test]
+    async fn math_no_args() {
+        test_math(&vec![], &mut get_command("add"), Value::None, None).await;
+        test_math(&vec![], &mut get_command("sub"), Value::None, None).await;
+        test_math(&vec![], &mut get_command("mul"), Value::None, None).await;
+        test_math(&vec![], &mut get_command("div"), Value::None, None).await;
+        test_math(&vec![], &mut get_command("mod"), Value::None, None).await;
     }
 
-    #[test]
-    fn math_one_arg() {
-        test_math(&vec![1.into()], &mut get_add(), Value::None, None);
-        test_math(&vec![1.into()], &mut get_sub(), Value::None, None);
-        test_math(&vec![1.into()], &mut get_mul(), Value::None, None);
-        test_math(&vec![1.into()], &mut get_div(), Value::None, None);
-        test_math(&vec![1.into()], &mut get_mod(), Value::None, None);
+    #[tokio::test]
+    async fn math_one_arg() {
+        test_math(&vec![1.into()], &mut get_command("add"), Value::None, None).await;
+        test_math(&vec![1.into()], &mut get_command("sub"), Value::None, None).await;
+        test_math(&vec![1.into()], &mut get_command("mul"), Value::None, None).await;
+        test_math(&vec![1.into()], &mut get_command("div"), Value::None, None).await;
+        test_math(&vec![1.into()], &mut get_command("mod"), Value::None, None).await;
     }
 
-    #[test]
-    fn math_wrong_type() {
+    #[tokio::test]
+    async fn math_wrong_type() {
         test_math(
-            &vec!["1".into(), Value::Int(1)],
-            &mut get_add(),
+            &vec![true.into(), Value::Int(1)],
+            &mut get_command("add"),
             Value::None,
             None,
-        );
+        )
+        .await;
 
         test_math(
-            &vec!["1".into(), Value::Int(1)],
-            &mut get_sub(),
+            &vec![true.into(), Value::Int(1)],
+            &mut get_command("sub"),
             Value::None,
             None,
-        );
+        )
+        .await;
 
         test_math(
-            &vec!["1".into(), Value::Int(1)],
-            &mut get_mul(),
+            &vec![true.into(), Value::Int(1)],
+            &mut get_command("mul"),
             Value::None,
             None,
-        );
+        )
+        .await;
 
         test_math(
-            &vec!["1".into(), Value::Int(1)],
-            &mut get_div(),
+            &vec![true.into(), Value::Int(1)],
+            &mut get_command("div"),
             Value::None,
             None,
-        );
+        )
+        .await;
 
         test_math(
-            &vec!["1".into(), Value::Int(1)],
-            &mut get_mod(),
+            &vec![true.into(), Value::Int(1)],
+            &mut get_command("mod"),
             Value::None,
             None,
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn math_many_args() {
+    #[tokio::test]
+    async fn math_many_args() {
         let args = vec![5.0.into(), 3.into(), 3.into(), 100.into(), 57.into()];
-        test_math(&args, &mut get_add(), Value::Float(168.0), None);
-        test_math(&args, &mut get_sub(), Value::Float(-158.0), None);
-        test_math(&args, &mut get_mul(), Value::Float(256500.0), None);
+        test_math(&args, &mut get_command("add"), Value::Float(168.0), None).await;
+        test_math(&args, &mut get_command("sub"), Value::Float(-158.0), None).await;
+        test_math(&args, &mut get_command("mul"), Value::Float(256500.0), None).await;
         test_math(
             &args,
-            &mut get_div(),
+            &mut get_command("div"),
             Value::Float(9.746588693957115e-5),
             None,
-        );
-        test_math(&args, &mut get_mod(), Value::Int(2), None);
+        )
+        .await;
+        test_math(&args, &mut get_command("mod"), Value::Int(2), None).await;
     }
 
-    #[test]
-    fn math_vars() {
-        let mut vars = VarMap::new();
+    #[tokio::test]
+    async fn math_vars() {
+        let mut vars = Arc::new(VarMap::new());
         vars.insert_value("one", &1.into());
         let var = Value::Var("one".to_string());
         let args = vec![var.clone(), var.clone()];
-        test_math(&args, &mut get_add(), Value::Int(2), Some(&vars));
-        test_math(&args, &mut get_sub(), Value::Int(0), Some(&vars));
-        test_math(&args, &mut get_mul(), Value::Int(1), Some(&vars));
-        test_math(&args, &mut get_div(), Value::Int(1), Some(&vars));
-        test_math(&args, &mut get_mod(), Value::Int(0), Some(&vars));
+        test_math(
+            &args,
+            &mut get_command("add"),
+            Value::Int(2),
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("sub"),
+            Value::Int(0),
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("mul"),
+            Value::Int(1),
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("div"),
+            Value::Int(1),
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("mod"),
+            Value::Int(0),
+            Some(vars.clone()),
+        )
+        .await;
     }
 
-    #[test]
-    fn math_wrong_var() {
-        let mut vars = VarMap::new();
-        vars.insert_value("one", &"1".into());
+    #[tokio::test]
+    async fn math_wrong_var() {
+        let vars = Arc::new(VarMap::new());
+        vars.insert_value("one", &"one".into());
         let var = Value::Var("one".to_string());
         let args = vec![var.clone(), var.clone()];
-        test_math(&args, &mut get_add(), Value::None, Some(&vars));
-        test_math(&args, &mut get_sub(), Value::None, Some(&vars));
-        test_math(&args, &mut get_mul(), Value::None, Some(&vars));
-        test_math(&args, &mut get_div(), Value::None, Some(&vars));
-        test_math(&args, &mut get_mod(), Value::None, Some(&vars));
+        test_math(
+            &args,
+            &mut get_command("add"),
+            Value::None,
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("sub"),
+            Value::None,
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("mul"),
+            Value::None,
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("div"),
+            Value::None,
+            Some(vars.clone()),
+        )
+        .await;
+        test_math(
+            &args,
+            &mut get_command("mod"),
+            Value::None,
+            Some(vars.clone()),
+        )
+        .await;
     }
 
-    #[test]
-    fn math_commands() {
+    #[tokio::test]
+    async fn math_commands() {
         let interpreter = FslInterpreter::new();
         let args = vec![5.into(), 4.into()];
         let mut command = interpreter.std_commands.get("add").cloned().unwrap();
@@ -634,83 +956,122 @@ mod tests {
 
         let args = vec![command.clone().into(), command.clone().into()];
 
-        test_math(&args, &mut get_add(), Value::Int(18), None);
-        test_math(&args, &mut get_sub(), Value::Int(0), None);
-        test_math(&args, &mut get_mul(), Value::Int(81), None);
-        test_math(&args, &mut get_div(), Value::Int(1), None);
-        test_math(&args, &mut get_mod(), Value::Int(0), None);
+        test_math(&args, &mut get_command("add"), Value::Int(18), None).await;
+        test_math(&args, &mut get_command("sub"), Value::Int(0), None).await;
+        test_math(&args, &mut get_command("mul"), Value::Int(81), None).await;
+        test_math(&args, &mut get_command("div"), Value::Int(1), None).await;
+        test_math(&args, &mut get_command("mod"), Value::Int(0), None).await;
     }
 
-    #[test]
-    fn division_by_zero() {
+    #[tokio::test]
+    async fn math_text() {
+        let args = vec!["5".into(), "4".into()];
+        test_math(&args, &mut get_command("add"), Value::Int(9), None).await;
+        test_math(&args, &mut get_command("sub"), Value::Int(1), None).await;
+        test_math(&args, &mut get_command("mul"), Value::Int(20), None).await;
+        test_math(&args, &mut get_command("div"), Value::Int(1), None).await;
+        test_math(&args, &mut get_command("mod"), Value::Int(1), None).await;
+    }
+
+    #[tokio::test]
+    async fn detects_nested_float_in_command() {
+        let interpreter = FslInterpreter::new();
+        let args = vec![5.0.into(), 4.into()];
+        let mut command = interpreter.std_commands.get("add").cloned().unwrap();
+        command.set_args(args);
+        let command = Arc::new(command);
+
+        let args = vec![command.clone().into(), command.clone().into()];
+
+        test_math(&args, &mut get_command("add"), Value::Float(18.0), None).await;
+    }
+
+    #[tokio::test]
+    async fn detects_nested_float_in_var() {
+        let vars = Arc::new(VarMap::new());
+        vars.insert_value("one", &1.0.into());
+        vars.insert_value("one_nested", &Value::Var("one".to_string()));
+        let var = Value::Var("one_nested".to_string());
+        let args = vec![var.clone(), var.clone()];
+        test_math(
+            &args,
+            &mut get_command("add"),
+            Value::Float(2.0),
+            Some(vars),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn division_by_zero() {
         let args = vec![1.into(), 0.into()];
-        test_math(&args, &mut get_div(), Value::None, None);
-        test_math(&args, &mut get_mod(), Value::None, None);
+        test_math(&args, &mut get_command("div"), Value::None, None).await;
+        test_math(&args, &mut get_command("mod"), Value::None, None).await;
     }
 
-    #[test]
-    fn repeat_add() {
-        let vars = VarMap::new();
+    #[tokio::test]
+    async fn repeat_add() {
+        let vars = Arc::new(VarMap::new());
         let args = vec![5.into(), 4.into()];
-        let mut command = get_add();
+        let mut command = get_command("add");
         command.set_args(args);
         let command = Arc::new(command);
 
         let args = vec![5.into(), Value::Command(command)];
-        let mut command = get_repeat();
+        let mut command = get_command("repeat");
         command.set_args(args);
-        let output = command.execute(&vars).unwrap();
+        let output = command.execute(vars).await.unwrap();
         dbg!(&output);
         assert!(output == Value::Int(9));
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn repeat_wrong_repititions() {
-        let vars = VarMap::new();
+    async fn repeat_wrong_repititions() {
+        let mut vars = Arc::new(VarMap::new());
         let args = vec![5.into(), 4.into()];
-        let mut command = get_add();
+        let mut command = get_command("add");
         command.set_args(args);
         let command = Arc::new(command);
 
-        let args = vec!["5".into(), Value::Command(command)];
-        let mut command = get_repeat();
+        let args = vec!["five".into(), Value::Command(command)];
+        let mut command = get_command("repeat");
         command.set_args(args);
-        let output = command.execute(&vars);
+        let output = command.execute(vars).await;
         dbg!(&output);
         output.unwrap();
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn repeat_wrong_thing_to_repeat() {
-        let vars = VarMap::new();
+    async fn repeat_wrong_thing_to_repeat() {
+        let mut vars = Arc::new(VarMap::new());
         let args = vec![5.into(), 4.into()];
-        let mut command = get_add();
+        let mut command = get_command("add");
         command.set_args(args);
         let command = Arc::new(command);
 
         let args = vec![5.into(), 5.into()];
-        let mut command = get_repeat();
+        let mut command = get_command("repeat");
         command.set_args(args);
-        let output = command.execute(&vars);
+        let output = command.execute(vars).await;
         dbg!(&output);
         output.unwrap();
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn repeat_too_many_args() {
-        let vars = VarMap::new();
+    async fn repeat_too_many_args() {
+        let mut vars = Arc::new(VarMap::new());
         let args = vec![5.into(), 4.into()];
-        let mut command = get_add();
+        let mut command = get_command("add");
         command.set_args(args);
         let command = Arc::new(command);
 
         let args = vec![5.into(), Value::Command(command), 5.into()];
-        let mut command = get_repeat();
+        let mut command = get_command("repeat");
         command.set_args(args);
-        let output = command.execute(&vars);
+        let output = command.execute(vars).await;
         dbg!(&output);
         output.unwrap();
     }
