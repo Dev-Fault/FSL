@@ -572,9 +572,21 @@ impl From<&str> for Value {
     }
 }
 
+impl From<char> for Value {
+    fn from(value: char) -> Self {
+        Value::Text(value.to_string())
+    }
+}
+
 impl From<bool> for Value {
     fn from(value: bool) -> Self {
         Value::Bool(value)
+    }
+}
+
+impl From<Vec<Value>> for Value {
+    fn from(value: Vec<Value>) -> Self {
+        Value::List(value)
     }
 }
 

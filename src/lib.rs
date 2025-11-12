@@ -56,6 +56,8 @@ pub struct FslInterpreter {
     std_commands: CommandMap,
     custom_commands: CommandMap,
     vars: VarMap,
+    loops: Arc<Mutex<usize>>,
+    loop_limit: Option<usize>,
 }
 
 impl FslInterpreter {
@@ -65,6 +67,24 @@ impl FslInterpreter {
             std_commands: Self::construct_std_commands(),
             custom_commands: CommandMap::new(),
             vars: VarMap::new(),
+            loops: Arc::new(Mutex::new(0)),
+            loop_limit: Some(u16::MAX as usize),
+        }
+    }
+
+    pub async fn increment_loops(&self) -> Result<(), Error> {
+        match self.loop_limit {
+            Some(limit) => {
+                let mut loops = self.loops.lock().await;
+                *loops += 1;
+                if *loops >= limit {
+                    *loops = limit;
+                    Err(format!("Max loop limit of {} exceeded", limit))
+                } else {
+                    Ok(())
+                }
+            }
+            None => Ok(()),
         }
     }
 
@@ -122,12 +142,14 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(store(values, vars))),
             &mut commands,
         );
+        /*
         Self::add_std_command(
             "list",
             vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
             Arc::new(|values, vars| Box::pin(list(values, vars))),
             &mut commands,
         );
+        */
         Self::add_std_command(
             "free",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Var])],
@@ -229,36 +251,39 @@ impl FslInterpreter {
             &mut commands,
         );
         Self::add_std_command(
-            "index_of",
+            "index",
             vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
+                ArgRule::new(ArgPos::Index(0), vec![FslType::List, FslType::Text]),
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(index_of(values, vars))),
+            Arc::new(|values, vars| Box::pin(index(values, vars))),
             &mut commands,
         );
         Self::add_std_command(
-            "length_of",
-            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::List])],
-            Arc::new(|values, vars| Box::pin(length_of(values, vars))),
+            "length",
+            vec![ArgRule::new(
+                ArgPos::Index(0),
+                vec![FslType::List, FslType::Text],
+            )],
+            Arc::new(|values, vars| Box::pin(length(values, vars))),
             &mut commands,
         );
         Self::add_std_command(
-            "swap_indexes",
+            "swap_indices",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(swap_indexes(values, vars))),
+            Arc::new(|values, vars| Box::pin(swap_indices(values, vars))),
             &mut commands,
         );
         Self::add_std_command(
             "insert_at",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES.into()),
+                ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES.into()),
+                ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
             ],
             Arc::new(|values, vars| Box::pin(insert_at(values, vars))),
             &mut commands,
@@ -276,8 +301,8 @@ impl FslInterpreter {
             "replace_at",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES.into()),
+                ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES.into()),
+                ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
             ],
             Arc::new(|values, vars| Box::pin(replace_at(values, vars))),
             &mut commands,
