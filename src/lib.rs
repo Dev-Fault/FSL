@@ -12,6 +12,7 @@ use crate::{
 };
 
 mod commands;
+mod lexer;
 mod types;
 
 #[async_recursion]
