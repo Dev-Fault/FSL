@@ -3,11 +3,15 @@ use std::{collections::HashMap, sync::Arc};
 use async_recursion::async_recursion;
 use rand::random_range;
 
-use crate::types::{
-    ALL_VALUES, ArgPos, ArgRule, Command, Error, Executor, FslType, LOGIC_TYPES, NON_NONE_VALUES,
-    NUMERIC_TYPES, Value, VarMap,
+use crate::{
+    commands::*,
+    types::{
+        ALL_VALUES, ArgPos, ArgRule, Command, Error, Executor, FslType, LOGIC_TYPES,
+        NON_NONE_VALUES, NUMERIC_TYPES, Value, VarMap,
+    },
 };
 
+mod commands;
 mod types;
 
 #[async_recursion]
@@ -75,31 +79,31 @@ impl FslInterpreter {
         Self::add_std_command(
             "add",
             ArgRule::math_rules(),
-            Arc::new(|values, vars| Box::pin(Self::add(values, vars))),
+            Arc::new(|values, vars| Box::pin(add(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "sub",
             ArgRule::math_rules(),
-            Arc::new(|values, vars| Box::pin(Self::sub(values, vars))),
+            Arc::new(|values, vars| Box::pin(sub(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "mul",
             ArgRule::math_rules(),
-            Arc::new(|values, vars| Box::pin(Self::mul(values, vars))),
+            Arc::new(|values, vars| Box::pin(mul(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "div",
             ArgRule::math_rules(),
-            Arc::new(|values, vars| Box::pin(Self::div(values, vars))),
+            Arc::new(|values, vars| Box::pin(div(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "mod",
             ArgRule::math_rules(),
-            Arc::new(|values, vars| Box::pin(Self::modulus(values, vars))),
+            Arc::new(|values, vars| Box::pin(modulus(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -108,37 +112,37 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES.into()),
                 ArgRule::new(ArgPos::Index(1), vec![FslType::Var]),
             ],
-            Arc::new(|values, vars| Box::pin(Self::store(values, vars))),
+            Arc::new(|values, vars| Box::pin(store(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "list",
             vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
-            Arc::new(|values, vars| Box::pin(Self::list(values, vars))),
+            Arc::new(|values, vars| Box::pin(list(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "clone",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Var])],
-            Arc::new(|values, vars| Box::pin(Self::clone(values, vars))),
+            Arc::new(|values, vars| Box::pin(commands::clone(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "drop",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Var])],
-            Arc::new(|values, vars| Box::pin(Self::drop(values, vars))),
+            Arc::new(|values, vars| Box::pin(commands::drop(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "print",
             vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
-            Arc::new(|values, vars| Box::pin(Self::print(values, vars))),
+            Arc::new(|values, vars| Box::pin(print(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "eq",
             vec![ArgRule::new(ArgPos::Any, ALL_VALUES.into())],
-            Arc::new(|values, vars| Box::pin(Self::eq(values, vars))),
+            Arc::new(|values, vars| Box::pin(eq(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -147,7 +151,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::gt(values, vars))),
+            Arc::new(|values, vars| Box::pin(gt(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -156,13 +160,13 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::lt(values, vars))),
+            Arc::new(|values, vars| Box::pin(lt(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "not",
             vec![ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into())],
-            Arc::new(|values, vars| Box::pin(Self::not(values, vars))),
+            Arc::new(|values, vars| Box::pin(not(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -171,7 +175,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), LOGIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::and(values, vars))),
+            Arc::new(|values, vars| Box::pin(and(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -180,7 +184,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), LOGIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::or(values, vars))),
+            Arc::new(|values, vars| Box::pin(or(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -189,7 +193,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
             ],
-            Arc::new(|values, vars| Box::pin(Self::if_then(values, vars))),
+            Arc::new(|values, vars| Box::pin(if_then(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -199,7 +203,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
                 ArgRule::new(ArgPos::Index(2), vec![FslType::Command]),
             ],
-            Arc::new(|values, vars| Box::pin(Self::if_then_else(values, vars))),
+            Arc::new(|values, vars| Box::pin(if_then_else(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -208,7 +212,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
             ],
-            Arc::new(|values, vars| Box::pin(Self::while_loop(values, vars))),
+            Arc::new(|values, vars| Box::pin(while_loop(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -217,7 +221,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
             ],
-            Arc::new(|values, vars| Box::pin(Self::repeat(values, vars))),
+            Arc::new(|values, vars| Box::pin(repeat(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -226,13 +230,13 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::index_of(values, vars))),
+            Arc::new(|values, vars| Box::pin(index_of(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "length_of",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::List])],
-            Arc::new(|values, vars| Box::pin(Self::length_of(values, vars))),
+            Arc::new(|values, vars| Box::pin(length_of(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -242,7 +246,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::swap_indexes(values, vars))),
+            Arc::new(|values, vars| Box::pin(swap_indexes(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -252,7 +256,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::insert_at(values, vars))),
+            Arc::new(|values, vars| Box::pin(insert_at(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -261,7 +265,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::remove_at(values, vars))),
+            Arc::new(|values, vars| Box::pin(remove_at(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -271,7 +275,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::replace_at(values, vars))),
+            Arc::new(|values, vars| Box::pin(replace_at(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -280,7 +284,7 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
                 ArgRule::new(ArgPos::Index(1), vec![FslType::Text]),
             ],
-            Arc::new(|values, vars| Box::pin(Self::starts_with(values, vars))),
+            Arc::new(|values, vars| Box::pin(starts_with(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -289,43 +293,43 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
                 ArgRule::new(ArgPos::Index(1), vec![FslType::Text]),
             ],
-            Arc::new(|values, vars| Box::pin(Self::ends_with(values, vars))),
+            Arc::new(|values, vars| Box::pin(ends_with(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "concat",
             vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
-            Arc::new(|values, vars| Box::pin(Self::concat(values, vars))),
+            Arc::new(|values, vars| Box::pin(concat(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "capitalize",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
-            Arc::new(|values, vars| Box::pin(Self::capitalize(values, vars))),
+            Arc::new(|values, vars| Box::pin(capitalize(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "upper",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
-            Arc::new(|values, vars| Box::pin(Self::upper(values, vars))),
+            Arc::new(|values, vars| Box::pin(upper(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "lower",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
-            Arc::new(|values, vars| Box::pin(Self::lower(values, vars))),
+            Arc::new(|values, vars| Box::pin(lower(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "remove_whitespace",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
-            Arc::new(|values, vars| Box::pin(Self::remove_whitespace(values, vars))),
+            Arc::new(|values, vars| Box::pin(remove_whitespace(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "nl",
             vec![ArgRule::no_args_rule()],
-            Arc::new(|values, vars| Box::pin(Self::nl(values, vars))),
+            Arc::new(|values, vars| Box::pin(nl(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
@@ -334,280 +338,17 @@ impl FslInterpreter {
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
                 ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
             ],
-            Arc::new(|values, vars| Box::pin(Self::random_range(values, vars))),
+            Arc::new(|values, vars| Box::pin(commands::random_range(values, vars))),
             &mut lib,
         );
         Self::add_std_command(
             "random_entry",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::List])],
-            Arc::new(|values, vars| Box::pin(Self::random_entry(values, vars))),
+            Arc::new(|values, vars| Box::pin(random_entry(values, vars))),
             &mut lib,
         );
 
         lib
-    }
-
-    async fn add(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        if contains_float(&values, vars.clone()).await? {
-            let mut sum: f64 = 0.0;
-            for value in values.iter() {
-                sum = sum + value.as_float(vars.clone()).await?;
-            }
-            Ok(Value::Float(sum))
-        } else {
-            let mut sum: i64 = 0;
-            for value in values.iter() {
-                sum = sum + value.as_int(vars.clone()).await?;
-            }
-            Ok(Value::Int(sum))
-        }
-    }
-
-    async fn sub(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        if contains_float(&values, vars.clone()).await? {
-            let mut diff = values[0].as_float(vars.clone()).await?;
-            for value in &values[1..values.len()] {
-                diff = diff - value.as_float(vars.clone()).await?;
-            }
-            Ok(Value::Float(diff))
-        } else {
-            let mut diff = values[0].as_int(vars.clone()).await?;
-            for value in &values[1..values.len()] {
-                diff = diff - value.as_int(vars.clone()).await?;
-            }
-            Ok(Value::Int(diff))
-        }
-    }
-
-    async fn mul(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        if contains_float(&values, vars.clone()).await? {
-            let mut product = values[0].as_float(vars.clone()).await?;
-            for value in &values[1..values.len()] {
-                product = product * value.as_float(vars.clone()).await?;
-            }
-            Ok(Value::Float(product))
-        } else {
-            let mut product = values[0].as_int(vars.clone()).await?;
-            for value in &values[1..values.len()] {
-                product = product * value.as_int(vars.clone()).await?;
-            }
-            Ok(Value::Int(product))
-        }
-    }
-
-    async fn div(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        if contains_float(&values, vars.clone()).await? {
-            let mut quotient = values[0].as_float(vars.clone()).await?;
-            for value in &values[1..values.len()] {
-                let value = value.as_float(vars.clone()).await?;
-                if value == 0.0 {
-                    return Err("division by zero".to_string());
-                };
-                quotient = quotient / value;
-            }
-            Ok(Value::Float(quotient))
-        } else {
-            let mut quotient = values[0].as_int(vars.clone()).await?;
-            for value in &values[1..values.len()] {
-                let value = value.as_int(vars.clone()).await?;
-                if value == 0 {
-                    return Err("division by zero".to_string());
-                };
-                quotient = quotient / value;
-            }
-            Ok(Value::Int(quotient))
-        }
-    }
-
-    async fn modulus(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        let mut remainder = values[0].as_int(vars.clone()).await?;
-        for value in &values[1..values.len()] {
-            let value = value.as_int(vars.clone()).await?;
-            if value == 0 {
-                return Err("division by zero".to_string());
-            };
-            remainder = remainder % value;
-        }
-        Ok(Value::Int(remainder))
-    }
-
-    pub async fn store(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        vars.insert_value(&values[1].as_var()?, &values[0]);
-
-        todo!();
-    }
-
-    async fn list(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!();
-    }
-
-    async fn clone(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn drop(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn print(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn eq(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn gt(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn lt(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn not(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok((!values[0].as_bool(vars).await?).into())
-    }
-
-    async fn and(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(
-            (values[0].as_bool(vars.clone()).await? && values[1].as_bool(vars.clone()).await?)
-                .into(),
-        )
-    }
-
-    async fn or(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(
-            (values[0].as_bool(vars.clone()).await? || values[1].as_bool(vars.clone()).await?)
-                .into(),
-        )
-    }
-
-    async fn if_then(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn if_then_else(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn while_loop(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn repeat(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        let repetitions = values[0].as_int(vars.clone()).await?;
-        let command = values[1].as_command()?;
-        let mut final_value = Value::None;
-        for i in 0..repetitions {
-            final_value = command.execute(vars.clone()).await?;
-        }
-
-        Ok(final_value)
-    }
-
-    async fn index_of(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn length_of(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn swap_indexes(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn insert_at(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn remove_at(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn replace_at(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        todo!()
-    }
-
-    async fn starts_with(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(values[0]
-            .as_text(vars.clone())
-            .await?
-            .starts_with(&values[1].as_text(vars.clone()).await?)
-            .into())
-    }
-
-    async fn ends_with(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(values[0]
-            .as_text(vars.clone())
-            .await?
-            .ends_with(&values[1].as_text(vars.clone()).await?)
-            .into())
-    }
-
-    async fn concat(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        let mut cat_string = String::new();
-
-        for value in values.iter() {
-            cat_string.push_str(&value.as_text(vars.clone()).await?);
-        }
-
-        Ok(cat_string.into())
-    }
-
-    async fn capitalize(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        let text = values[0].as_text(vars).await?;
-        if text.len() < 1 {
-            Ok("".into())
-        } else {
-            Ok(format!("{}{}", text[0..1].to_uppercase(), text[1..].to_uppercase()).into())
-        }
-    }
-
-    async fn upper(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(values[0].as_text(vars).await?.to_uppercase().into())
-    }
-
-    async fn lower(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(values[0].as_text(vars).await?.to_lowercase().into())
-    }
-
-    async fn remove_whitespace(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(values[0]
-            .as_text(vars)
-            .await?
-            .split_whitespace()
-            .collect::<String>()
-            .into())
-    }
-
-    async fn nl(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok("\n".into())
-    }
-
-    async fn random_range(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        if contains_float(&values, vars.clone()).await? {
-            let min = values[0].as_float(vars.clone()).await?;
-            let max = values[1].as_float(vars.clone()).await?;
-            if min >= max {
-                Err("min must be greater than max".to_string())
-            } else {
-                Ok(random_range(min..=max).into())
-            }
-        } else {
-            let min = values[0].as_int(vars.clone()).await?;
-            let max = values[1].as_int(vars.clone()).await?;
-            if min >= max {
-                Err("min must be greater than max".to_string())
-            } else {
-                Ok(random_range(min..=max).into())
-            }
-        }
-    }
-
-    async fn random_entry(values: Arc<Vec<Value>>, vars: Arc<VarMap>) -> Result<Value, Error> {
-        Ok(values[random_range(0..values.len())].clone())
     }
 }
 
