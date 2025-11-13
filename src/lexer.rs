@@ -158,7 +158,6 @@ impl Lexer {
         let mut prev_ch = '\0';
 
         for (i, ch) in code.chars().enumerate() {
-            println!("{}", ch);
             if !self.inside_string && ch.is_whitespace() {
                 continue;
             }
@@ -176,7 +175,6 @@ impl Lexer {
 
                 match symbol {
                     Symbol::Quote => {
-                        println!("MATCHING QUOTE");
                         if self.inside_string {
                             if prev_ch == '\\' {
                                 buf.remove(buf.len() - 2);
@@ -255,7 +253,11 @@ impl Lexer {
                             prev_ch = ch;
                             buf.push_str(Symbol::Dot.as_str());
                             continue;
-                        } else if let Some(Token::Symbol(prev_symbol)) = tokens.last() {
+                        }
+                        /*
+                        possibly unecessary, leaving it here for now incase it is
+                        else if let Some(Token::Symbol(prev_symbol)) = tokens.last() {
+
                             if !matches!(
                                 prev_symbol,
                                 Symbol::Quote | Symbol::ClosedParen | Symbol::ClosedBracket
@@ -263,10 +265,12 @@ impl Lexer {
                                 return Err(LexerError::DotNotPrecededByValue(err_context));
                             }
                         }
+                        */
 
                         if buf.len() > 0 {
                             tokens.push(Token::Var(buf.clone()));
                         } else if tokens.is_empty() {
+                            println!("\nEMPTY TOKENS\n");
                             return Err(LexerError::DotNotPrecededByValue(err_context));
                         }
                         tokens.push(Token::Symbol(Symbol::Dot));
@@ -763,6 +767,62 @@ mod tests {
     }
 
     #[test]
+    fn tokenize_var_dot() {
+        let lexer = Lexer::new();
+
+        let tokens = lexer
+            .tokenize("character.weapon.name.store(\"sword\")")
+            .unwrap();
+
+        let valid_tokens: &[Token] = &[
+            Token::Var("character".to_string()),
+            Token::Symbol(Symbol::Dot),
+            Token::Var("weapon".to_string()),
+            Token::Symbol(Symbol::Dot),
+            Token::Var("name".to_string()),
+            Token::Symbol(Symbol::Dot),
+            Token::Command("store".to_string()),
+            Token::Symbol(Symbol::OpenParen),
+            Token::Symbol(Symbol::Quote),
+            Token::Text("sword".to_string()),
+            Token::Symbol(Symbol::Quote),
+            Token::Symbol(Symbol::ClosedParen),
+        ];
+
+        println!("");
+        for token in &tokens {
+            println!("{:?}", token);
+        }
+
+        assert!(tokens == valid_tokens);
+    }
+
+    #[test]
+    fn tokenize_var_dot_in_command() {
+        let lexer = Lexer::new();
+
+        let tokens = lexer.tokenize("print(character.weapon.name)").unwrap();
+
+        let valid_tokens: &[Token] = &[
+            Token::Command("print".to_string()),
+            Token::Symbol(Symbol::OpenParen),
+            Token::Var("character".to_string()),
+            Token::Symbol(Symbol::Dot),
+            Token::Var("weapon".to_string()),
+            Token::Symbol(Symbol::Dot),
+            Token::Var("name".to_string()),
+            Token::Symbol(Symbol::ClosedParen),
+        ];
+
+        println!("");
+        for token in &tokens {
+            println!("{:?}", token);
+        }
+
+        assert!(tokens == valid_tokens);
+    }
+
+    #[test]
     fn number_allows_dot() {
         let lexer = Lexer::new();
         let tokens = lexer.tokenize("print(11.11)").unwrap();
@@ -826,9 +886,22 @@ mod tests {
     #[test]
     fn number_starting_with_dot() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize("print(.1)");
+        let tokens = lexer.tokenize("print(.1)").unwrap();
 
-        assert!(tokens.is_err_and(|e| matches!(e, LexerError::DotNotPrecededByValue(_))));
+        let valid_tokens: &[Token] = &[
+            Token::Command(format!("print")),
+            Token::Symbol(Symbol::OpenParen),
+            Token::Symbol(Symbol::Dot),
+            Token::Number("1".to_string()),
+            Token::Symbol(Symbol::ClosedParen),
+        ];
+
+        println!("");
+        for token in &tokens {
+            println!("{:?}", token);
+        }
+
+        assert!(tokens == valid_tokens);
     }
 
     #[test]
@@ -880,7 +953,9 @@ mod tests {
         let result = Lexer::new().tokenize("print(.)");
 
         dbg!(&result);
-        assert!(result.is_err_and(|e| matches!(e, LexerError::DotNotPrecededByValue(_))));
+        assert!(
+            result.is_err_and(|e| matches!(e, LexerError::ClosedParenPrecededByInvalidSymbol(_)))
+        );
 
         let result = Lexer::new().tokenize(".print()");
 
