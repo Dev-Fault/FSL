@@ -7,9 +7,20 @@ const OPEN_BRACKET: &str = "[";
 const CLOSED_BRACKET: &str = "]";
 const DOT: &str = ".";
 const COMMA: &str = ",";
-const ESCAPED_QUOTE: &str = r#"\""#;
-const ESCAPED_LINE: &str = r"\n";
-const ESCAPED_TAB: &str = r"\t";
+const NEW_LINE: &str = r"\n";
+const TAB: &str = r"\t";
+
+const SYMBOLS: &[&str] = &[
+    QUOTE,
+    OPEN_PAREN,
+    CLOSED_PAREN,
+    OPEN_BRACKET,
+    CLOSED_BRACKET,
+    DOT,
+    COMMA,
+    NEW_LINE,
+    TAB,
+];
 
 const KEYWORDS: &[&str] = &["true", "false"];
 
@@ -22,9 +33,8 @@ enum Symbol {
     ClosedBracket,
     Dot,
     Comma,
-    EscapedQuote,
-    EscapedLine,
-    EscapedTab,
+    NewLine,
+    Tab,
 }
 
 fn symbol_from_str(value: &str) -> Option<Symbol> {
@@ -36,13 +46,21 @@ fn symbol_from_str(value: &str) -> Option<Symbol> {
         CLOSED_BRACKET => Symbol::ClosedBracket,
         DOT => Symbol::Dot,
         COMMA => Symbol::Comma,
-        ESCAPED_QUOTE => Symbol::EscapedQuote,
-        ESCAPED_LINE => Symbol::EscapedLine,
-        ESCAPED_TAB => Symbol::EscapedTab,
+        NEW_LINE => Symbol::NewLine,
+        TAB => Symbol::Tab,
         _ => {
             return None;
         }
     })
+}
+
+fn get_symbol(value: &str) -> Option<Symbol> {
+    for symbol in SYMBOLS {
+        if value.ends_with(symbol) {
+            return symbol_from_str(symbol);
+        }
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -74,6 +92,7 @@ impl Lexer {
     pub fn tokenize(&mut self, code: &str) -> Result<Vec<Token>, Error> {
         let mut tokens = Vec::new();
         let mut buf = String::with_capacity(code.len());
+        let mut prev_ch = '\0';
 
         for ch in code.chars() {
             if !self.inside_string && ch.is_whitespace() {
@@ -81,11 +100,15 @@ impl Lexer {
             }
             buf.push(ch);
 
-            if let Some(symbol) = symbol_from_str(&format!("{}", ch)) {
+            if let Some(symbol) = get_symbol(&buf) {
                 let buf_left = buf[0..buf.len() - 1].to_string();
                 match symbol {
                     Symbol::Quote => {
                         if self.inside_string {
+                            if prev_ch == '\\' {
+                                buf.remove(buf.len() - 2);
+                                continue;
+                            }
                             tokens.push(Token::Text(buf_left));
                             tokens.push(Token::Symbol(Symbol::Quote));
                             buf.clear();
@@ -160,9 +183,18 @@ impl Lexer {
                         buf.clear();
                         tokens.push(Token::Symbol(Symbol::Comma));
                     }
-                    Symbol::EscapedQuote if self.inside_string => todo!(),
-                    Symbol::EscapedLine if self.inside_string => todo!(),
-                    Symbol::EscapedTab if self.inside_string => todo!(),
+                    Symbol::NewLine if self.inside_string => {
+                        for _ in 0..NEW_LINE.len() {
+                            buf.pop();
+                        }
+                        buf.push_str("\n");
+                    }
+                    Symbol::Tab if self.inside_string => {
+                        for _ in 0..TAB.len() {
+                            buf.pop();
+                        }
+                        buf.push_str("\t");
+                    }
                     _ => {
                         if self.inside_string {
                             break;
@@ -172,9 +204,15 @@ impl Lexer {
                     }
                 };
             }
+
+            prev_ch = ch;
         }
 
-        Ok(tokens)
+        if buf.is_empty() {
+            Ok(tokens)
+        } else {
+            Err(format!("unkown token {}", buf))
+        }
     }
 }
 
@@ -245,5 +283,56 @@ mod tests {
         for token in tokens {
             println!("{:?}", token);
         }
+    }
+
+    #[test]
+    fn tokenize_new_line_symbol() {
+        let mut lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#" "new\nline" "#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("{}", text_output);
+        assert!(text_output == "new\nline");
+    }
+
+    #[test]
+    fn tokenize_tab_symbol() {
+        let mut lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#" "tabbed\ttext" "#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("{}", text_output);
+        assert!(text_output == "tabbed\ttext");
+    }
+
+    #[test]
+    fn tokenize_escaped_quote() {
+        let mut lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#" "escaped\"quote" "#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("{}", text_output);
+        assert!(text_output == "escaped\"quote");
     }
 }
