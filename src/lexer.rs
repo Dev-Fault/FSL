@@ -555,6 +555,42 @@ mod tests {
     }
 
     #[test]
+    fn tokenize_back_slash() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#" "back\slash" "#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("{}", text_output);
+
+        assert!(text_output == r"back\slash");
+    }
+
+    #[test]
+    fn tokenize_double_back_slash() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#" "back\\slash" "#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("{}", text_output);
+
+        assert!(text_output == r"back\\slash");
+    }
+
+    #[test]
     fn tokenize_unescaped_quote() {
         let lexer = Lexer::new();
         let tokens = lexer.tokenize(r#" "unesca\ped\\"quote" "#).unwrap();
