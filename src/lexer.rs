@@ -133,7 +133,6 @@ pub struct Lexer {
 }
 
 fn parse_token(input: String) -> Token {
-    println!("parsing: {}", input);
     if input.parse::<f64>().is_ok() {
         Token::Number(input)
     } else if KEYWORDS.contains(&input.as_str()) {
@@ -159,13 +158,12 @@ impl Lexer {
         let mut prev_ch = '\0';
 
         for (i, ch) in code.chars().enumerate() {
+            println!("{}", ch);
             if !self.inside_string && ch.is_whitespace() {
                 continue;
             }
 
             buf.push(ch);
-
-            println!("{:?}\n\n", tokens);
 
             if let Some(symbol) = get_symbol(&buf) {
                 let err_context = ErrorContext::new(code, i);
@@ -176,9 +174,9 @@ impl Lexer {
                     }
                 }
 
-                println!("{:?}", symbol);
                 match symbol {
                     Symbol::Quote => {
+                        println!("MATCHING QUOTE");
                         if self.inside_string {
                             if prev_ch == '\\' {
                                 buf.remove(buf.len() - 2);
@@ -570,6 +568,87 @@ mod tests {
         println!("{}", text_output);
 
         assert!(text_output == r"back\slash");
+    }
+
+    #[test]
+    fn tokenize_empty_string() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#""""#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in &tokens {
+            if let Token::Text(text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("start{}end", text_output);
+
+        let valid_tokens: &[Token] = &[
+            Token::Symbol(Symbol::Quote),
+            Token::Text("".to_string()),
+            Token::Symbol(Symbol::Quote),
+        ];
+
+        assert!(tokens == valid_tokens);
+
+        assert!(text_output == r"");
+    }
+
+    #[test]
+    fn tokenize_empty_string_with_spaces() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#""  ""#).unwrap();
+
+        let valid_tokens: &[Token] = &[
+            Token::Symbol(Symbol::Quote),
+            Token::Text("  ".to_string()),
+            Token::Symbol(Symbol::Quote),
+        ];
+
+        println!("");
+        for token in &tokens {
+            println!("{:?}", token);
+        }
+
+        assert!(tokens == valid_tokens);
+    }
+
+    #[test]
+    fn tokenize_empty_string_with_spaces_in_command() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#"print("  ")"#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("start{}end", text_output);
+
+        assert!(text_output == r#"  "#);
+    }
+
+    #[test]
+    fn tokenize_string_spaces() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#"print(" h    e ")"#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("{}", text_output);
+
+        assert!(text_output == r#" h    e "#);
     }
 
     #[test]
