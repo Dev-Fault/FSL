@@ -54,9 +54,8 @@ async fn contains_float(
 pub type CommandMap = HashMap<String, Command>;
 
 pub struct FslInterpreter {
-    std_out: Arc<Mutex<String>>,
-    std_commands: CommandMap,
-    custom_commands: CommandMap,
+    output: Arc<Mutex<String>>,
+    commands: CommandMap,
     vars: VarMap,
     loops: Arc<Mutex<usize>>,
     loop_limit: Option<usize>,
@@ -65,9 +64,8 @@ pub struct FslInterpreter {
 impl FslInterpreter {
     pub fn new() -> Self {
         Self {
-            std_out: Arc::new(Mutex::new(String::new())),
-            std_commands: Self::construct_std_commands(),
-            custom_commands: CommandMap::new(),
+            output: Arc::new(Mutex::new(String::new())),
+            commands: Self::construct_std_commands(),
             vars: VarMap::new(),
             loops: Arc::new(Mutex::new(0)),
             loop_limit: Some(u16::MAX as usize),
@@ -90,7 +88,7 @@ impl FslInterpreter {
         }
     }
 
-    fn add_std_command(
+    fn add_command(
         label: &str,
         rules: Vec<ArgRule>,
         executor: Executor,
@@ -105,37 +103,37 @@ impl FslInterpreter {
     fn construct_std_commands() -> CommandMap {
         let mut commands = HashMap::new();
 
-        Self::add_std_command(
+        Self::add_command(
             "add",
             ArgRule::math_rules(),
             Arc::new(|values, vars| Box::pin(add(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "sub",
             ArgRule::math_rules(),
             Arc::new(|values, vars| Box::pin(sub(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "mul",
             ArgRule::math_rules(),
             Arc::new(|values, vars| Box::pin(mul(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "div",
             ArgRule::math_rules(),
             Arc::new(|values, vars| Box::pin(div(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "mod",
             ArgRule::math_rules(),
             Arc::new(|values, vars| Box::pin(modulus(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "store",
             vec![
                 ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES.into()),
@@ -152,19 +150,19 @@ impl FslInterpreter {
             &mut commands,
         );
         */
-        Self::add_std_command(
+        Self::add_command(
             "free",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Var])],
             Arc::new(|values, vars| Box::pin(commands::free(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "print",
             vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
             Arc::new(|values, vars| Box::pin(print(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "eq",
             vec![
                 ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES.into()),
@@ -173,7 +171,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(eq(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "gt",
             vec![
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
@@ -182,7 +180,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(gt(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "lt",
             vec![
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
@@ -191,13 +189,13 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(lt(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "not",
             vec![ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into())],
             Arc::new(|values, vars| Box::pin(not(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "and",
             vec![
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
@@ -206,7 +204,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(and(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "or",
             vec![
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
@@ -215,7 +213,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(or(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "if_then",
             vec![
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
@@ -224,7 +222,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(if_then(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "if_then_else",
             vec![
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
@@ -234,7 +232,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(if_then_else(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "while",
             vec![
                 ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
@@ -243,7 +241,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(while_loop(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "repeat",
             vec![
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
@@ -252,7 +250,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(repeat(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "index",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List, FslType::Text]),
@@ -261,7 +259,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(index(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "length",
             vec![ArgRule::new(
                 ArgPos::Index(0),
@@ -270,7 +268,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(length(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "swap_indices",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
@@ -280,7 +278,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(swap_indices(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "insert_at",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
@@ -290,7 +288,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(insert_at(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "remove_at",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
@@ -299,7 +297,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(remove_at(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "replace_at",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
@@ -309,7 +307,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(replace_at(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "starts_with",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
@@ -318,7 +316,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(starts_with(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "ends_with",
             vec![
                 ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
@@ -327,43 +325,43 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(ends_with(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "concat",
             vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
             Arc::new(|values, vars| Box::pin(concat(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "capitalize",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
             Arc::new(|values, vars| Box::pin(capitalize(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "upper",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
             Arc::new(|values, vars| Box::pin(upper(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "lower",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
             Arc::new(|values, vars| Box::pin(lower(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "remove_whitespace",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
             Arc::new(|values, vars| Box::pin(remove_whitespace(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "nl",
             vec![ArgRule::no_args_rule()],
             Arc::new(|values, vars| Box::pin(nl(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "random_range",
             vec![
                 ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
@@ -372,7 +370,7 @@ impl FslInterpreter {
             Arc::new(|values, vars| Box::pin(commands::random_range(values, vars))),
             &mut commands,
         );
-        Self::add_std_command(
+        Self::add_command(
             "random_entry",
             vec![ArgRule::new(ArgPos::Index(0), vec![FslType::List])],
             Arc::new(|values, vars| Box::pin(random_entry(values, vars))),

@@ -145,7 +145,7 @@ pub async fn print(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let mut std_out = interpreter.std_out.lock().await;
+    let mut std_out = interpreter.output.lock().await;
     for value in values.iter() {
         std_out.push_str(&value.as_text(interpreter.clone()).await?);
     }
@@ -859,7 +859,7 @@ mod tests {
     async fn math_commands() {
         let interpreter = FslInterpreter::new();
         let args = vec![5.into(), 4.into()];
-        let mut command = interpreter.std_commands.get("add").cloned().unwrap();
+        let mut command = interpreter.commands.get("add").cloned().unwrap();
         command.set_args(args);
         let command = Arc::new(command);
 
@@ -886,7 +886,7 @@ mod tests {
     async fn detects_nested_float_in_command() {
         let interpreter = FslInterpreter::new();
         let args = vec![5.0.into(), 4.into()];
-        let mut command = interpreter.std_commands.get("add").cloned().unwrap();
+        let mut command = interpreter.commands.get("add").cloned().unwrap();
         command.set_args(args);
         let command = Arc::new(command);
 
@@ -1090,7 +1090,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(interpreter.std_out.lock().await.eq("One plus one equals 2"));
+        assert!(interpreter.output.lock().await.eq("One plus one equals 2"));
     }
 
     #[tokio::test]
@@ -1232,8 +1232,8 @@ mod tests {
         )
         .await
         .unwrap();
-        println!("{}", *interpreter.std_out.lock().await);
-        assert!(*interpreter.std_out.lock().await == "hello");
+        println!("{}", *interpreter.output.lock().await);
+        assert!(*interpreter.output.lock().await == "hello");
 
         let mut print_command = get_command("print");
         print_command.set_args(vec![", world".into()]);
@@ -1244,8 +1244,8 @@ mod tests {
         )
         .await
         .unwrap();
-        println!("{}", *interpreter.std_out.lock().await);
-        assert!(*interpreter.std_out.lock().await == "hello, world");
+        println!("{}", *interpreter.output.lock().await);
+        assert!(*interpreter.output.lock().await == "hello, world");
     }
 
     #[tokio::test]
@@ -1270,8 +1270,8 @@ mod tests {
         )
         .await
         .unwrap();
-        println!("{}", *interpreter.std_out.lock().await);
-        assert!(*interpreter.std_out.lock().await == "hello");
+        println!("{}", *interpreter.output.lock().await);
+        assert!(*interpreter.output.lock().await == "hello");
 
         let result = if_then_else(
             Arc::new(vec![
@@ -1283,8 +1283,8 @@ mod tests {
         )
         .await
         .unwrap();
-        println!("{}", *interpreter.std_out.lock().await);
-        assert!(*interpreter.std_out.lock().await == "hellogoodbye");
+        println!("{}", *interpreter.output.lock().await);
+        assert!(*interpreter.output.lock().await == "hellogoodbye");
     }
 
     #[tokio::test]
