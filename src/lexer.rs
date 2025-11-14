@@ -263,9 +263,7 @@ impl Lexer {
                         if buf_is_invalid_number {
                             return Err(LexerError::InvalidNumber(err_context));
                         } else if buf_is_numeric && prev_ch.is_numeric() {
-                            prev_ch = ch;
                             buf.push_str(Symbol::Dot.as_str());
-                            continue;
                         } else if buf.is_empty()
                             && prev_symbol
                                 .is_some_and(|symbol| !VALID_PRECEDING_SYMBOLS.contains(symbol))
