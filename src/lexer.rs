@@ -52,6 +52,7 @@ pub enum LexerError<'a> {
     TrailingTokenError(ErrorContext<'a>),
     ClosedParenPrecededByInvalidSymbol(ErrorContext<'a>),
     ClosedBracketPrecededByInvalidSymbol(ErrorContext<'a>),
+    InvalidNumber(ErrorContext<'a>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -175,110 +176,113 @@ impl Lexer {
 
                 match symbol {
                     Symbol::Quote => {
-                        if self.inside_string {
-                            if prev_ch == '\\' {
-                                buf.remove(buf.len() - 2);
-                                prev_ch = ch;
-                                continue;
-                            }
-                            tokens.push(Token::Text(buf.clone()));
-                            tokens.push(Token::Symbol(Symbol::Quote));
+                        if prev_ch == '\\' && self.inside_string {
+                            buf.remove(buf.len() - 2);
                         } else {
-                            tokens.push(Token::Symbol(Symbol::Quote));
-                        }
-                        self.inside_string = !self.inside_string;
+                            if self.inside_string {
+                                tokens.push(Token::Text(buf.clone()));
+                                tokens.push(Token::Symbol(Symbol::Quote));
+                            } else {
+                                tokens.push(Token::Symbol(Symbol::Quote));
+                            }
 
-                        buf.clear();
+                            self.inside_string = !self.inside_string;
+                            buf.clear();
+                        }
                     }
                     Symbol::OpenParen if !self.inside_string => {
-                        if buf.len() == 0 {
+                        if buf.is_empty() {
                             return Err(LexerError::OpenParenNotPrecededByCommand(err_context));
                         }
 
                         tokens.push(Token::Command(buf.clone()));
                         tokens.push(Token::Symbol(Symbol::OpenParen));
                         self.command_depth += 1;
-
                         buf.clear();
                     }
                     Symbol::ClosedParen if !self.inside_string => {
-                        if buf.len() > 0 {
+                        const VALID_PRECEDING_SYMBOLS: &[Symbol] =
+                            &[Symbol::Dot, Symbol::OpenBracket];
+
+                        if !buf.is_empty() {
                             tokens.push(parse_token(buf.clone()));
                         }
 
                         if tokens.is_empty() || self.command_depth == 0 {
                             return Err(LexerError::UnmatchedClosingParen(err_context));
-                        } else if let Some(Token::Symbol(prev_symbol)) = tokens.last() {
-                            if matches!(prev_symbol, Symbol::Dot | Symbol::OpenBracket) {
-                                return Err(LexerError::ClosedParenPrecededByInvalidSymbol(
-                                    err_context,
-                                ));
-                            }
+                        } else if let Some(Token::Symbol(symbol)) = tokens.last()
+                            && VALID_PRECEDING_SYMBOLS.contains(symbol)
+                        {
+                            return Err(LexerError::ClosedParenPrecededByInvalidSymbol(
+                                err_context,
+                            ));
+                        } else {
+                            tokens.push(Token::Symbol(Symbol::ClosedParen));
+                            self.command_depth -= 1;
+                            buf.clear();
                         }
-
-                        tokens.push(Token::Symbol(Symbol::ClosedParen));
-                        self.command_depth -= 1;
-
-                        buf.clear();
                     }
                     Symbol::OpenBracket if !self.inside_string => {
                         tokens.push(Token::Symbol(Symbol::OpenBracket));
                         self.list_depth += 1;
-
                         buf.clear();
                     }
                     Symbol::ClosedBracket if !self.inside_string => {
+                        const INVALID_PRECEDING_SYMBOLS: &[Symbol] =
+                            &[Symbol::Dot, Symbol::OpenParen];
+
                         if tokens.is_empty() || self.list_depth == 0 {
                             return Err(LexerError::UnmatchedClosingBracket(err_context));
-                        } else if let Some(Token::Symbol(prev_symbol)) = tokens.last() {
-                            if matches!(prev_symbol, Symbol::Dot | Symbol::OpenParen) {
-                                return Err(LexerError::ClosedBracketPrecededByInvalidSymbol(
-                                    err_context,
-                                ));
+                        } else if let Some(Token::Symbol(symbol)) = tokens.last()
+                            && INVALID_PRECEDING_SYMBOLS.contains(symbol)
+                        {
+                            return Err(LexerError::ClosedBracketPrecededByInvalidSymbol(
+                                err_context,
+                            ));
+                        } else {
+                            if !buf.is_empty() {
+                                tokens.push(parse_token(buf.clone()));
                             }
+                            tokens.push(Token::Symbol(Symbol::ClosedBracket));
+                            self.list_depth -= 1;
+                            buf.clear();
                         }
-
-                        if buf.len() > 0 {
-                            tokens.push(parse_token(buf.clone()));
-                        }
-                        tokens.push(Token::Symbol(Symbol::ClosedBracket));
-                        self.list_depth -= 1;
-
-                        buf.clear();
                     }
                     Symbol::Dot if !self.inside_string => {
-                        if buf.chars().all(|ch| ch.is_numeric() || ch == '.')
-                            && prev_ch.is_numeric()
-                        {
+                        const VALID_PRECEDING_SYMBOLS: &[Symbol] =
+                            &[Symbol::Quote, Symbol::ClosedParen, Symbol::ClosedBracket];
+
+                        let buf_is_numeric = buf.chars().all(|ch| ch.is_numeric() || ch == '.');
+                        let buf_is_invalid_number = buf_is_numeric && buf.contains(symbol.as_str());
+                        let prev_symbol = if let Some(Token::Symbol(symbol)) = tokens.last() {
+                            Some(symbol)
+                        } else {
+                            None
+                        };
+
+                        if buf_is_invalid_number {
+                            return Err(LexerError::InvalidNumber(err_context));
+                        } else if buf_is_numeric && prev_ch.is_numeric() {
                             prev_ch = ch;
                             buf.push_str(Symbol::Dot.as_str());
                             continue;
-                        }
-                        /*
-                        possibly unecessary, leaving it here for now incase it is
-                        else if let Some(Token::Symbol(prev_symbol)) = tokens.last() {
-
-                            if !matches!(
-                                prev_symbol,
-                                Symbol::Quote | Symbol::ClosedParen | Symbol::ClosedBracket
-                            ) {
+                        } else if buf.is_empty()
+                            && prev_symbol
+                                .is_some_and(|symbol| !VALID_PRECEDING_SYMBOLS.contains(symbol))
+                        {
+                            return Err(LexerError::DotNotPrecededByValue(err_context));
+                        } else {
+                            if !buf.is_empty() {
+                                tokens.push(Token::Var(buf.clone()));
+                            } else if tokens.is_empty() {
                                 return Err(LexerError::DotNotPrecededByValue(err_context));
                             }
+                            tokens.push(Token::Symbol(Symbol::Dot));
+                            buf.clear();
                         }
-                        */
-
-                        if buf.len() > 0 {
-                            tokens.push(Token::Var(buf.clone()));
-                        } else if tokens.is_empty() {
-                            println!("\nEMPTY TOKENS\n");
-                            return Err(LexerError::DotNotPrecededByValue(err_context));
-                        }
-                        tokens.push(Token::Symbol(Symbol::Dot));
-
-                        buf.clear();
                     }
                     Symbol::Comma if !self.inside_string => {
-                        if buf.len() > 0 {
+                        if !buf.is_empty() {
                             tokens.push(parse_token(buf.clone()));
                         } else if !tokens
                             .last()
@@ -288,7 +292,6 @@ impl Lexer {
                         }
 
                         tokens.push(Token::Symbol(Symbol::Comma));
-
                         buf.clear();
                     }
                     Symbol::NewLine if self.inside_string => {
@@ -309,6 +312,9 @@ impl Lexer {
 
             prev_ch = ch;
         }
+
+        println!("{:?}", tokens);
+        println!("{}", buf);
 
         if self.inside_string {
             return Err(LexerError::UnclosedString(ErrorContext::new(
@@ -339,6 +345,8 @@ impl Lexer {
 #[cfg(test)]
 mod tests {
     use crate::lexer::{KEYWORDS, Lexer, LexerError, Symbol, Token};
+
+    // TODO HANDLE SOLITARY BACKSLASHES
 
     #[test]
     fn tokenize_identifer_and_string() {
@@ -554,6 +562,32 @@ mod tests {
         println!("{}", text_output);
 
         assert!(text_output == "escaped\"quote");
+    }
+
+    #[test]
+    fn tokenize_solitary_slash() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#""\""#);
+
+        assert!(tokens.is_err_and(|e| matches!(e, LexerError::UnclosedString(_))))
+    }
+
+    #[test]
+    fn tokenize_solitary_double_slash() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize(r#""\\""#).unwrap();
+
+        println!("");
+        let mut text_output = String::new();
+        for token in tokens {
+            if let Token::Text(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+        println!("{}", text_output);
+
+        assert!(text_output == "\\");
     }
 
     #[test]
@@ -845,21 +879,9 @@ mod tests {
     #[test]
     fn number_with_multiple_dots() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize("print(1.11.1.1)").unwrap();
-
-        let valid_tokens: &[Token] = &[
-            Token::Command(format!("print")),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Var("1.11.1.1".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
-        ];
-
-        println!("");
-        for token in &tokens {
-            println!("{:?}", token);
-        }
-
-        assert!(tokens == valid_tokens);
+        let tokens = lexer.tokenize("print(1.11.1.1)");
+        dbg!(&tokens);
+        assert!(tokens.is_err_and(|e| matches!(e, LexerError::InvalidNumber(_))));
     }
 
     #[test]
@@ -886,22 +908,10 @@ mod tests {
     #[test]
     fn number_starting_with_dot() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize("print(.1)").unwrap();
+        let tokens = lexer.tokenize("print(.1)");
 
-        let valid_tokens: &[Token] = &[
-            Token::Command(format!("print")),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::Dot),
-            Token::Number("1".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
-        ];
-
-        println!("");
-        for token in &tokens {
-            println!("{:?}", token);
-        }
-
-        assert!(tokens == valid_tokens);
+        dbg!(&tokens);
+        assert!(tokens.is_err_and(|e| matches!(e, LexerError::DotNotPrecededByValue(_))));
     }
 
     #[test]
@@ -953,9 +963,7 @@ mod tests {
         let result = Lexer::new().tokenize("print(.)");
 
         dbg!(&result);
-        assert!(
-            result.is_err_and(|e| matches!(e, LexerError::ClosedParenPrecededByInvalidSymbol(_)))
-        );
+        assert!(result.is_err_and(|e| matches!(e, LexerError::DotNotPrecededByValue(_))));
 
         let result = Lexer::new().tokenize(".print()");
 
