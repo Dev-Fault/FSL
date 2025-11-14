@@ -22,7 +22,7 @@ static SORTED_SYMBOLS: OnceLock<Vec<&str>> = OnceLock::new();
 
 const KEYWORDS: &[&str] = &["true", "false"];
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ErrorContext<'a> {
     pub input: &'a str,
     pub location: usize,
@@ -34,7 +34,7 @@ impl<'a> ErrorContext<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LexerError<'a> {
     DotPreceededByInvalidToken(ErrorContext<'a>),
     CommaPrecededByInvalidToken(ErrorContext<'a>),
@@ -52,7 +52,7 @@ pub enum LexerError<'a> {
     InvalidNumber(ErrorContext<'a>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Symbol {
     Quote,
     OpenParen,
@@ -107,14 +107,29 @@ fn get_symbol(value: &str) -> Option<Symbol> {
     None
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Token {
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenType {
     Symbol(Symbol),
     Command(String),
     Number(String),
-    Text(String),
+    String(String),
     Keyword(String),
     Var(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub token_type: TokenType,
+    pub location: usize,
+}
+
+impl Token {
+    pub fn new(token_type: TokenType, location: usize) -> Self {
+        Self {
+            token_type,
+            location,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -124,13 +139,23 @@ pub struct Lexer {
     inside_string: bool,
 }
 
-fn parse_token(input: String) -> Token {
+fn parse_token(input: String) -> TokenType {
     if input.parse::<f64>().is_ok() {
-        Token::Number(input)
+        TokenType::Number(input)
     } else if KEYWORDS.contains(&input.as_str()) {
-        Token::Keyword(input)
+        TokenType::Keyword(input)
     } else {
-        Token::Var(input)
+        TokenType::Var(input)
+    }
+}
+
+pub trait LastType {
+    fn last_type(&self) -> Option<&TokenType>;
+}
+
+impl LastType for Vec<Token> {
+    fn last_type(&self) -> Option<&TokenType> {
+        Some(&self.last()?.token_type)
     }
 }
 
@@ -196,10 +221,10 @@ impl Lexer {
                 match symbol {
                     Symbol::Quote => {
                         if self.inside_string {
-                            tokens.push(Token::Text(buf.clone()));
-                            tokens.push(Token::Symbol(Symbol::Quote));
+                            tokens.push(Token::new(TokenType::String(buf.clone()), i));
+                            tokens.push(Token::new(TokenType::Symbol(Symbol::Quote), i));
                         } else {
-                            tokens.push(Token::Symbol(Symbol::Quote));
+                            tokens.push(Token::new(TokenType::Symbol(Symbol::Quote), i));
                         }
 
                         self.inside_string = !self.inside_string;
@@ -210,8 +235,8 @@ impl Lexer {
                             return Err(LexerError::OpenParenNotPrecededByCommand(err_context));
                         }
 
-                        tokens.push(Token::Command(buf.clone()));
-                        tokens.push(Token::Symbol(Symbol::OpenParen));
+                        tokens.push(Token::new(TokenType::Command(buf.clone()), i));
+                        tokens.push(Token::new(TokenType::Symbol(Symbol::OpenParen), i));
                         self.command_depth += 1;
                         buf.clear();
                     }
@@ -220,23 +245,23 @@ impl Lexer {
                             &[Symbol::Dot, Symbol::OpenBracket];
 
                         if !buf.is_empty() {
-                            tokens.push(parse_token(buf.clone()));
+                            tokens.push(Token::new(parse_token(buf.clone()), i));
                         }
 
                         if tokens.is_empty() || self.command_depth == 0 {
                             return Err(LexerError::UnmatchedClosingParen(err_context));
-                        } else if let Some(Token::Symbol(symbol)) = tokens.last()
+                        } else if let Some(TokenType::Symbol(symbol)) = tokens.last_type()
                             && INVALID_PRECEDING_SYMBOLS.contains(symbol)
                         {
                             return Err(LexerError::ClosedParenPrecededByInvalidToken(err_context));
                         } else {
-                            tokens.push(Token::Symbol(Symbol::ClosedParen));
+                            tokens.push(Token::new(TokenType::Symbol(Symbol::ClosedParen), i));
                             self.command_depth -= 1;
                             buf.clear();
                         }
                     }
                     Symbol::OpenBracket if !self.inside_string => {
-                        tokens.push(Token::Symbol(Symbol::OpenBracket));
+                        tokens.push(Token::new(TokenType::Symbol(Symbol::OpenBracket), i));
                         self.list_depth += 1;
                         buf.clear();
                     }
@@ -246,7 +271,7 @@ impl Lexer {
 
                         if tokens.is_empty() || self.list_depth == 0 {
                             return Err(LexerError::UnmatchedClosingBracket(err_context));
-                        } else if let Some(Token::Symbol(symbol)) = tokens.last()
+                        } else if let Some(TokenType::Symbol(symbol)) = tokens.last_type()
                             && INVALID_PRECEDING_SYMBOLS.contains(symbol)
                         {
                             return Err(LexerError::ClosedBracketPrecededByInvalidToken(
@@ -254,9 +279,9 @@ impl Lexer {
                             ));
                         } else {
                             if !buf.is_empty() {
-                                tokens.push(parse_token(buf.clone()));
+                                tokens.push(Token::new(parse_token(buf.clone()), i));
                             }
-                            tokens.push(Token::Symbol(Symbol::ClosedBracket));
+                            tokens.push(Token::new(TokenType::Symbol(Symbol::ClosedBracket), i));
                             self.list_depth -= 1;
                             buf.clear();
                         }
@@ -269,11 +294,12 @@ impl Lexer {
                             buf.chars().all(|ch| ch.is_numeric() || ch == '.');
                         let number_already_has_decimal =
                             buf_might_be_number && buf.contains(symbol.as_str());
-                        let prev_symbol = if let Some(Token::Symbol(symbol)) = tokens.last() {
-                            Some(symbol)
-                        } else {
-                            None
-                        };
+                        let prev_symbol =
+                            if let Some(TokenType::Symbol(symbol)) = tokens.last_type() {
+                                Some(symbol)
+                            } else {
+                                None
+                            };
 
                         if number_already_has_decimal {
                             return Err(LexerError::InvalidNumber(err_context));
@@ -286,26 +312,27 @@ impl Lexer {
                             return Err(LexerError::DotPreceededByInvalidToken(err_context));
                         } else {
                             if !buf.is_empty() {
-                                tokens.push(Token::Var(buf.clone()));
+                                tokens.push(Token::new(TokenType::Var(buf.clone()), i));
                             } else if tokens.is_empty() {
                                 return Err(LexerError::DotPreceededByInvalidToken(err_context));
                             }
-                            tokens.push(Token::Symbol(Symbol::Dot));
+                            tokens.push(Token::new(TokenType::Symbol(Symbol::Dot), i));
                             buf.clear();
                         }
                     }
                     Symbol::Comma if !self.inside_string => {
-                        const VALID_PRECEDING_SYMBOLS: &[Symbol] = &[Symbol::Quote];
+                        const VALID_PRECEDING_SYMBOLS: &[Symbol] =
+                            &[Symbol::Quote, Symbol::ClosedParen];
 
                         if !buf.is_empty() {
-                            tokens.push(parse_token(buf.clone()));
-                        } else if let Some(Token::Symbol(symbol)) = tokens.last()
+                            tokens.push(Token::new(parse_token(buf.clone()), i));
+                        } else if let Some(TokenType::Symbol(symbol)) = tokens.last_type()
                             && !VALID_PRECEDING_SYMBOLS.contains(symbol)
                         {
                             return Err(LexerError::CommaPrecededByInvalidToken(err_context));
                         }
 
-                        tokens.push(Token::Symbol(Symbol::Comma));
+                        tokens.push(Token::new(TokenType::Symbol(Symbol::Comma), i));
                         buf.clear();
                     }
                     _ => {
@@ -349,23 +376,28 @@ impl Lexer {
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::{Lexer, LexerError, Symbol, Token};
+    use crate::lexer::{Lexer, LexerError, Symbol, TokenType};
 
     #[test]
     fn tokenize_identifer_and_string() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("a.store(\"hello\")").unwrap();
+        let tokens = lexer
+            .tokenize("a.store(\"hello\")")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Var("a".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("store".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::Quote),
-            Token::Text("hello".to_string()),
-            Token::Symbol(Symbol::Quote),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Var("a".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("store".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("hello".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -380,15 +412,20 @@ mod tests {
     fn tokenize_args() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("add(12,34)").unwrap();
+        let tokens = lexer
+            .tokenize("add(12,34)")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Command("add".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Number("12".to_string()),
-            Token::Symbol(Symbol::Comma),
-            Token::Number("34".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Command("add".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Number("12".to_string()),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Number("34".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -403,23 +440,28 @@ mod tests {
     fn tokenize_list() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("list.store([1, 2, 3, 4])").unwrap();
+        let tokens = lexer
+            .tokenize("list.store([1, 2, 3, 4])")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Var("list".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("store".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::OpenBracket),
-            Token::Number("1".to_string()),
-            Token::Symbol(Symbol::Comma),
-            Token::Number("2".to_string()),
-            Token::Symbol(Symbol::Comma),
-            Token::Number("3".to_string()),
-            Token::Symbol(Symbol::Comma),
-            Token::Number("4".to_string()),
-            Token::Symbol(Symbol::ClosedBracket),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Var("list".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("store".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::OpenBracket),
+            TokenType::Number("1".to_string()),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Number("2".to_string()),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Number("3".to_string()),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Number("4".to_string()),
+            TokenType::Symbol(Symbol::ClosedBracket),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -441,68 +483,73 @@ mod tests {
         nl().print()";
 
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(input).unwrap();
+        let tokens = lexer
+            .tokenize(input)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Var("i".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("store".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Number("0".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Var("names".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("store".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::OpenBracket),
-            Token::Symbol(Symbol::Quote),
-            Token::Text("name 1".to_string()),
-            Token::Symbol(Symbol::Quote),
-            Token::Symbol(Symbol::Comma),
-            Token::Symbol(Symbol::Quote),
-            Token::Text("name 2".to_string()),
-            Token::Symbol(Symbol::Quote),
-            Token::Symbol(Symbol::ClosedBracket),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Var("names".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("index".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Var("i".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("print".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Var("i".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("add".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Number("1".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Command("print".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Command("nl".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Var("names".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("index".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Var("i".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("print".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Command("nl".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::ClosedParen),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("print".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Var("i".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("store".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Number("0".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Var("names".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("store".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::OpenBracket),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("name 1".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("name 2".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::ClosedBracket),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Var("names".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("index".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Var("i".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Var("i".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("add".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Number("1".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Command("nl".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Var("names".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("index".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Var("i".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Command("nl".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::ClosedParen),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -516,12 +563,18 @@ mod tests {
     #[test]
     fn tokenize_new_line_symbol() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#" "new\nline" "#).unwrap();
+        let tokens = lexer
+            .tokenize(r#" "new\nline" "#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
+
         let mut text_output = String::new();
 
         println!("");
         for token in tokens {
-            if let Token::Text(ref text) = token {
+            if let TokenType::String(ref text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
@@ -534,12 +587,18 @@ mod tests {
     #[test]
     fn tokenize_tab_symbol() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#" "tabbed\ttext" "#).unwrap();
+        let tokens = lexer
+            .tokenize(r#" "tabbed\ttext" "#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
+
         let mut text_output = String::new();
 
         println!("");
         for token in tokens {
-            if let Token::Text(ref text) = token {
+            if let TokenType::String(ref text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
@@ -552,12 +611,17 @@ mod tests {
     #[test]
     fn tokenize_escaped_quote() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#" "escaped\"quote" "#).unwrap();
+        let tokens = lexer
+            .tokenize(r#" "escaped\"quote" "#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
         println!("");
         let mut text_output = String::new();
         for token in tokens {
-            if let Token::Text(ref text) = token {
+            if let TokenType::String(ref text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
@@ -588,12 +652,16 @@ mod tests {
         let lexer = Lexer::new();
         let tokens = lexer.tokenize(r#""\\""#);
         dbg!(&tokens);
-        let tokens = tokens.unwrap();
+        let tokens = tokens
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
         println!("");
         let mut text_output = String::new();
         for token in tokens {
-            if let Token::Text(ref text) = token {
+            if let TokenType::String(ref text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
@@ -622,22 +690,27 @@ mod tests {
     #[test]
     fn tokenize_empty_string() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#""""#).unwrap();
+        let tokens = lexer
+            .tokenize(r#""""#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
         println!("");
         let mut text_output = String::new();
         for token in &tokens {
-            if let Token::Text(text) = token {
+            if let TokenType::String(text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
         }
         println!("start{}end", text_output);
 
-        let valid_tokens: &[Token] = &[
-            Token::Symbol(Symbol::Quote),
-            Token::Text("".to_string()),
-            Token::Symbol(Symbol::Quote),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("".to_string()),
+            TokenType::Symbol(Symbol::Quote),
         ];
 
         assert!(tokens == valid_tokens);
@@ -648,12 +721,17 @@ mod tests {
     #[test]
     fn tokenize_empty_string_with_spaces() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#""  ""#).unwrap();
+        let tokens = lexer
+            .tokenize(r#""  ""#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Symbol(Symbol::Quote),
-            Token::Text("  ".to_string()),
-            Token::Symbol(Symbol::Quote),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("  ".to_string()),
+            TokenType::Symbol(Symbol::Quote),
         ];
 
         println!("");
@@ -667,12 +745,17 @@ mod tests {
     #[test]
     fn tokenize_empty_string_with_spaces_in_command() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#"print("  ")"#).unwrap();
+        let tokens = lexer
+            .tokenize(r#"print("  ")"#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
         println!("");
         let mut text_output = String::new();
         for token in tokens {
-            if let Token::Text(ref text) = token {
+            if let TokenType::String(ref text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
@@ -685,12 +768,17 @@ mod tests {
     #[test]
     fn tokenize_string_spaces() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#"print(" h    e ")"#).unwrap();
+        let tokens = lexer
+            .tokenize(r#"print(" h    e ")"#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
         println!("");
         let mut text_output = String::new();
         for token in tokens {
-            if let Token::Text(ref text) = token {
+            if let TokenType::String(ref text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
@@ -703,12 +791,17 @@ mod tests {
     #[test]
     fn tokenize_double_back_slash() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#" "back\\slash" "#).unwrap();
+        let tokens = lexer
+            .tokenize(r#" "back\\slash" "#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
         println!("");
         let mut text_output = String::new();
         for token in tokens {
-            if let Token::Text(ref text) = token {
+            if let TokenType::String(ref text) = token {
                 text_output = format!("{}", text);
             }
             println!("{:?}", token);
@@ -730,15 +823,20 @@ mod tests {
     fn tokenize_symbols_in_strings() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("print(\"h(el.lo), Wor[ld]\")").unwrap();
+        let tokens = lexer
+            .tokenize("print(\"h(el.lo), Wor[ld]\")")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Command("print".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::Quote),
-            Token::Text("h(el.lo), Wor[ld]".to_string()),
-            Token::Symbol(Symbol::Quote),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("h(el.lo), Wor[ld]".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -753,20 +851,25 @@ mod tests {
     fn tokenize_list_dot() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("[1, 2, 3].length()").unwrap();
+        let tokens = lexer
+            .tokenize("[1, 2, 3].length()")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Symbol(Symbol::OpenBracket),
-            Token::Number(1.to_string()),
-            Token::Symbol(Symbol::Comma),
-            Token::Number(2.to_string()),
-            Token::Symbol(Symbol::Comma),
-            Token::Number(3.to_string()),
-            Token::Symbol(Symbol::ClosedBracket),
-            Token::Symbol(Symbol::Dot),
-            Token::Command(format!("length")),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Symbol(Symbol::OpenBracket),
+            TokenType::Number(1.to_string()),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Number(2.to_string()),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Number(3.to_string()),
+            TokenType::Symbol(Symbol::ClosedBracket),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command(format!("length")),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -781,16 +884,21 @@ mod tests {
     fn tokenize_string_dot() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("\"123\".length()").unwrap();
+        let tokens = lexer
+            .tokenize("\"123\".length()")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Symbol(Symbol::Quote),
-            Token::Text("123".to_string()),
-            Token::Symbol(Symbol::Quote),
-            Token::Symbol(Symbol::Dot),
-            Token::Command(format!("length")),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("123".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command(format!("length")),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -807,21 +915,24 @@ mod tests {
 
         let tokens = lexer
             .tokenize("character.weapon.name.store(\"sword\")")
-            .unwrap();
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Var("character".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Var("weapon".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Var("name".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Command("store".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Symbol(Symbol::Quote),
-            Token::Text("sword".to_string()),
-            Token::Symbol(Symbol::Quote),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Var("character".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Var("weapon".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Var("name".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("store".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("sword".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -836,17 +947,22 @@ mod tests {
     fn tokenize_var_dot_in_command() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("print(character.weapon.name)").unwrap();
+        let tokens = lexer
+            .tokenize("print(character.weapon.name)")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Command("print".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Var("character".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Var("weapon".to_string()),
-            Token::Symbol(Symbol::Dot),
-            Token::Var("name".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Var("character".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Var("weapon".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Var("name".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -860,13 +976,18 @@ mod tests {
     #[test]
     fn decimal_number() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize("print(1.1)").unwrap();
+        let tokens = lexer
+            .tokenize("print(1.1)")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Command(format!("print")),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Number("1.1".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Command(format!("print")),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Number("1.1".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -880,13 +1001,18 @@ mod tests {
     #[test]
     fn big_decimal_number() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize("print(11.11)").unwrap();
+        let tokens = lexer
+            .tokenize("print(11.11)")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Command(format!("print")),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Number("11.11".to_string()),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Command(format!("print")),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Number("11.11".to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -908,14 +1034,19 @@ mod tests {
     #[test]
     fn number_ending_with_dot() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize("print(1.,)").unwrap();
+        let tokens = lexer
+            .tokenize("print(1.,)")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Command(format!("print")),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Number("1.".to_string()),
-            Token::Symbol(Symbol::Comma),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Command(format!("print")),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Number("1.".to_string()),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -939,13 +1070,18 @@ mod tests {
     fn ignore_escapes_outside_string() {
         let lexer = Lexer::new();
 
-        let tokens = lexer.tokenize("print(\\n)").unwrap();
+        let tokens = lexer
+            .tokenize("print(\\n)")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[Token] = &[
-            Token::Command("print".to_string()),
-            Token::Symbol(Symbol::OpenParen),
-            Token::Var(r#"\n"#.to_string()),
-            Token::Symbol(Symbol::ClosedParen),
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Var(r#"\n"#.to_string()),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1009,5 +1145,15 @@ mod tests {
         assert!(
             result.is_err_and(|e| matches!(e, LexerError::ClosedParenPrecededByInvalidToken(_)))
         );
+    }
+
+    #[test]
+    fn err_on_nameless_command() {
+        let lexer = Lexer::new();
+
+        let result = Lexer::new().tokenize("()");
+
+        dbg!(&result);
+        assert!(result.is_err_and(|e| matches!(e, LexerError::OpenParenNotPrecededByCommand(_))));
     }
 }
