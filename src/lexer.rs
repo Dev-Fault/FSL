@@ -322,7 +322,7 @@ impl Lexer {
                     }
                     Symbol::Comma if !self.inside_string => {
                         const VALID_PRECEDING_SYMBOLS: &[Symbol] =
-                            &[Symbol::Quote, Symbol::ClosedParen];
+                            &[Symbol::Quote, Symbol::ClosedParen, Symbol::ClosedBracket];
 
                         if !buf.is_empty() {
                             tokens.push(Token::new(parse_token(buf.clone()), i));
