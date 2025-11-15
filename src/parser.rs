@@ -46,6 +46,12 @@ impl Expression {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParserState {
+    InsideCommand,
+    InsideList,
+}
+
 pub struct Parser {
     expression_stack: Vec<Expression>,
     list_stack: Vec<Vec<Arg>>,
@@ -53,6 +59,7 @@ pub struct Parser {
     current_arg: Option<Arg>,
     dot_arg: Option<Arg>,
     output: Vec<Expression>,
+    state: ParserState,
 }
 
 impl Parser {
@@ -64,6 +71,7 @@ impl Parser {
             current_arg: None,
             dot_arg: None,
             output: vec![],
+            state: ParserState::InsideCommand,
         }
     }
 
@@ -77,6 +85,7 @@ impl Parser {
                     }
 
                     self.expression_stack.push(expression);
+                    self.state = ParserState::InsideCommand;
                 }
                 None => unreachable!("lexer should have handled invalid commands"),
             },
@@ -85,7 +94,6 @@ impl Parser {
                     if let Some(arg) = self.current_arg.take() {
                         expression.args.push(arg);
                     }
-                    println!("\n**expression: **\n{:?}\n", expression);
 
                     if self.list_stack.len() == 0 {
                         if let Some(parent) = self.expression_stack.last_mut() {
@@ -103,6 +111,7 @@ impl Parser {
             Symbol::OpenBracket => match self.expression_stack.last() {
                 Some(_) => {
                     self.list_stack.push(vec![]);
+                    self.state = ParserState::InsideList;
                 }
                 None => return Err(ParserError::LiteralOutsideOfCommand(token.clone())),
             },
@@ -111,13 +120,15 @@ impl Parser {
                     if let Some(arg) = self.current_arg.take() {
                         list.push(arg);
                     }
-                    if let Some(prev_list) = &mut self.list_stack.last_mut() {
-                        prev_list.push(Arg::List(list));
-                    } else if let Some(expression) = self.expression_stack.last_mut() {
+
+                    if self.list_stack.len() < self.expression_stack.len() {
+                        let expression = self.expression_stack.last_mut().unwrap();
                         if let Some(arg) = self.current_arg.take() {
                             list.push(arg);
                         }
                         expression.args.push(Arg::List(list));
+                    } else if let Some(prev_list) = &mut self.list_stack.last_mut() {
+                        prev_list.push(Arg::List(list));
                     }
                 } else {
                     return Err(ParserError::LiteralOutsideOfCommand(token.clone()));
@@ -146,12 +157,15 @@ impl Parser {
             }
             Symbol::Comma => {
                 if let Some(arg) = self.current_arg.take() {
-                    if self.expression_stack.len() > self.list_stack.len() {
-                        let expression = self.expression_stack.last_mut().unwrap();
-                        expression.args.push(arg);
-                    } else {
-                        let list = self.list_stack.last_mut().unwrap();
-                        list.push(arg);
+                    match self.state {
+                        ParserState::InsideCommand => {
+                            let expression = self.expression_stack.last_mut().unwrap();
+                            expression.args.push(arg);
+                        }
+                        ParserState::InsideList => {
+                            let list = self.list_stack.last_mut().unwrap();
+                            list.push(arg);
+                        }
                     }
                 }
             }
