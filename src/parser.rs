@@ -36,24 +36,19 @@ pub enum Arg {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expression {
-    parent: Option<Box<Expression>>,
     name: String,
     args: Vec<Arg>,
 }
 
 impl Expression {
     pub fn new(name: String) -> Self {
-        Self {
-            parent: None,
-            name,
-            args: vec![],
-        }
+        Self { name, args: vec![] }
     }
 }
 
 pub struct Parser {
-    current_expression: Option<Box<Expression>>,
-    current_list: Option<Vec<Arg>>,
+    expression_stack: Vec<Expression>,
+    list_stack: Vec<Vec<Arg>>,
     current_command_name: Option<String>,
     current_arg: Option<Arg>,
     dot_arg: Option<Arg>,
@@ -63,9 +58,9 @@ pub struct Parser {
 impl Parser {
     pub fn new() -> Self {
         Self {
-            current_expression: None,
+            expression_stack: vec![],
             current_command_name: None,
-            current_list: None,
+            list_stack: vec![],
             current_arg: None,
             dot_arg: None,
             output: vec![],
@@ -80,57 +75,54 @@ impl Parser {
                     if let Some(arg) = self.dot_arg.take() {
                         expression.args.push(arg);
                     }
-                    match self.current_expression.take() {
-                        Some(current_expression) => {
-                            expression.parent = Some(current_expression);
-                            self.current_expression = Some(Box::new(expression));
-                        }
-                        None => {
-                            self.current_expression = Some(Box::new(expression));
-                        }
-                    }
+
+                    self.expression_stack.push(expression);
                 }
                 None => unreachable!("lexer should have handled invalid commands"),
             },
-            Symbol::ClosedParen => match self.current_expression.take() {
+            Symbol::ClosedParen => match self.expression_stack.pop() {
                 Some(mut expression) => {
                     if let Some(arg) = self.current_arg.take() {
                         expression.args.push(arg);
                     }
+                    println!("\n**expression: **\n{:?}\n", expression);
 
-                    match expression.parent.take() {
-                        Some(mut parent) => {
-                            parent.args.push(Arg::Expression(*expression));
-                            self.current_expression = Some(parent);
+                    if self.list_stack.len() == 0 {
+                        if let Some(parent) = self.expression_stack.last_mut() {
+                            parent.args.push(Arg::Expression(expression));
+                        } else {
+                            self.output.push(expression);
                         }
-                        None => {
-                            self.output.push(*expression);
-                        }
+                    } else {
+                        let list = self.list_stack.last_mut().unwrap();
+                        list.push(Arg::Expression(expression));
                     }
                 }
-
                 None => unreachable!("Lexer should have handled incomplete commands"),
             },
-            Symbol::OpenBracket => match self.current_expression {
+            Symbol::OpenBracket => match self.expression_stack.last() {
                 Some(_) => {
-                    self.current_list = Some(vec![]);
+                    self.list_stack.push(vec![]);
                 }
                 None => return Err(ParserError::LiteralOutsideOfCommand(token.clone())),
             },
-            Symbol::ClosedBracket => match &mut self.current_expression {
-                Some(expression) => match self.current_list.take() {
-                    Some(mut list) => {
+            Symbol::ClosedBracket => {
+                if let Some(mut list) = self.list_stack.pop() {
+                    if let Some(arg) = self.current_arg.take() {
+                        list.push(arg);
+                    }
+                    if let Some(prev_list) = &mut self.list_stack.last_mut() {
+                        prev_list.push(Arg::List(list));
+                    } else if let Some(expression) = self.expression_stack.last_mut() {
                         if let Some(arg) = self.current_arg.take() {
                             list.push(arg);
                         }
                         expression.args.push(Arg::List(list));
                     }
-                    None => unreachable!("lexer should have handled incomplete lists"),
-                },
-                None => {
+                } else {
                     return Err(ParserError::LiteralOutsideOfCommand(token.clone()));
                 }
-            },
+            }
             Symbol::Quote => {}
             Symbol::Dot => {
                 if let Some(arg) = self.current_arg.take() {
@@ -154,10 +146,12 @@ impl Parser {
             }
             Symbol::Comma => {
                 if let Some(arg) = self.current_arg.take() {
-                    if let Some(list) = &mut self.current_list {
-                        list.push(arg);
-                    } else if let Some(expression) = &mut self.current_expression {
+                    if self.expression_stack.len() > self.list_stack.len() {
+                        let expression = self.expression_stack.last_mut().unwrap();
                         expression.args.push(arg);
+                    } else {
+                        let list = self.list_stack.last_mut().unwrap();
+                        list.push(arg);
                     }
                 }
             }
@@ -168,7 +162,7 @@ impl Parser {
     pub fn parse<'a>(mut self, code: &'a str) -> Result<Vec<Expression>, ParserError<'a>> {
         let tokens = Lexer::new().tokenize(code)?;
 
-        for (i, token) in tokens.iter().enumerate() {
+        for token in &tokens {
             match token.token_type.clone() {
                 TokenType::Symbol(symbol) => self.parse_symbol(token, symbol)?,
                 TokenType::Command(name) => self.current_command_name = Some(name),
@@ -195,7 +189,6 @@ mod tests {
         assert!(
             expressions
                 == vec![Expression {
-                    parent: None,
                     name: "store".to_string(),
                     args: vec![Arg::Var("i".to_string()), Arg::Number("0".to_string())]
                 }]
@@ -210,7 +203,6 @@ mod tests {
         assert!(
             expressions
                 == vec![Expression {
-                    parent: None,
                     name: "store".to_string(),
                     args: vec![
                         Arg::Var("character.weapon.name".to_string()),
@@ -239,15 +231,12 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "if_then".to_string(),
                 args: vec![
                     Arg::Expression(Expression {
-                        parent: None,
                         name: "ends_with".to_string(),
                         args: vec![
                             Arg::Expression(Expression {
-                                parent: None,
                                 name: "index".to_string(),
                                 args: vec![
                                     Arg::Var("names".to_string()),
@@ -258,7 +247,6 @@ mod tests {
                         ]
                     }),
                     Arg::Expression(Expression {
-                        parent: None,
                         name: "print".to_string(),
                         args: vec![Arg::String("it's name 2!!".to_string())]
                     })
@@ -276,21 +264,17 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "def".to_string(),
                 args: vec![
                     Arg::Var("quadruple".to_string()),
                     Arg::Expression(Expression {
-                        parent: None,
                         name: "add".to_string(),
                         args: vec![
                             Arg::Expression(Expression {
-                                parent: None,
                                 name: "double".to_string(),
                                 args: vec![Arg::Var("x".to_string())]
                             }),
                             Arg::Expression(Expression {
-                                parent: None,
                                 name: "double".to_string(),
                                 args: vec![Arg::Var("x".to_string())]
                             })
@@ -309,7 +293,6 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "print".to_string(),
                 args: vec![]
             }]
@@ -324,7 +307,6 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "add".to_string(),
                 args: vec![
                     Arg::Number("1".to_string()),
@@ -344,14 +326,12 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "store".to_string(),
                 args: vec![
                     Arg::Var("list".to_string()),
                     Arg::List(vec![
                         Arg::Number("1".to_string()),
                         Arg::Expression(Expression {
-                            parent: None,
                             name: "add".to_string(),
                             args: vec![Arg::Number("2".to_string()), Arg::Number("3".to_string()),]
                         }),
@@ -370,7 +350,6 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "store".to_string(),
                 args: vec![
                     Arg::Var("matrix".to_string()),
@@ -404,7 +383,6 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "store".to_string(),
                 args: vec![
                     Arg::Var("data".to_string()),
@@ -435,7 +413,6 @@ mod tests {
         assert_eq!(
             expressions,
             vec![Expression {
-                parent: None,
                 name: "store".to_string(),
                 args: vec![
                     Arg::Var("data".to_string()),
@@ -444,7 +421,6 @@ mod tests {
                         Arg::String("hello".to_string()),
                         Arg::Number("42".to_string()),
                         Arg::Expression(Expression {
-                            parent: None,
                             name: "add".to_string(),
                             args: vec![Arg::Number("1".to_string()), Arg::Number("2".to_string()),]
                         }),
@@ -454,6 +430,244 @@ mod tests {
                         ])
                     ])
                 ]
+            }]
+        );
+    }
+
+    #[test]
+    fn deeply_nested_commands() {
+        let result = Parser::new().parse("a(b(c(d(e(f(g(h(i(j(k()))))))))))");
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "a".to_string(),
+                args: vec![Arg::Expression(Expression {
+                    name: "b".to_string(),
+                    args: vec![Arg::Expression(Expression {
+                        name: "c".to_string(),
+                        args: vec![Arg::Expression(Expression {
+                            name: "d".to_string(),
+                            args: vec![Arg::Expression(Expression {
+                                name: "e".to_string(),
+                                args: vec![Arg::Expression(Expression {
+                                    name: "f".to_string(),
+                                    args: vec![Arg::Expression(Expression {
+                                        name: "g".to_string(),
+                                        args: vec![Arg::Expression(Expression {
+                                            name: "h".to_string(),
+                                            args: vec![Arg::Expression(Expression {
+                                                name: "i".to_string(),
+                                                args: vec![Arg::Expression(Expression {
+                                                    name: "j".to_string(),
+                                                    args: vec![Arg::Expression(Expression {
+                                                        name: "k".to_string(),
+                                                        args: vec![]
+                                                    })]
+                                                })]
+                                            })]
+                                        })]
+                                    })]
+                                })]
+                            })]
+                        })]
+                    })]
+                })]
+            }]
+        );
+    }
+
+    #[test]
+    fn commands_in_lists_in_commands() {
+        let result = Parser::new().parse("process([add(1, 2), sub(5, 3), mul(2, 4)])");
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "process".to_string(),
+                args: vec![Arg::List(vec![
+                    Arg::Expression(Expression {
+                        name: "add".to_string(),
+                        args: vec![Arg::Number("1".to_string()), Arg::Number("2".to_string()),]
+                    }),
+                    Arg::Expression(Expression {
+                        name: "sub".to_string(),
+                        args: vec![Arg::Number("5".to_string()), Arg::Number("3".to_string()),]
+                    }),
+                    Arg::Expression(Expression {
+                        name: "mul".to_string(),
+                        args: vec![Arg::Number("2".to_string()), Arg::Number("4".to_string()),]
+                    })
+                ])]
+            }]
+        );
+    }
+
+    #[test]
+    fn lists_in_commands_in_lists() {
+        let result = Parser::new().parse("outer([inner([1, 2]), inner([3, 4])])");
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "outer".to_string(),
+                args: vec![Arg::List(vec![
+                    Arg::Expression(Expression {
+                        name: "inner".to_string(),
+                        args: vec![Arg::List(vec![
+                            Arg::Number("1".to_string()),
+                            Arg::Number("2".to_string()),
+                        ])]
+                    }),
+                    Arg::Expression(Expression {
+                        name: "inner".to_string(),
+                        args: vec![Arg::List(vec![
+                            Arg::Number("3".to_string()),
+                            Arg::Number("4".to_string()),
+                        ])]
+                    })
+                ])]
+            }]
+        );
+    }
+
+    #[test]
+    fn deeply_nested_commands_lists_mixed() {
+        let result = Parser::new().parse(
+        "transform(data.map([filter([1, 2, 3], is_even()), sort([b, a, c])]), [process(x), process(y)])"
+    );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "transform".to_string(),
+                args: vec![
+                    Arg::Expression(Expression {
+                        name: "map".to_string(),
+                        args: vec![
+                            Arg::Var("data".to_string()),
+                            Arg::List(vec![
+                                Arg::Expression(Expression {
+                                    name: "filter".to_string(),
+                                    args: vec![
+                                        Arg::List(vec![
+                                            Arg::Number("1".to_string()),
+                                            Arg::Number("2".to_string()),
+                                            Arg::Number("3".to_string()),
+                                        ]),
+                                        Arg::Expression(Expression {
+                                            name: "is_even".to_string(),
+                                            args: vec![]
+                                        })
+                                    ]
+                                }),
+                                Arg::Expression(Expression {
+                                    name: "sort".to_string(),
+                                    args: vec![Arg::List(vec![
+                                        Arg::Var("b".to_string()),
+                                        Arg::Var("a".to_string()),
+                                        Arg::Var("c".to_string()),
+                                    ])]
+                                })
+                            ])
+                        ]
+                    }),
+                    Arg::List(vec![
+                        Arg::Expression(Expression {
+                            name: "process".to_string(),
+                            args: vec![Arg::Var("x".to_string())]
+                        }),
+                        Arg::Expression(Expression {
+                            name: "process".to_string(),
+                            args: vec![Arg::Var("y".to_string())]
+                        })
+                    ])
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn matrix_of_commands() {
+        let result =
+            Parser::new().parse("grid.store([[add(1,2), sub(3,4)], [mul(5,6), div(7,8)]])");
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "store".to_string(),
+                args: vec![
+                    Arg::Var("grid".to_string()),
+                    Arg::List(vec![
+                        Arg::List(vec![
+                            Arg::Expression(Expression {
+                                name: "add".to_string(),
+                                args: vec![
+                                    Arg::Number("1".to_string()),
+                                    Arg::Number("2".to_string()),
+                                ]
+                            }),
+                            Arg::Expression(Expression {
+                                name: "sub".to_string(),
+                                args: vec![
+                                    Arg::Number("3".to_string()),
+                                    Arg::Number("4".to_string()),
+                                ]
+                            })
+                        ]),
+                        Arg::List(vec![
+                            Arg::Expression(Expression {
+                                name: "mul".to_string(),
+                                args: vec![
+                                    Arg::Number("5".to_string()),
+                                    Arg::Number("6".to_string()),
+                                ]
+                            }),
+                            Arg::Expression(Expression {
+                                name: "div".to_string(),
+                                args: vec![
+                                    Arg::Number("7".to_string()),
+                                    Arg::Number("8".to_string()),
+                                ]
+                            })
+                        ])
+                    ])
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn command_with_list_containing_nested_command_with_list() {
+        let result = Parser::new().parse("outer([a, inner([b, deeper([c, d])]), e])");
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "outer".to_string(),
+                args: vec![Arg::List(vec![
+                    Arg::Var("a".to_string()),
+                    Arg::Expression(Expression {
+                        name: "inner".to_string(),
+                        args: vec![Arg::List(vec![
+                            Arg::Var("b".to_string()),
+                            Arg::Expression(Expression {
+                                name: "deeper".to_string(),
+                                args: vec![Arg::List(vec![
+                                    Arg::Var("c".to_string()),
+                                    Arg::Var("d".to_string()),
+                                ])]
+                            })
+                        ])]
+                    }),
+                    Arg::Var("e".to_string()),
+                ])]
             }]
         );
     }
