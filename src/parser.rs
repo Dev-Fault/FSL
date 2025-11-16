@@ -7,6 +7,7 @@ pub enum ParserError<'a> {
     LexerError(LexerError<'a>),
     InvalidDotPlacement(Token),
     ValueOutsideOfContext(Token),
+    ObjectsNotSupported(Token),
 }
 
 impl<'a> From<LexerError<'a>> for ParserError<'a> {
@@ -156,7 +157,7 @@ impl Parser {
                     if let Some(dot_arg) = self.dot_arg.take() {
                         if let Arg::Var(object) = dot_arg {
                             if let Arg::Var(property) = arg {
-                                self.dot_arg = Some(Arg::Var(format!("{}.{}", object, property)))
+                                return Err(ParserError::ObjectsNotSupported(token.clone()));
                             } else {
                                 return Err(ParserError::InvalidDotPlacement(token.clone()));
                             }
@@ -266,6 +267,10 @@ mod tests {
     fn dot_arg_object() {
         let result = Parser::new().parse("character.weapon.name.store(\"sword\")");
         dbg!(&result);
+        assert!(
+            result.is_err_and(|e| matches!(e, crate::parser::ParserError::ObjectsNotSupported(_)))
+        )
+        /*
         let expressions = result.unwrap();
         assert!(
             expressions
@@ -277,6 +282,7 @@ mod tests {
                     ]
                 }]
         );
+        */
     }
 
     #[test]
