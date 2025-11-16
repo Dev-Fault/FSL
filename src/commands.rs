@@ -2,8 +2,59 @@ use std::sync::Arc;
 
 use crate::{
     FslInterpreter, contains_float,
-    types::{Error, Value, VarMap},
+    types::{ArgPos, ArgRule, Error, FslType, Value},
 };
+
+pub const ALL_VALUES: &[FslType] = &[
+    FslType::Int,
+    FslType::Float,
+    FslType::Bool,
+    FslType::Text,
+    FslType::List,
+    FslType::Var,
+    FslType::Command,
+    FslType::None,
+];
+
+pub const NON_NONE_VALUES: &[FslType] = &[
+    FslType::Int,
+    FslType::Float,
+    FslType::Bool,
+    FslType::Text,
+    FslType::List,
+    FslType::Var,
+    FslType::Command,
+];
+
+pub const NUMERIC_TYPES: &[FslType] = &[
+    FslType::Int,
+    FslType::Float,
+    FslType::Command,
+    FslType::Var,
+    FslType::Text,
+];
+
+pub const LOGIC_TYPES: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
+
+pub const NO_RULES: &[ArgRule] = &[ArgRule {
+    position: ArgPos::None,
+    valid_types: &[],
+}];
+
+pub const MATH_RULES: &[ArgRule] = &[
+    ArgRule {
+        position: ArgPos::Any,
+        valid_types: NUMERIC_TYPES,
+    },
+    ArgRule {
+        position: ArgPos::Index(0),
+        valid_types: NUMERIC_TYPES,
+    },
+    ArgRule {
+        position: ArgPos::Index(1),
+        valid_types: NUMERIC_TYPES,
+    },
+];
 
 pub async fn add(
     values: Arc<Vec<Value>>,
@@ -104,6 +155,11 @@ pub async fn modulus(
     Ok(Value::Int(remainder))
 }
 
+pub const STORE_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
+];
+
 pub async fn store(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -113,6 +169,7 @@ pub async fn store(
     Ok(interpreter.vars.get_value(label)?)
 }
 
+pub const FREE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub async fn free(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -124,6 +181,7 @@ pub async fn free(
     }
 }
 
+pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Any, NON_NONE_VALUES)];
 pub async fn print(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -135,10 +193,18 @@ pub async fn print(
     Ok(Value::None)
 }
 
+pub const EQ_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
 pub async fn eq(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
     Ok(Value::Bool(values[0] == values[1]))
 }
 
+pub const GT_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
 pub async fn gt(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
     if contains_float(&values, interpreter.clone()).await? {
         Ok(Value::Bool(
@@ -152,6 +218,10 @@ pub async fn gt(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Re
     }
 }
 
+pub const LT_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
 pub async fn lt(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
     if contains_float(&values, interpreter.clone()).await? {
         Ok(Value::Bool(
@@ -165,6 +235,7 @@ pub async fn lt(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Re
     }
 }
 
+pub const NOT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
 pub async fn not(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -172,6 +243,10 @@ pub async fn not(
     Ok((!values[0].as_bool(interpreter).await?).into())
 }
 
+pub const AND_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), LOGIC_TYPES),
+];
 pub async fn and(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -181,12 +256,20 @@ pub async fn and(
         .into())
 }
 
+pub const OR_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), LOGIC_TYPES),
+];
 pub async fn or(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
     Ok((values[0].as_bool(interpreter.clone()).await?
         || values[1].as_bool(interpreter.clone()).await?)
         .into())
 }
 
+pub const IF_THEN_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+];
 pub async fn if_then(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -199,6 +282,11 @@ pub async fn if_then(
     }
 }
 
+pub const IF_THEN_ELSE_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+    ArgRule::new(ArgPos::Index(2), &[FslType::Command]),
+];
 pub async fn if_then_else(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -212,6 +300,10 @@ pub async fn if_then_else(
     }
 }
 
+pub const WHILE_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+];
 pub async fn while_loop(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -223,6 +315,10 @@ pub async fn while_loop(
     Ok(Value::None)
 }
 
+pub const REPEAT_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+];
 pub async fn repeat(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -238,6 +334,10 @@ pub async fn repeat(
     Ok(final_value)
 }
 
+pub const INDEX_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
 pub async fn index(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -260,6 +360,10 @@ pub async fn index(
     }
 }
 
+pub const LENGTH_RULES: [ArgRule; 1] = [ArgRule::new(
+    ArgPos::Index(0),
+    &[FslType::List, FslType::Text],
+)];
 pub async fn length(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -274,6 +378,11 @@ pub async fn length(
     }
 }
 
+pub const SWAP_RULES: [ArgRule; 3] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+];
 pub async fn swap(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -307,6 +416,11 @@ pub async fn swap(
     }
 }
 
+pub const INSERT_RULES: [ArgRule; 3] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+];
 pub async fn insert(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -337,6 +451,10 @@ pub async fn insert(
     }
 }
 
+pub const REMOVE_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
 pub async fn remove(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -365,6 +483,11 @@ pub async fn remove(
     }
 }
 
+pub const REPLACE_RULES: [ArgRule; 3] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+];
 pub async fn replace(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -394,6 +517,10 @@ pub async fn replace(
     }
 }
 
+pub const STARTS_WITH_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+];
 pub async fn starts_with(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -405,6 +532,10 @@ pub async fn starts_with(
         .into())
 }
 
+pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+];
 pub async fn ends_with(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -416,6 +547,7 @@ pub async fn ends_with(
         .into())
 }
 
+pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Any, NON_NONE_VALUES)];
 pub async fn concat(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -429,6 +561,7 @@ pub async fn concat(
     Ok(cat_string.into())
 }
 
+pub const CAPITALIZE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub async fn capitalize(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -441,6 +574,7 @@ pub async fn capitalize(
     }
 }
 
+pub const UPPERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub async fn uppercase(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -448,6 +582,7 @@ pub async fn uppercase(
     Ok(values[0].as_text(interpreter).await?.to_uppercase().into())
 }
 
+pub const LOWERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub async fn lowercase(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -455,6 +590,8 @@ pub async fn lowercase(
     Ok(values[0].as_text(interpreter).await?.to_lowercase().into())
 }
 
+pub const REMOVE_WHITESPACE_RULES: [ArgRule; 1] =
+    [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub async fn remove_whitespace(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -467,6 +604,10 @@ pub async fn remove_whitespace(
         .into())
 }
 
+pub const RANDOM_RANGE_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
 pub async fn random_range(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -490,6 +631,7 @@ pub async fn random_range(
     }
 }
 
+pub const RANDOM_ENTRY_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::List])];
 pub async fn random_entry(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -501,15 +643,13 @@ pub async fn random_entry(
 mod tests {
     use std::sync::Arc;
 
-    use crate::types::Command;
+    use crate::types::{Command, VarMap};
 
     use super::*;
 
     fn get_command(label: &str) -> Command {
-        FslInterpreter::construct_std_commands()
-            .get(label)
-            .cloned()
-            .unwrap()
+        let interpreter = FslInterpreter::new();
+        interpreter.commands.get(label).cloned().unwrap()
     }
 
     async fn test_math(

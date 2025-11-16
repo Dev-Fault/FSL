@@ -24,37 +24,6 @@ pub enum FslType {
     None,
 }
 
-pub const ALL_VALUES: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Var,
-    FslType::Command,
-    FslType::None,
-];
-
-pub const NON_NONE_VALUES: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Var,
-    FslType::Command,
-];
-
-pub const NUMERIC_TYPES: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
-];
-
-pub const LOGIC_TYPES: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
@@ -79,8 +48,8 @@ pub enum ArgPos {
 
 #[derive(Debug, Clone)]
 pub struct ArgRule {
-    position: ArgPos,
-    valid_types: &'static [FslType],
+    pub(crate) position: ArgPos,
+    pub(crate) valid_types: &'static [FslType],
 }
 
 pub trait CommandFn: Send + Sync {
@@ -129,26 +98,6 @@ impl FslType {
         }
     }
 }
-
-pub const NO_RULES: &[ArgRule] = &[ArgRule {
-    position: ArgPos::None,
-    valid_types: &[],
-}];
-
-pub const MATH_RULES: &[ArgRule] = &[
-    ArgRule {
-        position: ArgPos::Any,
-        valid_types: NUMERIC_TYPES,
-    },
-    ArgRule {
-        position: ArgPos::Index(0),
-        valid_types: NUMERIC_TYPES,
-    },
-    ArgRule {
-        position: ArgPos::Index(1),
-        valid_types: NUMERIC_TYPES,
-    },
-];
 
 impl ArgRule {
     pub const fn new(position: ArgPos, valid_types: &'static [FslType]) -> Self {
