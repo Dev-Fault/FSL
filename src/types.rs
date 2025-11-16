@@ -36,14 +36,12 @@ pub enum Value {
     None,
 }
 
-pub struct VarMap(Arc<Mutex<HashMap<String, Value>>>);
-
 #[derive(Debug, Clone)]
 pub enum ArgPos {
     Index(usize),
     Range(Range<usize>),
+    AnyAfter(usize),
     None,
-    Any,
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +72,6 @@ where
     }
 }
 
-//pub type CommandFn = dyn Fn(Vec<Value>, &VarMap) -> Result<Value, Error> + Send + Sync;
 pub type Executor = Arc<dyn CommandFn>;
 
 pub struct Command {
@@ -126,6 +123,10 @@ impl Command {
         self.args = Arc::new(args);
     }
 
+    pub fn get_args(&self) -> &Vec<Value> {
+        &self.args
+    }
+
     fn validate_arg_range(&self, arg_rule: &ArgRule, range: &Range<usize>) -> Result<(), Error> {
         for (i, arg) in self.args[range.start..range.end].iter().enumerate() {
             let fsl_type = arg.as_type();
@@ -153,7 +154,7 @@ impl Command {
                     } else {
                         max_args
                     };
-                    let range = *i..*i + 1;
+                    let range = *i..*i;
                     match self.args.get(*i) {
                         Some(_) => {
                             self.validate_arg_range(arg_rule, &range)?;
@@ -198,9 +199,9 @@ impl Command {
                         ));
                     }
                 }
-                ArgPos::Any => {
+                ArgPos::AnyAfter(i) => {
                     max_args = usize::MAX;
-                    let range = Range::from(0..self.args.len());
+                    let range = Range::from(*i..self.args.len());
                     self.validate_arg_range(arg_rule, &range)?;
                 }
             }
@@ -240,43 +241,9 @@ impl Clone for Command {
     fn clone(&self) -> Self {
         Self {
             label: self.label.clone(),
-            arg_rules: self.arg_rules.clone(),
+            arg_rules: self.arg_rules,
             args: self.args.clone(),
             executor: self.executor.clone(),
-        }
-    }
-}
-
-impl VarMap {
-    pub fn new() -> Self {
-        Self {
-            0: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    pub fn insert_value(&self, label: &str, value: &Value) {
-        self.0
-            .lock()
-            .unwrap()
-            .insert(label.to_string(), value.clone());
-    }
-
-    pub fn remove_value(&self, label: &str) -> Option<Value> {
-        self.0.lock().unwrap().remove(label)
-    }
-
-    pub fn get_value(&self, label: &str) -> Result<Value, Error> {
-        let value = self.0.lock().unwrap().get(label).cloned();
-
-        match value {
-            Some(value) => {
-                if value.is_type(FslType::Var) {
-                    return self.get_value(&value.get_var_label()?);
-                } else {
-                    Ok(value.clone())
-                }
-            }
-            None => Err(format!("tried to get value of non existant var {}", label)),
         }
     }
 }

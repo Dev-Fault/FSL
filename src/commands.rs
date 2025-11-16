@@ -26,6 +26,15 @@ pub const NON_NONE_VALUES: &[FslType] = &[
     FslType::Command,
 ];
 
+pub const VAR_VALUES: &[FslType] = &[
+    FslType::Int,
+    FslType::Float,
+    FslType::Bool,
+    FslType::Text,
+    FslType::List,
+    FslType::Var,
+];
+
 pub const NUMERIC_TYPES: &[FslType] = &[
     FslType::Int,
     FslType::Float,
@@ -43,7 +52,7 @@ pub const NO_RULES: &[ArgRule] = &[ArgRule {
 
 pub const MATH_RULES: &[ArgRule] = &[
     ArgRule {
-        position: ArgPos::Any,
+        position: ArgPos::AnyAfter(0),
         valid_types: NUMERIC_TYPES,
     },
     ArgRule {
@@ -156,7 +165,7 @@ pub async fn modulus(
 }
 
 pub const STORE_RULES: [ArgRule; 2] = [
-    ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
 ];
 
@@ -165,7 +174,19 @@ pub async fn store(
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
     let label = &values[0].get_var_label()?;
-    interpreter.vars.insert_value(label, &values[1]);
+    match &values[1] {
+        Value::Var(_) => todo!(),
+        Value::Command(command) => {
+            interpreter
+                .clone()
+                .vars
+                .insert_value(label, &command.execute(interpreter.clone()).await?);
+        }
+        Value::None => todo!(),
+        _ => {
+            interpreter.vars.insert_value(label, &values[1]);
+        }
+    }
     Ok(interpreter.vars.get_value(label)?)
 }
 
@@ -181,15 +202,19 @@ pub async fn free(
     }
 }
 
-pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Any, NON_NONE_VALUES)];
+pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
 pub async fn print(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let mut std_out = interpreter.output.lock().await;
+    let mut output = String::new();
+
     for value in values.iter() {
-        std_out.push_str(&value.as_text(interpreter.clone()).await?);
+        output.push_str(&value.as_text(interpreter.clone()).await?);
     }
+
+    let mut std_out = interpreter.output.lock().await;
+    std_out.push_str(&output);
     Ok(Value::None)
 }
 
@@ -198,7 +223,27 @@ pub const EQ_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub async fn eq(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
-    Ok(Value::Bool(values[0] == values[1]))
+    let a_command_result;
+    let a = match &values[0] {
+        Value::Var(label) => &interpreter.vars.get_value(label)?,
+        Value::Command(command) => {
+            a_command_result = command.execute(interpreter.clone()).await?;
+            &a_command_result
+        }
+        _ => &values[0],
+    };
+
+    let b_command_result;
+    let b = match &values[1] {
+        Value::Var(label) => &interpreter.vars.get_value(label)?,
+        Value::Command(command) => {
+            b_command_result = command.execute(interpreter).await?;
+            &b_command_result
+        }
+        _ => &values[1],
+    };
+
+    Ok(Value::Bool(a == b))
 }
 
 pub const GT_RULES: [ArgRule; 2] = [
@@ -317,17 +362,20 @@ pub async fn while_loop(
 
 pub const REPEAT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+    ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
 ];
 pub async fn repeat(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
     let repetitions = values[0].as_int(interpreter.clone()).await?;
-    let command = values[1].as_command()?;
     let mut final_value = Value::None;
-    for i in 0..repetitions {
-        final_value = command.execute(interpreter.clone()).await?;
+
+    for _ in 0..repetitions {
+        for command in &values[1..] {
+            let command = command.as_command()?;
+            final_value = command.execute(interpreter.clone()).await?;
+        }
         interpreter.increment_loops().await?;
     }
 
@@ -342,7 +390,12 @@ pub async fn index(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = &values[0];
+    let array = if values[0].is_type(FslType::Var) {
+        &values[0].get_var_value(interpreter.clone())?
+    } else {
+        &values[0]
+    };
+
     if array.is_type(crate::types::FslType::List) {
         let list = array.as_list(interpreter.clone()).await?;
         let index = values[1].as_int(interpreter).await?;
@@ -368,7 +421,12 @@ pub async fn length(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = &values[0];
+    let array = if values[0].is_type(FslType::Var) {
+        &values[0].get_var_value(interpreter.clone())?
+    } else {
+        &values[0]
+    };
+
     if array.is_type(crate::types::FslType::List) {
         let list = array.as_list(interpreter).await?;
         Ok((list.len() as i64).into())
@@ -387,7 +445,12 @@ pub async fn swap(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = &values[0];
+    let array = if values[0].is_type(FslType::Var) {
+        &values[0].get_var_value(interpreter.clone())?
+    } else {
+        &values[0]
+    };
+
     let a = values[1].as_int(interpreter.clone()).await? as usize;
     let b = values[2].as_int(interpreter.clone()).await? as usize;
 
@@ -425,7 +488,12 @@ pub async fn insert(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = &values[0];
+    let array = if values[0].is_type(FslType::Var) {
+        &values[0].get_var_value(interpreter.clone())?
+    } else {
+        &values[0]
+    };
+
     let i = values[2].as_int(interpreter.clone()).await? as usize;
 
     if array.is_type(crate::types::FslType::List) {
@@ -459,7 +527,12 @@ pub async fn remove(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = &values[0];
+    let array = if values[0].is_type(FslType::Var) {
+        &values[0].get_var_value(interpreter.clone())?
+    } else {
+        &values[0]
+    };
+
     if array.is_type(crate::types::FslType::List) {
         let mut list = array.as_list(interpreter.clone()).await?;
         let i = values[1].as_int(interpreter).await? as usize;
@@ -492,7 +565,12 @@ pub async fn replace(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = &values[0];
+    let array = if values[0].is_type(FslType::Var) {
+        &values[0].get_var_value(interpreter.clone())?
+    } else {
+        &values[0]
+    };
+
     let i = values[2].as_int(interpreter.clone()).await? as usize;
 
     if array.is_type(crate::types::FslType::List) {
@@ -547,7 +625,7 @@ pub async fn ends_with(
         .into())
 }
 
-pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Any, NON_NONE_VALUES)];
+pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
 pub async fn concat(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -643,7 +721,8 @@ pub async fn random_entry(
 mod tests {
     use std::sync::Arc;
 
-    use crate::types::{Command, VarMap};
+    use crate::VarMap;
+    use crate::types::Command;
 
     use super::*;
 
