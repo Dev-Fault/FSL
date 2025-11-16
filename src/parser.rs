@@ -1,6 +1,9 @@
 use std::{collections::btree_map::Values, ops::Deref};
 
-use crate::lexer::{Lexer, LexerError, Symbol, Token, TokenType};
+use crate::{
+    lexer::{Keyword, Lexer, LexerError, Symbol, Token, TokenType},
+    types::Command,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParserError<'a> {
@@ -23,22 +26,6 @@ pub struct List {
     data: Vec<Arg>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Arg {
-    Number(String),
-    String(String),
-    Keyword(String),
-    Var(String),
-    List(Vec<Arg>),
-    Expression(Expression),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Expression {
-    name: String,
-    args: Vec<Arg>,
-}
-
 impl Expression {
     pub fn new(name: String) -> Self {
         Self { name, args: vec![] }
@@ -49,6 +36,22 @@ impl Expression {
 pub enum ParserState {
     InsideCommand,
     InsideList,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Arg {
+    Number(String),
+    String(String),
+    Keyword(Keyword),
+    Var(String),
+    List(Vec<Arg>),
+    Expression(Expression),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Expression {
+    pub name: String,
+    pub args: Vec<Arg>,
 }
 
 pub struct Parser {
@@ -74,7 +77,12 @@ impl Parser {
         }
     }
 
-    fn parse_symbol<'a>(&mut self, token: &Token, symbol: Symbol) -> Result<(), ParserError<'a>> {
+    fn parse_symbol<'a>(
+        &mut self,
+        token: &Token,
+        next_token: Option<&Token>,
+        symbol: Symbol,
+    ) -> Result<(), ParserError<'a>> {
         match symbol {
             Symbol::OpenParen => match self.current_command_name.take() {
                 Some(name) => {
@@ -98,19 +106,25 @@ impl Parser {
                             expression.args.push(arg);
                         }
 
-                        if let Some(state) = self.state_stack.last() {
-                            match state {
-                                ParserState::InsideCommand => {
-                                    let parent = self.expression_stack.last_mut().unwrap();
-                                    parent.args.push(Arg::Expression(expression));
-                                }
-                                ParserState::InsideList => {
-                                    let list = self.list_stack.last_mut().unwrap();
-                                    list.push(Arg::Expression(expression));
-                                }
-                            }
+                        if next_token
+                            .is_some_and(|t| matches!(t.token_type, TokenType::Symbol(Symbol::Dot)))
+                        {
+                            self.current_arg = Some(Arg::Expression(expression));
                         } else {
-                            self.output.push(expression);
+                            if let Some(state) = self.state_stack.last() {
+                                match state {
+                                    ParserState::InsideCommand => {
+                                        let parent = self.expression_stack.last_mut().unwrap();
+                                        parent.args.push(Arg::Expression(expression));
+                                    }
+                                    ParserState::InsideList => {
+                                        let list = self.list_stack.last_mut().unwrap();
+                                        list.push(Arg::Expression(expression));
+                                    }
+                                }
+                            } else {
+                                self.output.push(expression);
+                            }
                         }
                     }
                     None => unreachable!("Lexer should have handled incomplete commands"),
@@ -199,9 +213,9 @@ impl Parser {
     pub fn parse<'a>(mut self, code: &'a str) -> Result<Vec<Expression>, ParserError<'a>> {
         let tokens = Lexer::new().tokenize(code)?;
 
-        for token in &tokens {
+        for (i, token) in tokens.iter().enumerate() {
             match token.token_type.clone() {
-                TokenType::Symbol(symbol) => self.parse_symbol(token, symbol)?,
+                TokenType::Symbol(symbol) => self.parse_symbol(token, tokens.get(i + 1), symbol)?,
                 TokenType::Command(name) => self.current_command_name = Some(name),
                 TokenType::Number(number) => self.current_arg = Some(Arg::Number(number)),
                 TokenType::String(string) => self.current_arg = Some(Arg::String(string)),
@@ -217,6 +231,118 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use crate::parser::{Arg, Expression, Parser};
+
+    #[test]
+    fn chain_after_expression() {
+        let result = Parser::new().parse(r#"add(1, 1).add(1)"#);
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "add".to_string(),
+                args: vec![
+                    Arg::Expression(Expression {
+                        name: "add".to_string(),
+                        args: vec![Arg::Number("1".to_string()), Arg::Number("1".to_string()),]
+                    }),
+                    Arg::Number("1".to_string())
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn chain_after_command_with_list() {
+        let result = Parser::new().parse(r#"index(["john", "joseph"], 1).print()"#);
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "print".to_string(),
+                args: vec![Arg::Expression(Expression {
+                    name: "index".to_string(),
+                    args: vec![
+                        Arg::List(vec![
+                            Arg::String("john".to_string()),
+                            Arg::String("joseph".to_string()),
+                        ]),
+                        Arg::Number("1".to_string())
+                    ]
+                })]
+            }]
+        );
+    }
+
+    #[test]
+    fn multiple_statements_with_method_chains() {
+        let result = Parser::new().parse(
+            r#"names.store(["John", "James", "Joseph", "Alexander"])
+        i.store(0)
+        repeat(names.length(), names.index(i).print(), print("\n"), i.store(i.add(1)))
+        "#,
+        );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![
+                Expression {
+                    name: "store".to_string(),
+                    args: vec![
+                        Arg::Var("names".to_string()),
+                        Arg::List(vec![
+                            Arg::String("John".to_string()),
+                            Arg::String("James".to_string()),
+                            Arg::String("Joseph".to_string()),
+                            Arg::String("Alexander".to_string()),
+                        ])
+                    ]
+                },
+                Expression {
+                    name: "store".to_string(),
+                    args: vec![Arg::Var("i".to_string()), Arg::Number("0".to_string())]
+                },
+                Expression {
+                    name: "repeat".to_string(),
+                    args: vec![
+                        Arg::Expression(Expression {
+                            name: "length".to_string(),
+                            args: vec![Arg::Var("names".to_string())]
+                        }),
+                        Arg::Expression(Expression {
+                            name: "print".to_string(),
+                            args: vec![Arg::Expression(Expression {
+                                name: "index".to_string(),
+                                args: vec![
+                                    Arg::Var("names".to_string()),
+                                    Arg::Var("i".to_string())
+                                ]
+                            })]
+                        }),
+                        Arg::Expression(Expression {
+                            name: "print".to_string(),
+                            args: vec![Arg::String("\n".to_string())]
+                        }),
+                        Arg::Expression(Expression {
+                            name: "store".to_string(),
+                            args: vec![
+                                Arg::Var("i".to_string()),
+                                Arg::Expression(Expression {
+                                    name: "add".to_string(),
+                                    args: vec![
+                                        Arg::Var("i".to_string()),
+                                        Arg::Number("1".to_string())
+                                    ]
+                                })
+                            ]
+                        })
+                    ]
+                }
+            ]
+        );
+    }
 
     #[test]
     fn dot_after_command_no_chain() {

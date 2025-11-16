@@ -20,7 +20,10 @@ const SYMBOLS: &[&str] = &[
 
 static SORTED_SYMBOLS: OnceLock<Vec<&str>> = OnceLock::new();
 
-const KEYWORDS: &[&str] = &["true", "false"];
+const KEYWORD_TRUE: &str = "true";
+const KEYWORD_FALSE: &str = "false";
+
+const KEYWORDS: &[&str] = &[KEYWORD_TRUE, KEYWORD_FALSE];
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ErrorContext<'a> {
@@ -107,13 +110,28 @@ fn get_symbol(value: &str) -> Option<Symbol> {
     None
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Keyword {
+    True,
+    False,
+}
+
+impl Keyword {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Keyword::True => KEYWORD_TRUE,
+            Keyword::False => KEYWORD_FALSE,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     Symbol(Symbol),
     Command(String),
     Number(String),
     String(String),
-    Keyword(String),
+    Keyword(Keyword),
     Var(String),
 }
 
@@ -139,11 +157,19 @@ pub struct Lexer {
     inside_string: bool,
 }
 
+fn get_keyword(input: &str) -> Option<Keyword> {
+    match input {
+        KEYWORD_TRUE => Some(Keyword::True),
+        KEYWORD_FALSE => Some(Keyword::False),
+        _ => None,
+    }
+}
+
 fn parse_token(input: String) -> TokenType {
     if input.parse::<f64>().is_ok() {
         TokenType::Number(input)
-    } else if KEYWORDS.contains(&input.as_str()) {
-        TokenType::Keyword(input)
+    } else if let Some(keyword) = get_keyword(&input) {
+        TokenType::Keyword(keyword)
     } else {
         TokenType::Var(input)
     }
