@@ -368,6 +368,14 @@ impl Lexer {
                 code,
                 code.len(),
             )));
+        } else if tokens
+            .last()
+            .is_some_and(|t| t.token_type != TokenType::Symbol(Symbol::ClosedParen))
+        {
+            return Err(LexerError::TrailingToken(ErrorContext::new(
+                code,
+                code.len(),
+            )));
         }
 
         Ok(tokens)
@@ -564,7 +572,7 @@ mod tests {
     fn tokenize_new_line_symbol() {
         let lexer = Lexer::new();
         let tokens = lexer
-            .tokenize(r#" "new\nline" "#)
+            .tokenize(r#"print("new\nline")"#)
             .unwrap()
             .iter()
             .map(|t| t.token_type.clone())
@@ -588,7 +596,7 @@ mod tests {
     fn tokenize_tab_symbol() {
         let lexer = Lexer::new();
         let tokens = lexer
-            .tokenize(r#" "tabbed\ttext" "#)
+            .tokenize(r#"print("tabbed\ttext")"#)
             .unwrap()
             .iter()
             .map(|t| t.token_type.clone())
@@ -612,7 +620,7 @@ mod tests {
     fn tokenize_escaped_quote() {
         let lexer = Lexer::new();
         let tokens = lexer
-            .tokenize(r#" "escaped\"quote" "#)
+            .tokenize(r#"print("escaped\"quote")"#)
             .unwrap()
             .iter()
             .map(|t| t.token_type.clone())
@@ -650,7 +658,7 @@ mod tests {
     #[test]
     fn escape_single_slash() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#""\\""#);
+        let tokens = lexer.tokenize(r#"print("\\")"#);
         dbg!(&tokens);
         let tokens = tokens
             .unwrap()
@@ -691,7 +699,7 @@ mod tests {
     fn tokenize_empty_string() {
         let lexer = Lexer::new();
         let tokens = lexer
-            .tokenize(r#""""#)
+            .tokenize(r#"print("")"#)
             .unwrap()
             .iter()
             .map(|t| t.token_type.clone())
@@ -708,9 +716,12 @@ mod tests {
         println!("start{}end", text_output);
 
         let valid_tokens: &[TokenType] = &[
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
             TokenType::Symbol(Symbol::Quote),
             TokenType::String("".to_string()),
             TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         assert!(tokens == valid_tokens);
@@ -722,16 +733,19 @@ mod tests {
     fn tokenize_empty_string_with_spaces() {
         let lexer = Lexer::new();
         let tokens = lexer
-            .tokenize(r#""  ""#)
+            .tokenize(r#"print("  ")"#)
             .unwrap()
             .iter()
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
         let valid_tokens: &[TokenType] = &[
+            TokenType::Command("print".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
             TokenType::Symbol(Symbol::Quote),
             TokenType::String("  ".to_string()),
             TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::ClosedParen),
         ];
 
         println!("");
@@ -792,7 +806,7 @@ mod tests {
     fn tokenize_double_back_slash() {
         let lexer = Lexer::new();
         let tokens = lexer
-            .tokenize(r#" "back\\slash" "#)
+            .tokenize(r#"print("back\\slash")"#)
             .unwrap()
             .iter()
             .map(|t| t.token_type.clone())
@@ -814,7 +828,7 @@ mod tests {
     #[test]
     fn tokenize_unescaped_quote() {
         let lexer = Lexer::new();
-        let tokens = lexer.tokenize(r#" "unescaped\\"quote" "#);
+        let tokens = lexer.tokenize(r#"print("unescaped\\"quote")"#);
         dbg!(&tokens);
         assert!(tokens.is_err_and(|e| matches!(e, LexerError::UnclosedString(_))));
     }
