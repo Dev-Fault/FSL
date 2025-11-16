@@ -80,7 +80,7 @@ pub enum ArgPos {
 #[derive(Debug, Clone)]
 pub struct ArgRule {
     position: ArgPos,
-    valid_types: Vec<FslType>,
+    valid_types: &'static [FslType],
 }
 
 pub trait CommandFn: Send + Sync {
@@ -110,7 +110,7 @@ pub type Executor = Arc<dyn CommandFn>;
 
 pub struct Command {
     label: String,
-    arg_rules: Vec<ArgRule>,
+    arg_rules: &'static [ArgRule],
     args: Arc<Vec<Value>>,
     executor: Executor,
 }
@@ -130,33 +130,37 @@ impl FslType {
     }
 }
 
+pub const NO_RULES: &[ArgRule] = &[ArgRule {
+    position: ArgPos::None,
+    valid_types: &[],
+}];
+
+pub const MATH_RULES: &[ArgRule] = &[
+    ArgRule {
+        position: ArgPos::Any,
+        valid_types: NUMERIC_TYPES,
+    },
+    ArgRule {
+        position: ArgPos::Index(0),
+        valid_types: NUMERIC_TYPES,
+    },
+    ArgRule {
+        position: ArgPos::Index(1),
+        valid_types: NUMERIC_TYPES,
+    },
+];
+
 impl ArgRule {
-    pub fn new(position: ArgPos, valid_types: Vec<FslType>) -> Self {
+    pub const fn new(position: ArgPos, valid_types: &'static [FslType]) -> Self {
         Self {
             position,
             valid_types,
         }
     }
-
-    /// Creates an ArgRule that expects 0 arguments
-    pub fn no_args_rule() -> Self {
-        Self {
-            position: ArgPos::None,
-            valid_types: vec![],
-        }
-    }
-
-    pub fn math_rules() -> Vec<Self> {
-        vec![
-            ArgRule::new(ArgPos::Any, NUMERIC_TYPES.into()),
-            ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
-            ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-        ]
-    }
 }
 
 impl Command {
-    pub fn new(label: &str, arg_rules: Vec<ArgRule>, executor: Executor) -> Self {
+    pub fn new(label: &str, arg_rules: &'static [ArgRule], executor: Executor) -> Self {
         Self {
             label: label.to_string(),
             arg_rules,
@@ -192,7 +196,7 @@ impl Command {
     /// Executes command ensuring arg rules are obeyed
     pub async fn execute(&self, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
         let mut max_args = 0;
-        for arg_rule in &self.arg_rules {
+        for arg_rule in self.arg_rules {
             match &arg_rule.position {
                 ArgPos::Index(i) => {
                     max_args = if max_args < (*i + 1) {

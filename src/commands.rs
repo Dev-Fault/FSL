@@ -113,23 +113,6 @@ pub async fn store(
     Ok(interpreter.vars.get_value(label)?)
 }
 
-/*
-pub async fn list(
-    values: Arc<Vec<Value>>,
-    interpreter: Arc<FslInterpreter>,
-) -> Result<Value, Error> {
-    let list = values[0..values.len() - 1]
-        .iter()
-        .cloned()
-        .collect::<Vec<Value>>();
-    let list = Value::List(list);
-    interpreter
-        .vars
-        .insert_value(&values[1].get_var_label()?, &list);
-    Ok(list)
-}
-*/
-
 pub async fn free(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -291,7 +274,7 @@ pub async fn length(
     }
 }
 
-pub async fn swap_indices(
+pub async fn swap(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
@@ -324,7 +307,7 @@ pub async fn swap_indices(
     }
 }
 
-pub async fn insert_at(
+pub async fn insert(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
@@ -354,7 +337,7 @@ pub async fn insert_at(
     }
 }
 
-pub async fn remove_at(
+pub async fn remove(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
@@ -382,7 +365,7 @@ pub async fn remove_at(
     }
 }
 
-pub async fn replace_at(
+pub async fn replace(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
@@ -458,14 +441,14 @@ pub async fn capitalize(
     }
 }
 
-pub async fn upper(
+pub async fn uppercase(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
     Ok(values[0].as_text(interpreter).await?.to_uppercase().into())
 }
 
-pub async fn lower(
+pub async fn lowercase(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
@@ -482,10 +465,6 @@ pub async fn remove_whitespace(
         .split_whitespace()
         .collect::<String>()
         .into())
-}
-
-pub async fn nl(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
-    Ok("\n".into())
 }
 
 pub async fn random_range(
@@ -1334,7 +1313,7 @@ mod tests {
         let interpreter = Arc::new(FslInterpreter::new());
         let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
         let text = Value::Text("example".into());
-        let result = swap_indices(
+        let result = swap(
             Arc::new(vec![list, 1.into(), 2.into()]),
             interpreter.clone(),
         )
@@ -1343,7 +1322,7 @@ mod tests {
         dbg!(result.clone());
         assert!(result == Value::List(vec![1.into(), 3.into(), 2.into()]));
 
-        let result = swap_indices(Arc::new(vec![text, 1.into(), 2.into()]), interpreter)
+        let result = swap(Arc::new(vec![text, 1.into(), 2.into()]), interpreter)
             .await
             .unwrap();
         dbg!(result.clone());
@@ -1355,7 +1334,7 @@ mod tests {
         let interpreter = Arc::new(FslInterpreter::new());
         let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
         let text = Value::Text("example".into());
-        let result = insert_at(
+        let result = insert(
             Arc::new(vec![list, 10.into(), 1.into()]),
             interpreter.clone(),
         )
@@ -1364,7 +1343,7 @@ mod tests {
         dbg!(result.clone());
         assert!(result == Value::List(vec![1.into(), 10.into(), 2.into(), 3.into()]));
 
-        let result = insert_at(Arc::new(vec![text, 10.into(), 2.into()]), interpreter)
+        let result = insert(Arc::new(vec![text, 10.into(), 2.into()]), interpreter)
             .await
             .unwrap();
         dbg!(result.clone());
@@ -1376,12 +1355,12 @@ mod tests {
         let interpreter = Arc::new(FslInterpreter::new());
         let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
         let text = Value::Text("example".into());
-        let result = remove_at(Arc::new(vec![list, 1.into()]), interpreter.clone())
+        let result = remove(Arc::new(vec![list, 1.into()]), interpreter.clone())
             .await
             .unwrap();
         assert!(result == Value::List(vec![1.into(), 3.into()]));
 
-        let result = remove_at(Arc::new(vec![text, 1.into()]), interpreter)
+        let result = remove(Arc::new(vec![text, 1.into()]), interpreter)
             .await
             .unwrap();
         assert!(result == Value::Text("eample".into()));
@@ -1392,7 +1371,7 @@ mod tests {
         let interpreter = Arc::new(FslInterpreter::new());
         let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
         let text = Value::Text("example".into());
-        let result = replace_at(
+        let result = replace(
             Arc::new(vec![list, 10.into(), 1.into()]),
             interpreter.clone(),
         )
@@ -1401,7 +1380,7 @@ mod tests {
         dbg!(result.clone());
         assert!(result == Value::List(vec![1.into(), 10.into(), 3.into()]));
 
-        let result = replace_at(Arc::new(vec![text, 10.into(), 2.into()]), interpreter)
+        let result = replace(Arc::new(vec![text, 10.into(), 2.into()]), interpreter)
             .await
             .unwrap();
         dbg!(result.clone());
@@ -1474,7 +1453,7 @@ mod tests {
         let interpreter = Arc::new(FslInterpreter::new());
         let text = Value::Text("example".into());
 
-        let result = upper(Arc::new(vec![text]), interpreter).await.unwrap();
+        let result = uppercase(Arc::new(vec![text]), interpreter).await.unwrap();
         dbg!(result.clone());
         assert!(result == Value::Text("EXAMPLE".into()));
     }
@@ -1484,7 +1463,7 @@ mod tests {
         let interpreter = Arc::new(FslInterpreter::new());
         let text = Value::Text("EXAMPLE".into());
 
-        let result = lower(Arc::new(vec![text]), interpreter).await.unwrap();
+        let result = lowercase(Arc::new(vec![text]), interpreter).await.unwrap();
         dbg!(result.clone());
         assert!(result == Value::Text("example".into()));
     }
@@ -1499,15 +1478,6 @@ mod tests {
             .unwrap();
         dbg!(result.clone());
         assert!(result == Value::Text("example".into()));
-    }
-
-    #[tokio::test]
-    async fn output_nl() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = nl(Arc::new(vec![]), interpreter).await.unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("\n".into()));
     }
 
     #[tokio::test]

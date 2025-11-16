@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::{
     commands::*,
     types::{
-        ALL_VALUES, ArgPos, ArgRule, Command, Error, Executor, FslType, LOGIC_TYPES,
+        ALL_VALUES, ArgPos, ArgRule, Command, Error, Executor, FslType, LOGIC_TYPES, MATH_RULES,
         NON_NONE_VALUES, NUMERIC_TYPES, Value, VarMap,
     },
 };
@@ -90,14 +90,11 @@ impl FslInterpreter {
 
     fn add_command(
         label: &str,
-        rules: Vec<ArgRule>,
+        rules: &'static [ArgRule],
         executor: Executor,
         command_map: &mut CommandMap,
     ) {
-        command_map.insert(
-            label.to_string(),
-            Command::new(label, rules.clone(), executor),
-        );
+        command_map.insert(label.to_string(), Command::new(label, rules, executor));
     }
 
     fn construct_std_commands() -> CommandMap {
@@ -105,274 +102,289 @@ impl FslInterpreter {
 
         Self::add_command(
             "add",
-            ArgRule::math_rules(),
+            MATH_RULES,
             Arc::new(|values, vars| Box::pin(add(values, vars))),
             &mut commands,
         );
         Self::add_command(
             "sub",
-            ArgRule::math_rules(),
+            MATH_RULES,
             Arc::new(|values, vars| Box::pin(sub(values, vars))),
             &mut commands,
         );
         Self::add_command(
             "mul",
-            ArgRule::math_rules(),
+            MATH_RULES,
             Arc::new(|values, vars| Box::pin(mul(values, vars))),
             &mut commands,
         );
         Self::add_command(
             "div",
-            ArgRule::math_rules(),
+            MATH_RULES,
             Arc::new(|values, vars| Box::pin(div(values, vars))),
             &mut commands,
         );
         Self::add_command(
             "mod",
-            ArgRule::math_rules(),
+            MATH_RULES,
             Arc::new(|values, vars| Box::pin(modulus(values, vars))),
             &mut commands,
         );
+        const STORE_RULES: [ArgRule; 2] = [
+            ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
+            ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
+        ];
         Self::add_command(
             "store",
-            vec![
-                ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES.into()),
-                ArgRule::new(ArgPos::Index(1), vec![FslType::Var]),
-            ],
+            &STORE_RULES,
             Arc::new(|values, vars| Box::pin(store(values, vars))),
             &mut commands,
         );
-        /*
-        Self::add_std_command(
-            "list",
-            vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
-            Arc::new(|values, vars| Box::pin(list(values, vars))),
-            &mut commands,
-        );
-        */
+        const FREE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
         Self::add_command(
             "free",
-            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Var])],
+            &FREE_RULES,
             Arc::new(|values, vars| Box::pin(commands::free(values, vars))),
             &mut commands,
         );
+        const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Any, NON_NONE_VALUES)];
         Self::add_command(
             "print",
-            vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
+            PRINT_RULES,
             Arc::new(|values, vars| Box::pin(print(values, vars))),
             &mut commands,
         );
+        const EQ_RULES: [ArgRule; 2] = [
+            ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
+            ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+        ];
         Self::add_command(
             "eq",
-            vec![
-                ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES.into()),
-                ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES.into()),
-            ],
+            &EQ_RULES,
             Arc::new(|values, vars| Box::pin(eq(values, vars))),
             &mut commands,
         );
+        const GT_RULES: [ArgRule; 2] = [
+            ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+        ];
         Self::add_command(
             "gt",
-            vec![
-                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-            ],
+            &GT_RULES,
             Arc::new(|values, vars| Box::pin(gt(values, vars))),
             &mut commands,
         );
+        const LT_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+        ];
         Self::add_command(
             "lt",
-            vec![
-                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-            ],
+            LT_RULES,
             Arc::new(|values, vars| Box::pin(lt(values, vars))),
             &mut commands,
         );
+        const NOT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
         Self::add_command(
             "not",
-            vec![ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into())],
+            &NOT_RULES,
             Arc::new(|values, vars| Box::pin(not(values, vars))),
             &mut commands,
         );
+        const AND_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), LOGIC_TYPES),
+        ];
         Self::add_command(
             "and",
-            vec![
-                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), LOGIC_TYPES.into()),
-            ],
+            AND_RULES,
             Arc::new(|values, vars| Box::pin(and(values, vars))),
             &mut commands,
         );
+        const OR_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), LOGIC_TYPES),
+        ];
         Self::add_command(
             "or",
-            vec![
-                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), LOGIC_TYPES.into()),
-            ],
+            OR_RULES,
             Arc::new(|values, vars| Box::pin(or(values, vars))),
             &mut commands,
         );
+        const IF_THEN_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+        ];
         Self::add_command(
             "if_then",
-            vec![
-                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
-            ],
+            IF_THEN_RULES,
             Arc::new(|values, vars| Box::pin(if_then(values, vars))),
             &mut commands,
         );
+        const IF_THEN_ELSE_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+            ArgRule::new(ArgPos::Index(2), &[FslType::Command]),
+        ];
         Self::add_command(
             "if_then_else",
-            vec![
-                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
-                ArgRule::new(ArgPos::Index(2), vec![FslType::Command]),
-            ],
+            IF_THEN_ELSE_RULES,
             Arc::new(|values, vars| Box::pin(if_then_else(values, vars))),
             &mut commands,
         );
+        const WHILE_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+        ];
         Self::add_command(
             "while",
-            vec![
-                ArgRule::new(ArgPos::Index(0), LOGIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
-            ],
+            WHILE_RULES,
             Arc::new(|values, vars| Box::pin(while_loop(values, vars))),
             &mut commands,
         );
+        const REPEAT_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+        ];
         Self::add_command(
             "repeat",
-            vec![
-                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), vec![FslType::Command]),
-            ],
+            REPEAT_RULES,
             Arc::new(|values, vars| Box::pin(repeat(values, vars))),
             &mut commands,
         );
+        const INDEX_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+            ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+        ];
         Self::add_command(
             "index",
-            vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::List, FslType::Text]),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-            ],
+            INDEX_RULES,
             Arc::new(|values, vars| Box::pin(index(values, vars))),
             &mut commands,
         );
+        const LENGTH_RULES: [ArgRule; 1] = [ArgRule::new(
+            ArgPos::Index(0),
+            &[FslType::List, FslType::Text],
+        )];
         Self::add_command(
             "length",
-            vec![ArgRule::new(
-                ArgPos::Index(0),
-                vec![FslType::List, FslType::Text],
-            )],
+            &LENGTH_RULES,
             Arc::new(|values, vars| Box::pin(length(values, vars))),
             &mut commands,
         );
+        const SWAP_RULES: [ArgRule; 3] = [
+            ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+            ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+            ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+        ];
         Self::add_command(
-            "swap_indices",
-            vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
-            ],
-            Arc::new(|values, vars| Box::pin(swap_indices(values, vars))),
+            "swap",
+            &SWAP_RULES,
+            Arc::new(|values, vars| Box::pin(swap(values, vars))),
             &mut commands,
         );
+        const INSERT_RULES: [ArgRule; 3] = [
+            ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+            ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+            ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+        ];
         Self::add_command(
-            "insert_at",
-            vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
-                ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES.into()),
-                ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
-            ],
-            Arc::new(|values, vars| Box::pin(insert_at(values, vars))),
+            "insert",
+            &INSERT_RULES,
+            Arc::new(|values, vars| Box::pin(insert(values, vars))),
             &mut commands,
         );
+        const REMOVE_RULES: [ArgRule; 2] = [
+            ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+            ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+        ];
         Self::add_command(
-            "remove_at",
-            vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-            ],
-            Arc::new(|values, vars| Box::pin(remove_at(values, vars))),
+            "remove",
+            &REMOVE_RULES,
+            Arc::new(|values, vars| Box::pin(remove(values, vars))),
             &mut commands,
         );
+        const REPLACE_RULES: [ArgRule; 3] = [
+            ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+            ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+            ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+        ];
         Self::add_command(
-            "replace_at",
-            vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::List]),
-                ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES.into()),
-                ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES.into()),
-            ],
-            Arc::new(|values, vars| Box::pin(replace_at(values, vars))),
+            "replace",
+            &REPLACE_RULES,
+            Arc::new(|values, vars| Box::pin(replace(values, vars))),
             &mut commands,
         );
+        const STARTS_WITH_RULES: [ArgRule; 2] = [
+            ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+            ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+        ];
         Self::add_command(
             "starts_with",
-            vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
-                ArgRule::new(ArgPos::Index(1), vec![FslType::Text]),
-            ],
+            &STARTS_WITH_RULES,
             Arc::new(|values, vars| Box::pin(starts_with(values, vars))),
             &mut commands,
         );
+        const ENDS_WITH_RULES: &'static [ArgRule] = &[
+            ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+            ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+        ];
         Self::add_command(
             "ends_with",
-            vec![
-                ArgRule::new(ArgPos::Index(0), vec![FslType::Text]),
-                ArgRule::new(ArgPos::Index(1), vec![FslType::Text]),
-            ],
+            ENDS_WITH_RULES,
             Arc::new(|values, vars| Box::pin(ends_with(values, vars))),
             &mut commands,
         );
+        const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Any, NON_NONE_VALUES)];
         Self::add_command(
             "concat",
-            vec![ArgRule::new(ArgPos::Any, NON_NONE_VALUES.into())],
+            &CONCAT_RULES,
             Arc::new(|values, vars| Box::pin(concat(values, vars))),
             &mut commands,
         );
+        const CAPITALIZE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
         Self::add_command(
             "capitalize",
-            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
+            &CAPITALIZE_RULES,
             Arc::new(|values, vars| Box::pin(capitalize(values, vars))),
             &mut commands,
         );
+        const UPPERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
         Self::add_command(
-            "upper",
-            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
-            Arc::new(|values, vars| Box::pin(upper(values, vars))),
+            "uppercase",
+            &UPPERCASE_RULES,
+            Arc::new(|values, vars| Box::pin(uppercase(values, vars))),
             &mut commands,
         );
+        const LOWERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
         Self::add_command(
-            "lower",
-            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
-            Arc::new(|values, vars| Box::pin(lower(values, vars))),
+            "lowercase",
+            &LOWERCASE_RULES,
+            Arc::new(|values, vars| Box::pin(lowercase(values, vars))),
             &mut commands,
         );
+        const REMOVE_WHITESPACE_RULES: [ArgRule; 1] =
+            [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
         Self::add_command(
             "remove_whitespace",
-            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::Text])],
+            &REMOVE_WHITESPACE_RULES,
             Arc::new(|values, vars| Box::pin(remove_whitespace(values, vars))),
             &mut commands,
         );
-        Self::add_command(
-            "nl",
-            vec![ArgRule::no_args_rule()],
-            Arc::new(|values, vars| Box::pin(nl(values, vars))),
-            &mut commands,
-        );
+        const RANDOM_RANGE_RULES: [ArgRule; 2] = [
+            ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+            ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+        ];
         Self::add_command(
             "random_range",
-            vec![
-                ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES.into()),
-                ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES.into()),
-            ],
+            &RANDOM_RANGE_RULES,
             Arc::new(|values, vars| Box::pin(commands::random_range(values, vars))),
             &mut commands,
         );
+        const RANDOM_ENTRY_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::List])];
         Self::add_command(
             "random_entry",
-            vec![ArgRule::new(ArgPos::Index(0), vec![FslType::List])],
+            &RANDOM_ENTRY_RULES,
             Arc::new(|values, vars| Box::pin(random_entry(values, vars))),
             &mut commands,
         );
