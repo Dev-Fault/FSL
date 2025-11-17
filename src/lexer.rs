@@ -43,7 +43,6 @@ pub enum LexerError<'a> {
     CommaPrecededByInvalidToken(ErrorContext<'a>),
     ClosedParenPrecededByInvalidToken(ErrorContext<'a>),
     ClosedBracketPrecededByInvalidToken(ErrorContext<'a>),
-    OpenParenNotPrecededByCommand(ErrorContext<'a>),
     UnclosedOpenParenthesis(ErrorContext<'a>),
     UnclosedOpenBracket(ErrorContext<'a>),
     UnclosedString(ErrorContext<'a>),
@@ -258,7 +257,7 @@ impl Lexer {
                     }
                     Symbol::OpenParen if !self.inside_string => {
                         if buf.is_empty() {
-                            return Err(LexerError::OpenParenNotPrecededByCommand(err_context));
+                            //return Err(LexerError::OpenParenNotPrecededByCommand(err_context));
                         }
 
                         tokens.push(Token::new(TokenType::Command(buf.clone()), i));
@@ -1185,15 +1184,5 @@ mod tests {
         assert!(
             result.is_err_and(|e| matches!(e, LexerError::ClosedParenPrecededByInvalidToken(_)))
         );
-    }
-
-    #[test]
-    fn err_on_nameless_command() {
-        let lexer = Lexer::new();
-
-        let result = Lexer::new().tokenize("()");
-
-        dbg!(&result);
-        assert!(result.is_err_and(|e| matches!(e, LexerError::OpenParenNotPrecededByCommand(_))));
     }
 }
