@@ -175,7 +175,14 @@ pub async fn store(
 ) -> Result<Value, Error> {
     let label = &values[0].get_var_label()?;
     match &values[1] {
-        Value::Var(_) => todo!(),
+        Value::Var(var) => {
+            let value = interpreter
+                .vars
+                .get_value(var)?
+                .as_raw(interpreter.clone())
+                .await?;
+            interpreter.vars.insert_value(label, &value);
+        }
         Value::Command(command) => {
             interpreter
                 .clone()
@@ -218,35 +225,30 @@ pub async fn print(
     Ok(Value::None)
 }
 
-pub const EQ_RULES: [ArgRule; 2] = [
+pub const SCOPE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
+pub async fn scope(
+    values: Arc<Vec<Value>>,
+    interpreter: Arc<FslInterpreter>,
+) -> Result<Value, Error> {
+    for value in values.iter() {
+        value.as_raw(interpreter.clone()).await?;
+    }
+
+    Ok(Value::None)
+}
+
+pub const EQ_RULES: &'static [ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub async fn eq(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
-    let a_command_result;
-    let a = match &values[0] {
-        Value::Var(label) => &interpreter.vars.get_value(label)?,
-        Value::Command(command) => {
-            a_command_result = command.execute(interpreter.clone()).await?;
-            &a_command_result
-        }
-        _ => &values[0],
-    };
-
-    let b_command_result;
-    let b = match &values[1] {
-        Value::Var(label) => &interpreter.vars.get_value(label)?,
-        Value::Command(command) => {
-            b_command_result = command.execute(interpreter).await?;
-            &b_command_result
-        }
-        _ => &values[1],
-    };
+    let a = values[0].as_raw(interpreter.clone()).await?;
+    let b = values[1].as_raw(interpreter.clone()).await?;
 
     Ok(Value::Bool(a == b))
 }
 
-pub const GT_RULES: [ArgRule; 2] = [
+pub const GT_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
@@ -280,7 +282,7 @@ pub async fn lt(values: Arc<Vec<Value>>, interpreter: Arc<FslInterpreter>) -> Re
     }
 }
 
-pub const NOT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
+pub const NOT_RULES: &[ArgRule; 1] = &[ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
 pub async fn not(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
@@ -347,17 +349,23 @@ pub async fn if_then_else(
 
 pub const WHILE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
+    ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
 ];
 pub async fn while_loop(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
+    let mut final_value = Value::None;
+
     while values[0].as_bool(interpreter.clone()).await? {
-        values[1].as_command()?.execute(interpreter.clone()).await?;
+        for command in &values[1..] {
+            let command = command.as_command()?;
+            final_value = command.execute(interpreter.clone()).await?;
+        }
         interpreter.increment_loops().await?;
     }
-    Ok(Value::None)
+
+    Ok(final_value)
 }
 
 pub const REPEAT_RULES: &'static [ArgRule] = &[
@@ -390,11 +398,7 @@ pub async fn index(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = if values[0].is_type(FslType::Var) {
-        &values[0].get_var_value(interpreter.clone())?
-    } else {
-        &values[0]
-    };
+    let array = values[0].as_raw(interpreter.clone()).await?;
 
     if array.is_type(crate::types::FslType::List) {
         let list = array.as_list(interpreter.clone()).await?;
@@ -421,11 +425,7 @@ pub async fn length(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = if values[0].is_type(FslType::Var) {
-        &values[0].get_var_value(interpreter.clone())?
-    } else {
-        &values[0]
-    };
+    let array = values[0].as_raw(interpreter.clone()).await?;
 
     if array.is_type(crate::types::FslType::List) {
         let list = array.as_list(interpreter).await?;
@@ -445,11 +445,7 @@ pub async fn swap(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = if values[0].is_type(FslType::Var) {
-        &values[0].get_var_value(interpreter.clone())?
-    } else {
-        &values[0]
-    };
+    let array = values[0].as_raw(interpreter.clone()).await?;
 
     let a = values[1].as_int(interpreter.clone()).await? as usize;
     let b = values[2].as_int(interpreter.clone()).await? as usize;
@@ -488,17 +484,13 @@ pub async fn insert(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = if values[0].is_type(FslType::Var) {
-        &values[0].get_var_value(interpreter.clone())?
-    } else {
-        &values[0]
-    };
+    let array = values[0].as_raw(interpreter.clone()).await?;
 
     let i = values[2].as_int(interpreter.clone()).await? as usize;
 
     if array.is_type(crate::types::FslType::List) {
-        let mut list = array.as_list(interpreter).await?;
-        let to_insert = values[1].clone();
+        let mut list = array.as_list(interpreter.clone()).await?;
+        let to_insert = values[1].as_raw(interpreter).await?;
 
         if i > list.len() {
             Err("cannot insert value at index greater than size of list".to_string())
@@ -527,11 +519,7 @@ pub async fn remove(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = if values[0].is_type(FslType::Var) {
-        &values[0].get_var_value(interpreter.clone())?
-    } else {
-        &values[0]
-    };
+    let array = values[0].as_raw(interpreter.clone()).await?;
 
     if array.is_type(crate::types::FslType::List) {
         let mut list = array.as_list(interpreter.clone()).await?;
@@ -565,11 +553,7 @@ pub async fn replace(
     values: Arc<Vec<Value>>,
     interpreter: Arc<FslInterpreter>,
 ) -> Result<Value, Error> {
-    let array = if values[0].is_type(FslType::Var) {
-        &values[0].get_var_value(interpreter.clone())?
-    } else {
-        &values[0]
-    };
+    let array = values[0].as_raw(interpreter.clone()).await?;
 
     let i = values[2].as_int(interpreter.clone()).await? as usize;
 

@@ -31,7 +31,14 @@ async fn contains_float(
                 }
             }
             Value::Var(var) => {
-                if interpreter.vars.get_value(var)?.is_type(FslType::Float) {
+                if interpreter
+                    .clone()
+                    .vars
+                    .get_value(var)?
+                    .as_raw(interpreter.clone())
+                    .await?
+                    .is_type(FslType::Float)
+                {
                     return Ok(true);
                 }
             }
@@ -237,10 +244,11 @@ impl FslInterpreter {
             PRINT_RULES,
             Self::construct_executor(commands::print),
         );
-        self.add_command("eq", &EQ_RULES, Self::construct_executor(commands::eq));
-        self.add_command("gt", &GT_RULES, Self::construct_executor(commands::gt));
+        self.add_command("", SCOPE_RULES, Self::construct_executor(commands::scope));
+        self.add_command("eq", EQ_RULES, Self::construct_executor(commands::eq));
+        self.add_command("gt", GT_RULES, Self::construct_executor(commands::gt));
         self.add_command("lt", LT_RULES, Self::construct_executor(commands::lt));
-        self.add_command("not", &NOT_RULES, Self::construct_executor(commands::not));
+        self.add_command("not", NOT_RULES, Self::construct_executor(commands::not));
         self.add_command("and", AND_RULES, Self::construct_executor(commands::and));
         self.add_command("or", OR_RULES, Self::construct_executor(commands::or));
         self.add_command(
@@ -442,7 +450,7 @@ mod interpreter {
         test_interpreter(
             r#"
         matrix.store([[1, [2, 3, 4], 5], [4, 5, 6], [7, 8, 9]])
-        print(matrix.index(1).index(1))
+        print(matrix.index(0).index(1).index(1))
         "#,
             "3",
         )
@@ -691,6 +699,499 @@ mod interpreter {
         print(result)
         "#,
             "HELLOWORLD!!!",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn list_contains_search() {
+        test_interpreter(
+            r#"
+        fruits.store(["apple", "banana", "cherry", "date"])
+        search.store("cherry")
+        found.store(false)
+        i.store(0)
+        while(and(lt(i, fruits.length()), not(found)),
+            if_then(
+                eq(fruits.index(i), search),
+                found.store(true),
+            )
+                i.store(add(i, 1))
+        )
+        i.store(i.sub(1))
+        if_then_else(
+            found,
+            print("Found ", search, " at index ", i),
+            print(search, " not found")
+        )
+        "#,
+            "Found cherry at index 2",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn sum_of_list() {
+        test_interpreter(
+            r#"
+        numbers.store([10, 20, 30, 40, 50])
+        sum.store(0)
+        i.store(0)
+        repeat(numbers.length(),
+            sum.store(add(sum, numbers.index(i))),
+            i.store(add(i, 1))
+        )
+        print("Sum: ", sum)
+        "#,
+            "Sum: 150",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn find_max_in_list() {
+        test_interpreter(
+            r#"
+        numbers.store([3, 7, 2, 9, 1, 5])
+        max.store(numbers.index(0))
+        i.store(1)
+        repeat(sub(numbers.length(), 1),
+            if_then(
+                gt(numbers.index(i), max),
+                max.store(numbers.index(i))
+            ),
+            i.store(add(i, 1))
+        )
+        print("Max: ", max)
+        "#,
+            "Max: 9",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn error_division_by_zero() {
+        test_interpreter_err("print(div(10, 0))").await;
+    }
+
+    #[tokio::test]
+    async fn error_index_out_of_bounds() {
+        test_interpreter_err(
+            r#"
+        list.store([1, 2, 3])
+        print(list.index(10))
+        "#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn error_swap_out_of_bounds() {
+        test_interpreter_err(
+            r#"
+        list.store([1, 2, 3])
+        list.swap(0, 10)
+        "#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn bool_keyword_logic() {
+        test_interpreter(
+            r#"
+        a.store(true)
+        b.store(false)
+        print(and(a, not(b)))
+        "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn nested_conditional_with_bools() {
+        test_interpreter(
+            r#"
+        is_valid.store(true)
+        is_ready.store(false)
+        if_then_else(
+            and(is_valid, is_ready),
+            print("Both true"),
+            if_then_else(
+                or(is_valid, is_ready),
+                print("At least one true"),
+                print("Both false")
+            )
+        )
+        "#,
+            "At least one true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn mixed_type_concatenation() {
+        test_interpreter(
+            r#"
+        age.store(25)
+        name.store("Alice")
+        print(concat(name, " is ", age, " years old"))
+        "#,
+            "Alice is 25 years old",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn list_equality() {
+        test_interpreter(
+            r#"
+        a.store([1, 2, 3])
+        b.store([1, 2, 3])
+        c.store([1, 2, 4])
+        print(eq(a, b), " ", eq(a, c))
+        "#,
+            "true false",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn empty_list_operations() {
+        test_interpreter(
+            r#"
+        empty.store([])
+        print("Length: ", empty.length())
+        empty.store(empty.insert(42, 0))
+        print(" After insert: ", empty.index(0))
+        "#,
+            "Length: 0 After insert: 42",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn string_indexing() {
+        test_interpreter(
+            r#"
+        word.store("hello")
+        i.store(0)
+        repeat(word.length(),
+            print(word.index(i)),
+            i.store(add(i, 1))
+        )
+        "#,
+            "hello",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn string_starts_ends_with() {
+        test_interpreter(
+            r#"
+        text.store("hello world")
+        print(
+            starts_with(text, "hello"), 
+            " ", 
+            ends_with(text, "world"), 
+            " ", 
+            starts_with(text, "world")
+        )
+        "#,
+            "true true false",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn capitalize_edge_cases() {
+        test_interpreter(
+            r#"
+        print(
+            capitalize("hello"), 
+            " ", 
+            capitalize("a"), 
+            " ", 
+            capitalize("")
+        )
+        "#,
+            "Hello A ",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn case_conversion_chain() {
+        test_interpreter(
+            r#"
+        text.store("HeLLo WoRLd")
+        print(
+            text.lowercase(), 
+            " | ", 
+            text.uppercase()
+        )
+        "#,
+            "hello world | HELLO WORLD",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn modulus_operations() {
+        test_interpreter(
+            r#"
+        print(mod(10, 3), " ", mod(15, 4), " ", mod(7, 7))
+        "#,
+            "1 3 0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn negative_numbers() {
+        test_interpreter(
+            r#"
+        x.store(-5)
+        y.store(10)
+        print(add(x, y), " ", sub(x, y), " ", mul(x, y))
+        "#,
+            "5 -15 -50",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn float_division_precision() {
+        test_interpreter(
+            r#"
+        print(div(10, 4), " ", div(10.0, 4))
+        "#,
+            "2 2.5",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn chained_comparisons() {
+        test_interpreter(
+            r#"
+        x.store(5)
+        result.store(
+            and(
+                gt(x, 0),
+                lt(x, 10)
+            )
+        )
+        print(result)
+        "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn list_remove_and_length() {
+        test_interpreter(
+            r#"
+        items.store([1, 2, 3, 4, 5])
+        items.store(items.remove(2))
+        print(items.length(), " ", items.index(2))
+        "#,
+            "4 4",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn list_replace() {
+        test_interpreter(
+            r#"
+        items.store(["a", "b", "c"])
+        items.store(items.replace("X", 1))
+        print(items.index(0), items.index(1), items.index(2))
+        "#,
+            "aXc",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn nested_while_loops() {
+        test_interpreter(
+            r#"
+        i.store(0)
+        total.store(0)
+        while(lt(i, 3),
+            j.store(0),
+            while(lt(j, 2),
+                total.store(add(total, 1)),
+                j.store(add(j, 1))
+            ),
+            i.store(add(i, 1))
+        )
+        print(total)
+        "#,
+            "6",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn command_return_values() {
+        test_interpreter(
+            r#"
+        x.store(5)
+        result.store(if_then_else(gt(x, 3), add(x, 10), mul(x, 2)))
+        print(result)
+        "#,
+            "15",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn repeat_with_multiple_commands() {
+        test_interpreter(
+            r#"
+        sum.store(0)
+        product.store(1)
+        i.store(1)
+        repeat(4,
+            sum.store(add(sum, i)),
+            product.store(mul(product, i)),
+            i.store(add(i, 1))
+        )
+        print("Sum: ", sum, " Product: ", product)
+        "#,
+            "Sum: 10 Product: 24",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn zero_repetitions() {
+        test_interpreter(
+            r#"
+        counter.store(0)
+        repeat(0,
+            counter.store(add(counter, 1))
+        )
+        print(counter)
+        "#,
+            "0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn free_variable() {
+        test_interpreter(
+            r#"
+        x.store(42)
+        print(x, " ")
+        freed.store(free(x))
+        print(freed)
+        "#,
+            "42 42",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn error_free_nonexistent() {
+        test_interpreter(
+            r#"
+        result.store(free(nonexistent))
+        print(result)
+        "#,
+            "none",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn complex_expression_chaining() {
+        test_interpreter(
+            r#"
+        numbers.store([1, 2, 3, 4, 5])
+        result.store(
+            numbers
+                .index(2)
+                .add(10)
+                .mul(2)
+                .sub(6)
+        )
+        print(result)
+        "#,
+            "20",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn string_insert() {
+        test_interpreter(
+            r#"
+        text.store("helo")
+        text.store(text.insert("l", 3))
+        print(text)
+        "#,
+            "hello",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn string_remove() {
+        test_interpreter(
+            r#"
+        text.store("hello")
+        text.store(text.remove(2))
+        print(text)
+        "#,
+            "helo",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn string_replace() {
+        test_interpreter(
+            r#"
+        text.store("hello")
+        text.store(text.replace("a", 1))
+        print(text)
+        "#,
+            "hallo",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn error_modulus_by_zero() {
+        test_interpreter_err("print(mod(10, 0))").await;
+    }
+
+    #[tokio::test]
+    async fn error_negative_index() {
+        test_interpreter_err(
+            r#"
+        list.store([1, 2, 3])
+        print(list.index(-1))
+        "#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn error_insert_beyond_length() {
+        test_interpreter_err(
+            r#"
+        list.store([1, 2, 3])
+        list.store(list.insert(99, 10))
+        "#,
         )
         .await;
     }

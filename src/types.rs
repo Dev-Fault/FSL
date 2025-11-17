@@ -419,6 +419,16 @@ impl Value {
         }
     }
 
+    pub async fn as_raw(&self, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
+        if self.is_type(FslType::Var) {
+            Ok(self.get_var_value(interpreter.clone())?)
+        } else if self.is_type(FslType::Command) {
+            Ok(self.as_command()?.execute(interpreter.clone()).await?)
+        } else {
+            Ok(self.clone())
+        }
+    }
+
     pub fn as_command(&self) -> Result<Arc<Command>, Error> {
         if let Value::Command(command) = self {
             Ok(command.clone())
