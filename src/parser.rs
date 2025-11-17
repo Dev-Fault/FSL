@@ -19,13 +19,6 @@ impl<'a> From<LexerError<'a>> for ParserError<'a> {
     }
 }
 
-// TODO handle nested lists
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct List {
-    parent: Option<Box<List>>,
-    data: Vec<Arg>,
-}
-
 impl Expression {
     pub fn new(name: String) -> Self {
         Self { name, args: vec![] }

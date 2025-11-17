@@ -5,121 +5,243 @@ use std::sync::Mutex;
 
 use crate::{
     commands::*,
-    parser::{Expression, Parser},
-    types::{ArgRule, Command, Error, Executor, FslType, Value},
+    lexer::LexerError,
+    parser::{Expression, Parser, ParserError},
+    types::{ArgRule, Command, Executor, FslType, Value},
 };
 
-mod commands;
+pub mod commands;
 mod lexer;
 mod parser;
-mod types;
+pub mod types;
 
-#[async_recursion]
-async fn contains_float(
-    values: &Vec<Value>,
-    interpreter: Arc<FslInterpreter>,
-) -> Result<bool, Error> {
-    for value in values {
-        match value {
-            Value::Float(_) => return Ok(true),
-            Value::Text(text) => {
-                if text.contains('.') {
-                    match text.parse::<f64>() {
-                        Ok(_) => return Ok(true),
-                        Err(_) => continue,
-                    }
-                }
-            }
-            Value::Var(var) => {
-                if interpreter
-                    .clone()
-                    .vars
-                    .get_value(var)?
-                    .as_raw(interpreter.clone())
-                    .await?
-                    .is_type(FslType::Float)
-                {
-                    return Ok(true);
-                }
-            }
-            Value::Command(command) => {
-                return Ok(contains_float(command.get_args(), interpreter).await?);
-            }
-            _ => {
-                continue;
-            }
-        }
-    }
-    Ok(false)
+pub const ADD: &str = "add";
+pub const SUB: &str = "sub";
+pub const MUL: &str = "mul";
+pub const DIV: &str = "div";
+pub const MODULUS: &str = "mod";
+pub const STORE: &str = "store";
+pub const FREE: &str = "free";
+pub const PRINT: &str = "print";
+pub const SCOPE: &str = "";
+pub const EQ: &str = "eq";
+pub const GT: &str = "gt";
+pub const LT: &str = "lt";
+pub const NOT: &str = "not";
+pub const AND: &str = "and";
+pub const OR: &str = "or";
+pub const IF_THEN: &str = "if_then";
+pub const IF_THEN_ELSE: &str = "if_then_else";
+pub const WHILE_LOOP: &str = "while";
+pub const REPEAT: &str = "repeat";
+pub const INDEX: &str = "index";
+pub const LENGTH: &str = "length";
+pub const SWAP: &str = "swap";
+pub const INSERT: &str = "insert";
+pub const REMOVE: &str = "remove";
+pub const REPLACE: &str = "replace";
+pub const STARTS_WITH: &str = "starts_with";
+pub const ENDS_WITH: &str = "ends_with";
+pub const CONCAT: &str = "concat";
+pub const CAPITALIZE: &str = "capitalize";
+pub const UPPERCASE: &str = "uppercase";
+pub const LOWERCASE: &str = "lowercase";
+pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
+pub const RANDOM_RANGE: &str = "random_range";
+pub const RANDOM_ENTRY: &str = "random_entry";
+
+#[derive(Debug, Clone)]
+pub struct ErrorContext {
+    command: String,
+    addendum: String,
 }
 
-pub type CommandMap = HashMap<String, Command>;
-#[derive(Debug)]
-pub struct VarMap(Arc<Mutex<HashMap<String, Value>>>);
+impl ErrorContext {
+    pub fn new(command: String, addendum: String) -> Self {
+        Self { command, addendum }
+    }
+}
 
-impl VarMap {
+#[derive(Debug, Clone)]
+pub enum FSLError {
+    LexerError(String),
+    ParserError(String),
+    LoopLimitExceeded(ErrorContext),
+    DivisionByZero(ErrorContext),
+    OutOfBounds(ErrorContext),
+    InvalidRange(ErrorContext),
+    NonExistantCommand(ErrorContext),
+    IncorrectArgs(ErrorContext),
+    NonExistantVar(ErrorContext),
+    FailedValueParse(ErrorContext),
+    InvalidValueConversion(ErrorContext),
+    InvalidVarLabel(ErrorContext),
+    InvalidVarValue(ErrorContext),
+    CustomError(ErrorContext),
+    UnmatchedCurlyBraces(String),
+}
+
+impl ToString for FSLError {
+    fn to_string(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+impl<'a> From<LexerError<'a>> for FSLError {
+    fn from(value: LexerError) -> Self {
+        Self::LexerError(format!("{:?}", value))
+    }
+}
+
+impl<'a> From<ParserError<'a>> for FSLError {
+    fn from(value: ParserError<'a>) -> Self {
+        Self::ParserError(format!("{:?}", value))
+    }
+}
+
+pub struct InterpreterData {
+    pub output: Arc<tokio::sync::Mutex<String>>,
+    pub vars: VarMap,
+    pub loop_limit: Option<usize>,
+    pub loops: Arc<tokio::sync::Mutex<usize>>,
+}
+
+impl InterpreterData {
     pub fn new() -> Self {
-        Self {
-            0: Arc::new(Mutex::new(HashMap::new())),
+        InterpreterData {
+            loop_limit: Some(u16::MAX as usize),
+            output: Arc::new(tokio::sync::Mutex::new(String::new())),
+            vars: VarMap::new(),
+            loops: Arc::new(tokio::sync::Mutex::new(0)),
         }
     }
 
-    pub fn insert_value(&self, label: &str, value: &Value) {
-        match value {
-            Value::Var(_) => panic!("Cannot store a var in a var"),
-            Value::Command(_) => panic!("cannot store a command in a var"),
-            Value::None => panic!("Cannot store none in a var"),
-            _ => {
-                self.0
-                    .lock()
-                    .unwrap()
-                    .insert(label.to_string(), value.clone());
-            }
-        }
-    }
-
-    pub fn remove_value(&self, label: &str) -> Option<Value> {
-        self.0.lock().unwrap().remove(label)
-    }
-
-    pub fn get_value(&self, label: &str) -> Result<Value, Error> {
-        let value = self.0.lock().unwrap().get(label).cloned();
-
-        match value {
-            Some(value) => {
-                if value.is_type(FslType::Var) {
-                    return self.get_value(&value.get_var_label()?);
+    pub async fn increment_loops(&self, loop_command: &'static str) -> Result<(), FSLError> {
+        match self.loop_limit {
+            Some(limit) => {
+                let mut loops = self.loops.lock().await;
+                *loops += 1;
+                if *loops >= limit {
+                    *loops = limit;
+                    Err(FSLError::LoopLimitExceeded(ErrorContext::new(
+                        loop_command.into(),
+                        "".into(),
+                    )))
                 } else {
-                    Ok(value.clone())
+                    Ok(())
                 }
             }
-            None => Err(format!("tried to get value of non existant var {}", label)),
+            None => Ok(()),
         }
     }
 }
 
 pub struct FslInterpreter {
-    pub output: Arc<tokio::sync::Mutex<String>>,
     pub commands: CommandMap,
-    pub vars: VarMap,
-    pub loops: Arc<tokio::sync::Mutex<usize>>,
-    pub loop_limit: Option<usize>,
+    pub data: Arc<InterpreterData>,
 }
 
 impl FslInterpreter {
     pub fn new() -> Self {
         let mut interpreter = Self {
-            output: Arc::new(tokio::sync::Mutex::new(String::new())),
             commands: CommandMap::new(),
-            vars: VarMap::new(),
-            loops: Arc::new(tokio::sync::Mutex::new(0)),
-            loop_limit: Some(u16::MAX as usize),
+            data: Arc::new(InterpreterData::new()),
         };
         interpreter.add_standard_commands();
         interpreter
     }
 
-    async fn parse_expression(&self, expression: Expression) -> Result<Value, String> {
+    pub fn reset_data(&mut self) {
+        self.data = Arc::new(InterpreterData::new());
+    }
+
+    pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, FSLError> {
+        self.evaluate_expressions(code).await
+    }
+
+    pub async fn interpret_embedded_code(&mut self, input: &str) -> Result<String, FSLError> {
+        let mut output = String::with_capacity(input.len());
+        let mut code_stack: Vec<String> = Vec::new();
+
+        let mut code_depth: i16 = 0;
+
+        for c in input.chars() {
+            if c == '{' {
+                code_stack.push(String::new());
+                code_depth += 1;
+            } else if c == '}' {
+                code_depth -= 1;
+                if code_depth < 0 {
+                    return Err(FSLError::UnmatchedCurlyBraces(
+                        "Unmatched curly braces".to_string(),
+                    ));
+                } else {
+                    match code_stack.pop() {
+                        Some(code) => {
+                            self.reset_data();
+                            match self.interpret(&code).await {
+                                Ok(eval) => match code_stack.last_mut() {
+                                    Some(code) => code.push_str(&eval),
+                                    None => output.push_str(&eval),
+                                },
+                                Err(e) => return Err(e),
+                            };
+                        }
+                        None => {}
+                    }
+                }
+            } else if code_depth == 0 {
+                output.push(c);
+            } else {
+                match code_stack.last_mut() {
+                    Some(s) => s.push(c),
+                    None => {}
+                }
+            }
+        }
+
+        if code_depth != 0 {
+            return Err(FSLError::UnmatchedCurlyBraces(
+                "Unmatched curly braces".to_string(),
+            ));
+        }
+
+        Ok(output)
+    }
+
+    pub fn add_command(&mut self, label: &str, rules: &'static [ArgRule], executor: Executor) {
+        self.commands
+            .insert(label.to_string(), Command::new(label, rules, executor));
+    }
+
+    pub fn construct_executor<F, Fut>(command: F) -> Executor
+    where
+        F: Fn(Arc<Vec<Value>>, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value, FSLError>> + Send + 'static,
+    {
+        Arc::new(move |values, vars| Box::pin(command(values, vars)))
+    }
+
+    async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, FSLError> {
+        let expressions = Parser::new().parse(code);
+        match expressions {
+            Ok(expressions) => {
+                for expression in expressions {
+                    let command = match self.parse_expression(expression).await? {
+                        Value::Command(command) => command,
+                        _ => unreachable!("parse expression should always return a command"),
+                    };
+                    command.execute(self.data.clone()).await?;
+                }
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        }
+        Ok(self.data.output.lock().await.clone())
+    }
+
+    async fn parse_expression(&self, expression: Expression) -> Result<Value, FSLError> {
         match self.commands.get(&expression.name) {
             Some(command) => {
                 let mut command = command.clone();
@@ -135,16 +257,16 @@ impl FslInterpreter {
                 Ok(Value::Command(Arc::new(command)))
             }
             None => {
-                return Err(format!(
-                    "Error: No command named {} exists",
-                    &expression.name
-                ));
+                return Err(FSLError::NonExistantCommand(ErrorContext::new(
+                    expression.name,
+                    "".into(),
+                )));
             }
         }
     }
 
     #[async_recursion]
-    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, String> {
+    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, FSLError> {
         match arg {
             parser::Arg::Number(number) => {
                 if number.contains('.') {
@@ -170,182 +292,232 @@ impl FslInterpreter {
         }
     }
 
-    pub async fn interpret<'a>(self, code: &'a str) -> Result<String, String> {
-        let interpreter = Arc::new(self);
-        let expressions = Parser::new().parse(code);
-        match expressions {
-            Ok(expressions) => {
-                for expression in expressions {
-                    let command = match interpreter.parse_expression(expression).await? {
-                        Value::Command(command) => command,
-                        _ => unreachable!("parse expression should always return a command"),
-                    };
-                    command.execute(interpreter.clone()).await?;
-                }
-            }
-            Err(e) => {
-                return Err(format!("{:?}", e));
-            }
-        }
-        Ok(interpreter.output.lock().await.clone())
-    }
-
-    pub async fn increment_loops(&self) -> Result<(), Error> {
-        match self.loop_limit {
-            Some(limit) => {
-                let mut loops = self.loops.lock().await;
-                *loops += 1;
-                if *loops >= limit {
-                    *loops = limit;
-                    Err(format!("Max loop limit of {} exceeded", limit))
-                } else {
-                    Ok(())
-                }
-            }
-            None => Ok(()),
-        }
-    }
-
-    pub fn add_command(&mut self, label: &str, rules: &'static [ArgRule], executor: Executor) {
-        self.commands
-            .insert(label.to_string(), Command::new(label, rules, executor));
-    }
-
-    pub fn construct_executor<F, Fut>(command: F) -> Executor
-    where
-        F: Fn(Arc<Vec<Value>>, Arc<FslInterpreter>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Value, Error>> + Send + 'static,
-    {
-        Arc::new(move |values, vars| Box::pin(command(values, vars)))
-    }
-
     fn add_standard_commands(&mut self) {
-        self.add_command("add", MATH_RULES, Self::construct_executor(commands::add));
-        self.add_command("sub", MATH_RULES, Self::construct_executor(commands::sub));
-        self.add_command("mul", MATH_RULES, Self::construct_executor(commands::mul));
-        self.add_command("div", MATH_RULES, Self::construct_executor(commands::div));
+        self.add_command(ADD, MATH_RULES, Self::construct_executor(commands::add));
+
+        self.add_command(SUB, MATH_RULES, Self::construct_executor(commands::sub));
+
+        self.add_command(MUL, MATH_RULES, Self::construct_executor(commands::mul));
+
+        self.add_command(DIV, MATH_RULES, Self::construct_executor(commands::div));
+
         self.add_command(
-            "mod",
+            MODULUS,
             MATH_RULES,
             Self::construct_executor(commands::modulus),
         );
+
         self.add_command(
-            "store",
+            STORE,
             &STORE_RULES,
             Self::construct_executor(commands::store),
         );
+
+        self.add_command(FREE, &FREE_RULES, Self::construct_executor(commands::free));
+
         self.add_command(
-            "free",
-            &FREE_RULES,
-            Self::construct_executor(commands::free),
-        );
-        self.add_command(
-            "print",
+            PRINT,
             PRINT_RULES,
             Self::construct_executor(commands::print),
         );
-        self.add_command("", SCOPE_RULES, Self::construct_executor(commands::scope));
-        self.add_command("eq", EQ_RULES, Self::construct_executor(commands::eq));
-        self.add_command("gt", GT_RULES, Self::construct_executor(commands::gt));
-        self.add_command("lt", LT_RULES, Self::construct_executor(commands::lt));
-        self.add_command("not", NOT_RULES, Self::construct_executor(commands::not));
-        self.add_command("and", AND_RULES, Self::construct_executor(commands::and));
-        self.add_command("or", OR_RULES, Self::construct_executor(commands::or));
+
         self.add_command(
-            "if_then",
+            SCOPE,
+            SCOPE_RULES,
+            Self::construct_executor(commands::scope),
+        );
+
+        self.add_command(EQ, EQ_RULES, Self::construct_executor(commands::eq));
+
+        self.add_command(GT, GT_RULES, Self::construct_executor(commands::gt));
+
+        self.add_command(LT, LT_RULES, Self::construct_executor(commands::lt));
+
+        self.add_command(NOT, NOT_RULES, Self::construct_executor(commands::not));
+
+        self.add_command(AND, AND_RULES, Self::construct_executor(commands::and));
+
+        self.add_command(OR, OR_RULES, Self::construct_executor(commands::or));
+
+        self.add_command(
+            IF_THEN,
             IF_THEN_RULES,
             Self::construct_executor(commands::if_then),
         );
+
         self.add_command(
-            "if_then_else",
+            IF_THEN_ELSE,
             IF_THEN_ELSE_RULES,
             Self::construct_executor(commands::if_then_else),
         );
+
         self.add_command(
-            "while",
+            WHILE_LOOP,
             WHILE_RULES,
             Self::construct_executor(commands::while_loop),
         );
+
         self.add_command(
-            "repeat",
+            REPEAT,
             REPEAT_RULES,
             Self::construct_executor(commands::repeat),
         );
+
         self.add_command(
-            "index",
+            INDEX,
             INDEX_RULES,
             Self::construct_executor(commands::index),
         );
+
         self.add_command(
-            "length",
+            LENGTH,
             &LENGTH_RULES,
             Self::construct_executor(commands::length),
         );
+
+        self.add_command(SWAP, &SWAP_RULES, Self::construct_executor(commands::swap));
+
         self.add_command(
-            "swap",
-            &SWAP_RULES,
-            Self::construct_executor(commands::swap),
-        );
-        self.add_command(
-            "insert",
+            INSERT,
             &INSERT_RULES,
             Self::construct_executor(commands::insert),
         );
+
         self.add_command(
-            "remove",
+            REMOVE,
             &REMOVE_RULES,
             Self::construct_executor(commands::remove),
         );
+
         self.add_command(
-            "replace",
+            REPLACE,
             &REPLACE_RULES,
             Self::construct_executor(commands::replace),
         );
+
         self.add_command(
-            "starts_with",
+            STARTS_WITH,
             &STARTS_WITH_RULES,
             Self::construct_executor(commands::starts_with),
         );
+
         self.add_command(
-            "ends_with",
+            ENDS_WITH,
             ENDS_WITH_RULES,
             Self::construct_executor(commands::ends_with),
         );
+
         self.add_command(
-            "concat",
+            CONCAT,
             &CONCAT_RULES,
             Self::construct_executor(commands::concat),
         );
+
         self.add_command(
-            "capitalize",
+            CAPITALIZE,
             &CAPITALIZE_RULES,
             Self::construct_executor(commands::capitalize),
         );
+
         self.add_command(
-            "uppercase",
+            UPPERCASE,
             &UPPERCASE_RULES,
             Self::construct_executor(commands::uppercase),
         );
+
         self.add_command(
-            "lowercase",
+            LOWERCASE,
             &LOWERCASE_RULES,
             Self::construct_executor(commands::lowercase),
         );
+
         self.add_command(
-            "remove_whitespace",
+            REMOVE_WHITESPACE,
             &REMOVE_WHITESPACE_RULES,
             Self::construct_executor(commands::remove_whitespace),
         );
+
         self.add_command(
-            "random_range",
+            RANDOM_RANGE,
             &RANDOM_RANGE_RULES,
             Self::construct_executor(commands::random_range),
         );
+
         self.add_command(
-            "random_entry",
+            RANDOM_ENTRY,
             &RANDOM_ENTRY_RULES,
             Self::construct_executor(commands::random_entry),
         );
+    }
+}
+
+impl Default for FslInterpreter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub type CommandMap = HashMap<String, Command>;
+#[derive(Debug)]
+pub struct VarMap(Arc<Mutex<HashMap<String, Value>>>);
+
+impl VarMap {
+    pub fn new() -> Self {
+        Self {
+            0: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn insert_value(&self, label: &str, value: &Value) -> Result<(), FSLError> {
+        match value {
+            Value::Var(_) => {
+                return Err(FSLError::InvalidVarValue(ErrorContext::new(
+                    "".into(),
+                    "cannot store var in var".into(),
+                )));
+            }
+            Value::Command(_) => {
+                return Err(FSLError::InvalidVarValue(ErrorContext::new(
+                    "".into(),
+                    "cannot store command in var".into(),
+                )));
+            }
+            Value::None => {
+                return Err(FSLError::InvalidVarValue(ErrorContext::new(
+                    "".into(),
+                    "cannot store none in var".into(),
+                )));
+            }
+            _ => {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .insert(label.to_string(), value.clone());
+                Ok(())
+            }
+        }
+    }
+
+    pub fn remove_value(&self, label: &str) -> Option<Value> {
+        self.0.lock().unwrap().remove(label)
+    }
+
+    pub fn get_value(&self, label: &str) -> Result<Value, FSLError> {
+        let value = self.0.lock().unwrap().get(label).cloned();
+
+        match value {
+            Some(value) => {
+                if value.is_type(FslType::Var) {
+                    return self.get_value(&value.get_var_label()?);
+                } else {
+                    Ok(value.clone())
+                }
+            }
+            None => Err(FSLError::NonExistantVar(ErrorContext::new(
+                label.to_string(),
+                format!("cannot get the value of a non existant var"),
+            ))),
+        }
     }
 }
 
@@ -366,6 +538,19 @@ mod interpreter {
         assert!(result == expected_output);
     }
 
+    async fn test_interpreter_embedded(code: &str, expected_output: &str) {
+        let result = FslInterpreter::new().interpret_embedded_code(code).await;
+
+        println!("DEBUG");
+        dbg!(&result);
+
+        let result = result.unwrap();
+        println!("PRETTY PRINT");
+        println!("{}", &result);
+
+        assert!(result == expected_output);
+    }
+
     async fn test_interpreter_err(code: &str) {
         let result = FslInterpreter::new().interpret(code).await;
         dbg!(&result);
@@ -375,6 +560,15 @@ mod interpreter {
     #[tokio::test]
     async fn hello_world() {
         test_interpreter("print(\"Hello, world!\")", "Hello, world!").await;
+    }
+
+    #[tokio::test]
+    async fn interpret_embedded() {
+        test_interpreter_embedded(
+            r#"{print("hello", "{print(",", "{print(" world")}")}")}"#,
+            "hello, world",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -1101,12 +1295,11 @@ mod interpreter {
 
     #[tokio::test]
     async fn error_free_nonexistent() {
-        test_interpreter(
+        test_interpreter_err(
             r#"
         result.store(free(nonexistent))
         print(result)
         "#,
-            "none",
         )
         .await;
     }

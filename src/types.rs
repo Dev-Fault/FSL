@@ -8,9 +8,7 @@ use std::{
 
 use async_recursion::async_recursion;
 
-use crate::FslInterpreter;
-
-pub type Error = String;
+use crate::{ErrorContext, FSLError, FslInterpreter, InterpreterData};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FslType {
@@ -46,29 +44,29 @@ pub enum ArgPos {
 
 #[derive(Debug, Clone)]
 pub struct ArgRule {
-    pub(crate) position: ArgPos,
-    pub(crate) valid_types: &'static [FslType],
+    pub position: ArgPos,
+    pub valid_types: &'static [FslType],
 }
 
 pub trait CommandFn: Send + Sync {
     fn execute(
         &self,
         values: Arc<Vec<Value>>,
-        interpreter: Arc<FslInterpreter>,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, Error>> + Send + '_>>;
+        interpreter: Arc<InterpreterData>,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, FSLError>> + Send + '_>>;
 }
 
 impl<F, Fut> CommandFn for F
 where
-    F: Fn(Arc<Vec<Value>>, Arc<FslInterpreter>) -> Fut + Send + Sync,
-    Fut: Future<Output = Result<Value, Error>> + Send + 'static,
+    F: Fn(Arc<Vec<Value>>, Arc<InterpreterData>) -> Fut + Send + Sync,
+    Fut: Future<Output = Result<Value, FSLError>> + Send + 'static,
 {
     fn execute(
         &self,
         values: Arc<Vec<Value>>,
-        interpreter: Arc<FslInterpreter>,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, Error>> + Send + '_>> {
-        Box::pin(self(values, interpreter))
+        data: Arc<InterpreterData>,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, FSLError>> + Send + '_>> {
+        Box::pin(self(values, data))
     }
 }
 
@@ -127,24 +125,27 @@ impl Command {
         &self.args
     }
 
-    fn validate_arg_range(&self, arg_rule: &ArgRule, range: &Range<usize>) -> Result<(), Error> {
+    fn validate_arg_range(&self, arg_rule: &ArgRule, range: &Range<usize>) -> Result<(), FSLError> {
         for (i, arg) in self.args[range.start..range.end].iter().enumerate() {
             let fsl_type = arg.as_type();
             if !arg_rule.valid_types.contains(&fsl_type) {
-                return Err(format!(
-                    "Arg {} of command {} cannot be of type {}\nValid types are {:?}",
-                    i,
-                    self.label,
-                    fsl_type.as_str(),
-                    arg_rule.valid_types
-                ));
+                return Err(FSLError::IncorrectArgs(ErrorContext::new(
+                    self.label.clone(),
+                    format!(
+                        "Arg {} of command {} cannot be of type {}\nValid types are {:?}",
+                        i,
+                        self.label,
+                        fsl_type.as_str(),
+                        arg_rule.valid_types
+                    ),
+                )));
             }
         }
         Ok(())
     }
 
     /// Executes command ensuring arg rules are obeyed
-    pub async fn execute(&self, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
+    pub async fn execute(&self, data: Arc<InterpreterData>) -> Result<Value, FSLError> {
         let mut max_args = 0;
         for arg_rule in self.arg_rules {
             match &arg_rule.position {
@@ -160,10 +161,13 @@ impl Command {
                             self.validate_arg_range(arg_rule, &range)?;
                         }
                         None => {
-                            return Err(format!(
-                                "Arg {} of command {} must be present and be of type {:?}",
-                                i, self.label, arg_rule.valid_types
-                            ));
+                            return Err(FSLError::IncorrectArgs(ErrorContext::new(
+                                self.label.clone(),
+                                format!(
+                                    "Arg {} of command {} must be present and be of type {:?}",
+                                    i, self.label, arg_rule.valid_types
+                                ),
+                            )));
                         }
                     }
                 }
@@ -174,29 +178,35 @@ impl Command {
                         max_args
                     };
                     if self.args.len() < range.start {
-                        return Err(format!(
-                            "Command {} must have at least {} arguments and only {} were given",
-                            self.label,
-                            range.start,
-                            self.args.len(),
-                        ));
+                        return Err(FSLError::IncorrectArgs(ErrorContext::new(
+                            self.label.clone(),
+                            format!(
+                                "Command {} must have at least {} arguments and only {} were given",
+                                self.label,
+                                range.start,
+                                self.args.len(),
+                            ),
+                        )));
                     } else if self.args.len() > range.end {
-                        return Err(format!(
-                            "Command {} must have no more than {} arguments and {} were given",
-                            self.label,
-                            range.end,
-                            self.args.len(),
-                        ));
+                        return Err(FSLError::IncorrectArgs(ErrorContext::new(
+                            self.label.clone(),
+                            format!(
+                                "Command {} must have no more than {} arguments and {} were given",
+                                self.label,
+                                range.end,
+                                self.args.len(),
+                            ),
+                        )));
                     } else {
                         self.validate_arg_range(arg_rule, range)?;
                     }
                 }
                 ArgPos::None => {
                     if self.args.len() > 0 {
-                        return Err(format!(
-                            "Command {} does not take any arguments",
-                            self.label
-                        ));
+                        return Err(FSLError::IncorrectArgs(ErrorContext::new(
+                            self.label.clone(),
+                            format!("Command {} does not take any arguments", self.label),
+                        )));
                     }
                 }
                 ArgPos::AnyAfter(i) => {
@@ -208,18 +218,18 @@ impl Command {
         }
 
         if self.args.len() > max_args {
-            return Err(format!(
-                "Command {} expected {} args but got {}",
-                self.label,
-                max_args,
-                self.args.len()
-            ));
+            return Err(FSLError::IncorrectArgs(ErrorContext::new(
+                self.label.clone(),
+                format!(
+                    "Command {} expected {} args but got {}",
+                    self.label,
+                    max_args,
+                    self.args.len()
+                ),
+            )));
         }
 
-        Ok(self
-            .executor
-            .execute(self.args.clone(), interpreter)
-            .await?)
+        Ok(self.executor.execute(self.args.clone(), data).await?)
     }
 }
 
@@ -248,20 +258,26 @@ impl Clone for Command {
     }
 }
 
-fn gen_invalid_conversion_error(from: FslType, to: FslType) -> String {
-    format!(
-        "Cannot convert from type {} to type {}",
-        from.as_str(),
-        to.as_str()
-    )
+fn gen_invalid_conversion_error(from: FslType, to: FslType) -> FSLError {
+    FSLError::InvalidValueConversion(ErrorContext::new(
+        "".into(),
+        format!(
+            "Cannot convert from type {} to type {}",
+            from.as_str(),
+            to.as_str()
+        ),
+    ))
 }
 
-fn gen_failed_parse_error(from: FslType, to: FslType) -> String {
-    format!(
-        "Failed to parse type {} to type {}",
-        from.as_str(),
-        to.as_str()
-    )
+fn gen_failed_parse_error(from: FslType, to: FslType) -> FSLError {
+    FSLError::FailedValueParse(ErrorContext::new(
+        "".into(),
+        format!(
+            "Failed to parse type {} to type {}",
+            from.as_str(),
+            to.as_str()
+        ),
+    ))
 }
 
 impl Value {
@@ -283,17 +299,17 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_int(&self, interpreter: Arc<FslInterpreter>) -> Result<i64, Error> {
+    pub async fn as_int(&self, data: Arc<InterpreterData>) -> Result<i64, FSLError> {
         let to_type = FslType::Int;
         match self {
             Value::Int(value) => Ok(value.clone()),
             Value::Float(value) => Ok(value.clone() as i64),
-            Value::Var(label) => interpreter.vars.get_value(label)?.as_int(interpreter).await,
+            Value::Var(label) => data.vars.get_value(label)?.as_int(data).await,
             Value::Command(command) => {
                 command
-                    .execute(interpreter.clone())
+                    .execute(data.clone())
                     .await?
-                    .as_int(interpreter.clone())
+                    .as_int(data.clone())
                     .await
             }
             Value::Text(value) => match value.parse::<i64>() {
@@ -307,23 +323,17 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_float(&self, interpreter: Arc<FslInterpreter>) -> Result<f64, Error> {
+    pub async fn as_float(&self, data: Arc<InterpreterData>) -> Result<f64, FSLError> {
         let to_type = FslType::Float;
         match self {
             Value::Int(value) => Ok(value.clone() as f64),
             Value::Float(value) => Ok(value.clone()),
-            Value::Var(label) => {
-                interpreter
-                    .vars
-                    .get_value(label)?
-                    .as_float(interpreter)
-                    .await
-            }
+            Value::Var(label) => data.vars.get_value(label)?.as_float(data).await,
             Value::Command(command) => {
                 command
-                    .execute(interpreter.clone())
+                    .execute(data.clone())
                     .await?
-                    .as_float(interpreter.clone())
+                    .as_float(data.clone())
                     .await
             }
             Value::Text(value) => match value.parse::<f64>() {
@@ -337,25 +347,19 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_text(&self, interpreter: Arc<FslInterpreter>) -> Result<String, Error> {
+    pub async fn as_text(&self, data: Arc<InterpreterData>) -> Result<String, FSLError> {
         match self {
             Value::Int(value) => Ok(value.to_string()),
             Value::Float(value) => Ok(value.to_string()),
             Value::Text(value) => Ok(value.clone()),
             Value::Bool(value) => Ok(value.to_string()),
             Value::List(values) => Ok(format!("{:?}", values)),
-            Value::Var(label) => {
-                interpreter
-                    .vars
-                    .get_value(label)?
-                    .as_text(interpreter)
-                    .await
-            }
+            Value::Var(label) => data.vars.get_value(label)?.as_text(data).await,
             Value::Command(command) => {
                 command
-                    .execute(interpreter.clone())
+                    .execute(data.clone())
                     .await?
-                    .as_text(interpreter.clone())
+                    .as_text(data.clone())
                     .await
             }
             Value::None => Err(gen_invalid_conversion_error(self.as_type(), FslType::Text)),
@@ -363,7 +367,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_bool(&self, interpreter: Arc<FslInterpreter>) -> Result<bool, Error> {
+    pub async fn as_bool(&self, data: Arc<InterpreterData>) -> Result<bool, FSLError> {
         let to_type = FslType::Bool;
         match self {
             Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
@@ -374,18 +378,12 @@ impl Value {
             },
             Value::Bool(value) => Ok(value.clone()),
             Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Var(label) => {
-                interpreter
-                    .vars
-                    .get_value(label)?
-                    .as_bool(interpreter)
-                    .await
-            }
+            Value::Var(label) => data.vars.get_value(label)?.as_bool(data).await,
             Value::Command(command) => {
                 command
-                    .execute(interpreter.clone())
+                    .execute(data.clone())
                     .await?
-                    .as_bool(interpreter.clone())
+                    .as_bool(data.clone())
                     .await
             }
             Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
@@ -393,7 +391,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_list(&self, interpreter: Arc<FslInterpreter>) -> Result<Vec<Value>, Error> {
+    pub async fn as_list(&self, data: Arc<InterpreterData>) -> Result<Vec<Value>, FSLError> {
         let to_type = FslType::List;
         match self {
             Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
@@ -401,55 +399,55 @@ impl Value {
             Value::Text(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::Bool(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::List(values) => Ok(values.clone()),
-            Value::Var(label) => {
-                interpreter
-                    .vars
-                    .get_value(label)?
-                    .as_list(interpreter)
-                    .await
-            }
+            Value::Var(label) => data.vars.get_value(label)?.as_list(data).await,
             Value::Command(command) => {
                 command
-                    .execute(interpreter.clone())
+                    .execute(data.clone())
                     .await?
-                    .as_list(interpreter.clone())
+                    .as_list(data.clone())
                     .await
             }
             Value::None => todo!(),
         }
     }
 
-    pub async fn as_raw(&self, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
+    pub async fn as_raw(&self, interpreter_data: Arc<InterpreterData>) -> Result<Value, FSLError> {
         if self.is_type(FslType::Var) {
-            Ok(self.get_var_value(interpreter.clone())?)
+            Ok(self.get_var_value(interpreter_data.clone())?)
         } else if self.is_type(FslType::Command) {
-            Ok(self.as_command()?.execute(interpreter.clone()).await?)
+            Ok(self.as_command()?.execute(interpreter_data.clone()).await?)
         } else {
             Ok(self.clone())
         }
     }
 
-    pub fn as_command(&self) -> Result<Arc<Command>, Error> {
+    pub fn as_command(&self) -> Result<Arc<Command>, FSLError> {
         if let Value::Command(command) = self {
             Ok(command.clone())
         } else {
-            Err("Cannot convert command into another type".into())
+            Err(FSLError::InvalidValueConversion(ErrorContext::new(
+                "".into(),
+                "cannot convert command into another value".into(),
+            )))
         }
     }
 
-    pub fn get_var_label(&self) -> Result<String, Error> {
+    pub fn get_var_label(&self) -> Result<String, FSLError> {
         if let Value::Var(label) = self {
             Ok(label.clone())
         } else {
-            Err("Var must be a valid identifier".into())
+            Err(FSLError::InvalidVarLabel(ErrorContext::new(
+                "".into(),
+                format!("{} is not a valid var label", self.to_string()),
+            )))
         }
     }
 
-    pub fn get_var_value(&self, interpreter: Arc<FslInterpreter>) -> Result<Value, Error> {
+    pub fn get_var_value(&self, data: Arc<InterpreterData>) -> Result<Value, FSLError> {
         if let Value::Var(label) = self {
-            match interpreter.vars.get_value(label) {
+            match data.vars.get_value(label) {
                 Ok(value) => match value {
-                    Value::Var(_) => value.get_var_value(interpreter),
+                    Value::Var(_) => value.get_var_value(data),
                     _ => Ok(value),
                 },
                 Err(e) => Err(e),
