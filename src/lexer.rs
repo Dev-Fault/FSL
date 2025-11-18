@@ -26,14 +26,27 @@ const KEYWORD_FALSE: &str = "false";
 const KEYWORDS: &[&str] = &[KEYWORD_TRUE, KEYWORD_FALSE];
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct ErrorContext<'a> {
-    pub input: &'a str,
-    pub location: usize,
+struct ErrorContext<'a> {
+    input: &'a str,
+    location: usize,
+}
+
+pub fn format_error_context(input: &str, location: usize) -> String {
+    let left = location.saturating_sub(50);
+    let right = (location.saturating_add(50)).clamp(0, input.len());
+    let context = &input[left..right];
+    format!("Area near where error was detected:\n{}", context,)
 }
 
 impl<'a> ErrorContext<'a> {
     pub fn new(input: &'a str, location: usize) -> Self {
         Self { input, location }
+    }
+}
+
+impl ToString for ErrorContext<'_> {
+    fn to_string(&self) -> String {
+        format_error_context(self.input, self.location)
     }
 }
 
@@ -52,6 +65,104 @@ pub enum LexerError<'a> {
     TrailingToken(ErrorContext<'a>),
     InvalidEscapeSequence(ErrorContext<'a>),
     InvalidNumber(ErrorContext<'a>),
+}
+
+impl ToString for LexerError<'_> {
+    fn to_string(&self) -> String {
+        match self {
+            LexerError::DotPreceededByInvalidToken(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Out of place dot operator",
+                    error_context.to_string()
+                )
+            }
+            LexerError::CommaPrecededByInvalidToken(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Out of place comma",
+                    error_context.to_string()
+                )
+            }
+            LexerError::ClosedParenPrecededByInvalidToken(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Out of place closing parenthesis",
+                    error_context.to_string()
+                )
+            }
+            LexerError::ClosedBracketPrecededByInvalidToken(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Out of place closed bracket",
+                    error_context.to_string()
+                )
+            }
+            LexerError::UnclosedOpenParenthesis(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Unclosed open parenthesis",
+                    error_context.to_string()
+                )
+            }
+            LexerError::UnclosedOpenBracket(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Unclosed open bracket",
+                    error_context.to_string()
+                )
+            }
+            LexerError::UnclosedString(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Unclosed quotes",
+                    error_context.to_string()
+                )
+            }
+            LexerError::UnmatchedClosingParen(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Unmatched closing parenthesis",
+                    error_context.to_string()
+                )
+            }
+            LexerError::UnmatchedClosingBracket(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Unmatched closing bracket",
+                    error_context.to_string()
+                )
+            }
+            LexerError::SymbolUsedOutsideOfContext(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Out of place symbol",
+                    error_context.to_string()
+                )
+            }
+            LexerError::TrailingToken(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Symbols outside of command",
+                    error_context.to_string()
+                )
+            }
+            LexerError::InvalidEscapeSequence(error_context) => {
+                format!(
+                    "{}\n{}",
+                    r#"Syntax error: Unknown escape sequence (Did you mean to use a back slash? try \\)"#,
+                    error_context.to_string()
+                )
+            }
+            LexerError::InvalidNumber(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Invalid number",
+                    error_context.to_string()
+                )
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +243,19 @@ pub enum TokenType {
     String(String),
     Keyword(Keyword),
     Var(String),
+}
+
+impl TokenType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            TokenType::Symbol(symbol) => symbol.as_str(),
+            TokenType::Command(command) => command,
+            TokenType::Number(number) => number,
+            TokenType::String(string) => string,
+            TokenType::Keyword(keyword) => keyword.as_str(),
+            TokenType::Var(var) => var,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -410,6 +534,42 @@ impl Lexer {
 #[cfg(test)]
 mod tests {
     use crate::lexer::{Lexer, LexerError, Symbol, TokenType};
+
+    #[test]
+    fn print_error_context() {
+        let lexer = Lexer::new();
+
+        let input = r#"
+            selections.store(["rock", "paper", "scissors"])
+            selection.store(selections.index(random_range(0, 2)))
+            response.store(lowercase(ask("Rock paper or scissors?")))
+            if_then_else(
+            	not(
+            		or(
+            			response.eq("rock"),
+            			response.eq("paper"),
+            			response.eq("scissors")
+            		)
+            	),
+            	say("Fuck off."),
+            	(
+            		sayselection),
+            		if_then(selection.eq(response), print("Tie!"))
+            		if_then(and(selection.eq("rock"), response.eq("scissors")), print("I win!"))
+            		if_then(and(selection.eq("rock"), response.eq("paper")), print("Goddamnit..."))
+            		if_then(and(selection.eq("paper"), response.eq("scissors")), print("Goddamnit..."))
+            		if_then(and(selection.eq("paper"), response.eq("rock")), print("I win!"))
+            		if_then(and(selection.eq("scissors"), response.eq("rock")), print("Goddamnit..."))
+            		if_then(and(selection.eq("scissors"), response.eq("paper")), print("I win!"))
+            	)
+            )
+        "#;
+
+        let tokens = lexer.tokenize(input);
+
+        assert!(tokens.is_err());
+        println!("\n{}\n", tokens.err().unwrap().to_string());
+    }
 
     #[test]
     fn tokenize_identifer_and_string() {

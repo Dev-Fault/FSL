@@ -52,18 +52,29 @@ pub const RANDOM_ENTRY: &str = "random_entry";
 
 #[derive(Debug, Clone)]
 pub struct ErrorContext {
-    command: String,
+    context: String,
     addendum: String,
 }
 
 impl ErrorContext {
-    pub fn new(command: String, addendum: String) -> Self {
-        Self { command, addendum }
+    pub fn new(context: String, addendum: String) -> Self {
+        Self { context, addendum }
+    }
+}
+
+impl ToString for ErrorContext {
+    fn to_string(&self) -> String {
+        let context = if !self.context.is_empty() {
+            format!("Error with: {}", self.context)
+        } else {
+            "".to_string()
+        };
+        format!("{}\n{}", context, self.addendum)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum FSLError {
+pub enum FslError {
     LexerError(String),
     ParserError(String),
     LoopLimitExceeded(ErrorContext),
@@ -81,21 +92,87 @@ pub enum FSLError {
     UnmatchedCurlyBraces(String),
 }
 
-impl ToString for FSLError {
+impl ToString for FslError {
     fn to_string(&self) -> String {
-        format!("{:?}", self)
+        match self {
+            FslError::LexerError(error) => error.clone(),
+            FslError::ParserError(error) => error.clone(),
+            FslError::LoopLimitExceeded(error_context) => {
+                format!(
+                    "Error: Maximum loop limit exceeded\n{}",
+                    error_context.to_string()
+                )
+            }
+            FslError::DivisionByZero(error_context) => {
+                format!("Error: Division by zero\n{}", error_context.to_string())
+            }
+
+            FslError::OutOfBounds(error_context) => {
+                format!("Error: Index out of bounds\n{}", error_context.to_string())
+            }
+            FslError::InvalidRange(error_context) => {
+                format!("Error: Invalid range\n{}", error_context.to_string())
+            }
+            FslError::NonExistantCommand(error_context) => {
+                format!("Error: Non existant command\n{}", error_context.to_string())
+            }
+            FslError::IncorrectArgs(error_context) => {
+                format!(
+                    "Error: Incorrect number of arguments\n{}",
+                    error_context.to_string()
+                )
+            }
+            FslError::NonExistantVar(error_context) => {
+                format!(
+                    "Error: Non existant variable\n{}",
+                    error_context.to_string()
+                )
+            }
+            FslError::FailedValueParse(error_context) => {
+                format!(
+                    "Error: Failed to parse value\n{}",
+                    error_context.to_string()
+                )
+            }
+            FslError::InvalidValueConversion(error_context) => {
+                format!(
+                    "Error: Failed to convert value\n{}",
+                    error_context.to_string()
+                )
+            }
+
+            FslError::InvalidVarLabel(error_context) => {
+                format!(
+                    "Error: Invalid label for variable\n{}",
+                    error_context.to_string()
+                )
+            }
+            FslError::InvalidVarValue(error_context) => {
+                format!(
+                    "Error: Invalid value for variable\n{}",
+                    error_context.to_string()
+                )
+            }
+            FslError::CustomError(error_context) => {
+                format!(
+                    "Error: Custom command failed\n{}",
+                    error_context.to_string()
+                )
+            }
+            FslError::UnmatchedCurlyBraces(error) => error.clone(),
+        }
     }
 }
 
-impl<'a> From<LexerError<'a>> for FSLError {
+impl<'a> From<LexerError<'a>> for FslError {
     fn from(value: LexerError) -> Self {
-        Self::LexerError(format!("{:?}", value))
+        Self::LexerError(value.to_string())
     }
 }
 
-impl<'a> From<ParserError<'a>> for FSLError {
+impl<'a> From<ParserError<'a>> for FslError {
     fn from(value: ParserError<'a>) -> Self {
-        Self::ParserError(format!("{:?}", value))
+        Self::ParserError(value.to_string())
     }
 }
 
@@ -116,14 +193,14 @@ impl InterpreterData {
         }
     }
 
-    pub async fn increment_loops(&self, loop_command: &'static str) -> Result<(), FSLError> {
+    pub async fn increment_loops(&self, loop_command: &'static str) -> Result<(), FslError> {
         match self.loop_limit {
             Some(limit) => {
                 let mut loops = self.loops.lock().await;
                 *loops += 1;
                 if *loops >= limit {
                     *loops = limit;
-                    Err(FSLError::LoopLimitExceeded(ErrorContext::new(
+                    Err(FslError::LoopLimitExceeded(ErrorContext::new(
                         loop_command.into(),
                         "".into(),
                     )))
@@ -155,11 +232,11 @@ impl FslInterpreter {
         self.data = Arc::new(InterpreterData::new());
     }
 
-    pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, FSLError> {
+    pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, FslError> {
         self.evaluate_expressions(code).await
     }
 
-    pub async fn interpret_embedded_code(&mut self, input: &str) -> Result<String, FSLError> {
+    pub async fn interpret_embedded_code(&mut self, input: &str) -> Result<String, FslError> {
         let mut output = String::with_capacity(input.len());
         let mut code_stack: Vec<String> = Vec::new();
 
@@ -172,7 +249,7 @@ impl FslInterpreter {
             } else if c == '}' {
                 code_depth -= 1;
                 if code_depth < 0 {
-                    return Err(FSLError::UnmatchedCurlyBraces(
+                    return Err(FslError::UnmatchedCurlyBraces(
                         "Unmatched curly braces".to_string(),
                     ));
                 } else {
@@ -201,7 +278,7 @@ impl FslInterpreter {
         }
 
         if code_depth != 0 {
-            return Err(FSLError::UnmatchedCurlyBraces(
+            return Err(FslError::UnmatchedCurlyBraces(
                 "Unmatched curly braces".to_string(),
             ));
         }
@@ -217,12 +294,12 @@ impl FslInterpreter {
     pub fn construct_executor<F, Fut>(command: F) -> Executor
     where
         F: Fn(Arc<Vec<Value>>, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Value, FSLError>> + Send + 'static,
+        Fut: Future<Output = Result<Value, FslError>> + Send + 'static,
     {
         Arc::new(move |values, vars| Box::pin(command(values, vars)))
     }
 
-    async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, FSLError> {
+    async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, FslError> {
         let expressions = Parser::new().parse(code);
         match expressions {
             Ok(expressions) => {
@@ -241,7 +318,7 @@ impl FslInterpreter {
         Ok(self.data.output.lock().await.clone())
     }
 
-    async fn parse_expression(&self, expression: Expression) -> Result<Value, FSLError> {
+    async fn parse_expression(&self, expression: Expression) -> Result<Value, FslError> {
         match self.commands.get(&expression.name) {
             Some(command) => {
                 let mut command = command.clone();
@@ -257,7 +334,7 @@ impl FslInterpreter {
                 Ok(Value::Command(Arc::new(command)))
             }
             None => {
-                return Err(FSLError::NonExistantCommand(ErrorContext::new(
+                return Err(FslError::NonExistantCommand(ErrorContext::new(
                     expression.name,
                     "".into(),
                 )));
@@ -266,7 +343,7 @@ impl FslInterpreter {
     }
 
     #[async_recursion]
-    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, FSLError> {
+    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, FslError> {
         match arg {
             parser::Arg::Number(number) => {
                 if number.contains('.') {
@@ -468,22 +545,22 @@ impl VarMap {
         }
     }
 
-    pub fn insert_value(&self, label: &str, value: &Value) -> Result<(), FSLError> {
+    pub fn insert_value(&self, label: &str, value: &Value) -> Result<(), FslError> {
         match value {
             Value::Var(_) => {
-                return Err(FSLError::InvalidVarValue(ErrorContext::new(
+                return Err(FslError::InvalidVarValue(ErrorContext::new(
                     "".into(),
                     "cannot store var in var".into(),
                 )));
             }
             Value::Command(_) => {
-                return Err(FSLError::InvalidVarValue(ErrorContext::new(
+                return Err(FslError::InvalidVarValue(ErrorContext::new(
                     "".into(),
                     "cannot store command in var".into(),
                 )));
             }
             Value::None => {
-                return Err(FSLError::InvalidVarValue(ErrorContext::new(
+                return Err(FslError::InvalidVarValue(ErrorContext::new(
                     "".into(),
                     "cannot store none in var".into(),
                 )));
@@ -502,7 +579,7 @@ impl VarMap {
         self.0.lock().unwrap().remove(label)
     }
 
-    pub fn get_value(&self, label: &str) -> Result<Value, FSLError> {
+    pub fn get_value(&self, label: &str) -> Result<Value, FslError> {
         let value = self.0.lock().unwrap().get(label).cloned();
 
         match value {
@@ -513,7 +590,7 @@ impl VarMap {
                     Ok(value.clone())
                 }
             }
-            None => Err(FSLError::NonExistantVar(ErrorContext::new(
+            None => Err(FslError::NonExistantVar(ErrorContext::new(
                 label.to_string(),
                 format!("cannot get the value of a non existant var"),
             ))),

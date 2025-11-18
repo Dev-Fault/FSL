@@ -1,16 +1,52 @@
 use std::{collections::btree_map::Values, ops::Deref};
 
 use crate::{
-    lexer::{Keyword, Lexer, LexerError, Symbol, Token, TokenType},
+    lexer::{Keyword, Lexer, LexerError, Symbol, Token, TokenType, format_error_context},
     types::Command,
 };
 
 #[derive(Debug, Clone, PartialEq)]
+struct ErrorContext<'a> {
+    input: &'a str,
+    token: Token,
+}
+
+impl<'a> ErrorContext<'a> {
+    pub fn new(input: &'a str, token: Token) -> Self {
+        Self { input, token }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParserError<'a> {
     LexerError(LexerError<'a>),
-    InvalidDotPlacement(Token),
-    ValueOutsideOfContext(Token),
-    ObjectsNotSupported(Token),
+    InvalidDotPlacement(ErrorContext<'a>),
+    ValueOutsideOfContext(ErrorContext<'a>),
+    ObjectsNotSupported(ErrorContext<'a>),
+}
+
+impl ToString for ParserError<'_> {
+    fn to_string(&self) -> String {
+        match self {
+            ParserError::LexerError(lexer_error) => lexer_error.to_string(),
+            ParserError::InvalidDotPlacement(context) => {
+                format!(
+                    "Syntax error: Out of place dot\n{}",
+                    format_error_context(context.input, context.token.location)
+                )
+            }
+            ParserError::ValueOutsideOfContext(context) => {
+                format!(
+                    "Syntax error: Out of place value\nValue: {}\n{}",
+                    context.token.token_type.as_str(),
+                    format_error_context(context.input, context.token.location)
+                )
+            }
+            ParserError::ObjectsNotSupported(context) => {
+                format!("Parser error: Objects are not currently supported in FSL")
+            }
+        }
+    }
 }
 
 impl<'a> From<LexerError<'a>> for ParserError<'a> {
@@ -75,6 +111,7 @@ impl Parser {
         token: &Token,
         next_token: Option<&Token>,
         symbol: Symbol,
+        code: &'a str,
     ) -> Result<(), ParserError<'a>> {
         match symbol {
             Symbol::OpenParen => match self.current_command_name.take() {
@@ -129,7 +166,12 @@ impl Parser {
 
                     self.state_stack.push(ParserState::InsideList);
                 }
-                None => return Err(ParserError::ValueOutsideOfContext(token.clone())),
+                None => {
+                    return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
+                        code,
+                        token.clone(),
+                    )));
+                }
             },
             Symbol::ClosedBracket => {
                 self.state_stack.pop();
@@ -155,7 +197,10 @@ impl Parser {
                         expression.args.push(Arg::List(list));
                     }
                 } else {
-                    return Err(ParserError::ValueOutsideOfContext(token.clone()));
+                    return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
+                        code,
+                        token.clone(),
+                    )));
                 }
             }
             Symbol::Quote => {}
@@ -164,12 +209,21 @@ impl Parser {
                     if let Some(dot_arg) = self.dot_arg.take() {
                         if let Arg::Var(object) = dot_arg {
                             if let Arg::Var(property) = arg {
-                                return Err(ParserError::ObjectsNotSupported(token.clone()));
+                                return Err(ParserError::ObjectsNotSupported(ErrorContext::new(
+                                    code,
+                                    token.clone(),
+                                )));
                             } else {
-                                return Err(ParserError::InvalidDotPlacement(token.clone()));
+                                return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
+                                    code,
+                                    token.clone(),
+                                )));
                             }
                         } else {
-                            return Err(ParserError::InvalidDotPlacement(token.clone()));
+                            return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
+                                code,
+                                token.clone(),
+                            )));
                         }
                     } else {
                         self.dot_arg = Some(arg);
@@ -178,7 +232,10 @@ impl Parser {
                     let dot_expression = self.output.pop().unwrap();
                     self.dot_arg = Some(Arg::Expression(dot_expression));
                 } else {
-                    return Err(ParserError::InvalidDotPlacement(token.clone()));
+                    return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
+                        code,
+                        token.clone(),
+                    )));
                 }
             }
             Symbol::Comma => {
@@ -195,7 +252,10 @@ impl Parser {
                             }
                         }
                     } else {
-                        return Err(ParserError::ValueOutsideOfContext(token.clone()));
+                        return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
+                            code,
+                            token.clone(),
+                        )));
                     }
                 }
             }
@@ -208,7 +268,9 @@ impl Parser {
 
         for (i, token) in tokens.iter().enumerate() {
             match token.token_type.clone() {
-                TokenType::Symbol(symbol) => self.parse_symbol(token, tokens.get(i + 1), symbol)?,
+                TokenType::Symbol(symbol) => {
+                    self.parse_symbol(token, tokens.get(i + 1), symbol, code)?
+                }
                 TokenType::Command(name) => self.current_command_name = Some(name),
                 TokenType::Number(number) => self.current_arg = Some(Arg::Number(number)),
                 TokenType::String(string) => self.current_arg = Some(Arg::String(string)),
