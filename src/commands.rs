@@ -709,6 +709,20 @@ pub async fn remove_whitespace(
         .into())
 }
 
+pub const SPLIT_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+];
+pub async fn split(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let text_to_split = values[0].as_text(data.clone()).await?;
+    let pattern = values[1].as_text(data.clone()).await?;
+    let split = text_to_split
+        .split(&pattern)
+        .map(|s| Value::Text(s.to_string()))
+        .collect::<Vec<Value>>();
+    Ok(Value::List(split))
+}
+
 pub const RANDOM_RANGE_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),

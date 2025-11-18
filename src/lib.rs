@@ -47,6 +47,7 @@ pub const CAPITALIZE: &str = "capitalize";
 pub const UPPERCASE: &str = "uppercase";
 pub const LOWERCASE: &str = "lowercase";
 pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
+pub const SPLIT: &str = "split";
 pub const RANDOM_RANGE: &str = "random_range";
 pub const RANDOM_ENTRY: &str = "random_entry";
 
@@ -515,6 +516,12 @@ impl FslInterpreter {
         );
 
         self.add_command(
+            SPLIT,
+            &SPLIT_RULES,
+            Self::construct_executor(commands::split),
+        );
+
+        self.add_command(
             RANDOM_RANGE,
             &RANDOM_RANGE_RULES,
             Self::construct_executor(commands::random_range),
@@ -644,6 +651,15 @@ mod interpreter {
         test_interpreter_embedded(
             r#"{print("hello", "{print(",", "{print(" world")}")}")}"#,
             "hello, world",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn split_command() {
+        test_interpreter(
+            r#"print(split("some text to split by whitespace", " "))"#,
+            r#"[Text("some"), Text("text"), Text("to"), Text("split"), Text("by"), Text("whitespace")]"#,
         )
         .await;
     }
