@@ -21,6 +21,7 @@ pub const MUL: &str = "mul";
 pub const DIV: &str = "div";
 pub const MODULUS: &str = "mod";
 pub const STORE: &str = "store";
+pub const CLONE: &str = "clone";
 pub const FREE: &str = "free";
 pub const PRINT: &str = "print";
 pub const SCOPE: &str = "";
@@ -396,6 +397,12 @@ impl FslInterpreter {
             Self::construct_executor(commands::store),
         );
 
+        self.add_command(
+            CLONE,
+            &CLONE_RULES,
+            Self::construct_executor(commands::clone),
+        );
+
         self.add_command(FREE, &FREE_RULES, Self::construct_executor(commands::free));
 
         self.add_command(
@@ -689,13 +696,28 @@ mod interpreter {
             r#"
             a.store("test")
             b.store([1, 2, 3, a])
-            print(a.contains("p"))
-            print(a.contains("t"))
-            print(b.contains(a))
-            print(b.contains(1))
-            print(b.contains(5))
+            print(a.contains("p"), " ")
+            print(a.contains("t"), " ")
+            print(b.contains(a), " ")
+            print(b.contains(1), " ")
+            print(b.contains(5), " ")
+            print(b.contains("test"))
             "#,
-            r#"falsetruetruetruefalse"#,
+            r#"false true true true false true"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn clone_command() {
+        test_interpreter(
+            r#"
+            a.store(0)
+            b.store(1)
+            list.store([a.clone(), b.clone()])
+            print(list.index(0), " ", list.index(1))
+            "#,
+            r#"0 1"#,
         )
         .await;
     }
@@ -1404,7 +1426,7 @@ mod interpreter {
         test_interpreter(
             r#"
         items.store(["a", "b", "c"])
-        items.store(items.replace("X", 1))
+        items.store(items.replace(1, "X"))
         print(items.index(0), items.index(1), items.index(2))
         "#,
             "aXc",
@@ -1555,7 +1577,7 @@ mod interpreter {
         test_interpreter(
             r#"
         text.store("hello")
-        text.store(text.replace("a", 1))
+        text.store(text.replace(1, "a"))
         print(text)
         "#,
             "hallo",

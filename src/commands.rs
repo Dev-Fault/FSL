@@ -225,6 +225,12 @@ pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
     Ok(data.vars.get_value(label)?)
 }
 
+pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub async fn clone(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let value = &values[0].get_var_value(data)?;
+    Ok(value.clone())
+}
+
 pub const FREE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub async fn free(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let label = &values[0].get_var_label()?;
@@ -741,9 +747,14 @@ pub async fn contains(
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
     let a = values[0].as_raw(data.clone()).await?;
-    let b = &values[1];
+    let b = values[1].as_raw(data.clone()).await?;
     if let Value::List(list) = a {
-        return Ok(Value::Bool(list.contains(b)));
+        for value in list {
+            if value.as_raw(data.clone()).await? == b {
+                return Ok(Value::Bool(true));
+            }
+        }
+        return Ok(Value::Bool(false));
     } else {
         let text = a.as_text(data.clone()).await?;
         return Ok(Value::Bool(text.contains(&b.as_text(data).await?)));
