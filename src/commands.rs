@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 use async_recursion::async_recursion;
 
@@ -372,10 +372,18 @@ pub async fn while_loop(
 ) -> Result<Value, FslError> {
     let mut final_value = Value::None;
 
-    while values[0].as_bool(data.clone()).await? {
+    'outer: while values[0].as_bool(data.clone()).await? {
         for command in &values[1..] {
+            if data.continue_flag.load(Ordering::Relaxed) {
+                data.continue_flag.store(false, Ordering::Relaxed);
+                continue 'outer;
+            }
             let command = command.as_command()?;
             final_value = command.execute(data.clone()).await?;
+            if data.break_flag.load(Ordering::Relaxed) {
+                data.break_flag.store(false, Ordering::Relaxed);
+                break 'outer;
+            }
         }
         data.increment_loops(WHILE_LOOP).await?;
     }
@@ -394,10 +402,18 @@ pub async fn repeat(
     let repetitions = values[0].as_int(data.clone()).await?;
     let mut final_value = Value::None;
 
-    for _ in 0..repetitions {
+    'outer: for _ in 0..repetitions {
         for command in &values[1..] {
+            if data.continue_flag.load(Ordering::Relaxed) {
+                data.continue_flag.store(false, Ordering::Relaxed);
+                continue 'outer;
+            }
             let command = command.as_command()?;
             final_value = command.execute(data.clone()).await?;
+            if data.break_flag.load(Ordering::Relaxed) {
+                data.break_flag.store(false, Ordering::Relaxed);
+                break 'outer;
+            }
         }
         data.increment_loops(REPEAT).await?;
     }
@@ -902,6 +918,28 @@ pub async fn random_entry(
 ) -> Result<Value, FslError> {
     let list = values[0].as_list(data).await?;
     Ok(list[rand::random_range(0..list.len())].clone())
+}
+
+pub async fn break_command(
+    values: Arc<Vec<Value>>,
+    data: Arc<InterpreterData>,
+) -> Result<Value, FslError> {
+    data.break_flag
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(Value::None)
+}
+
+pub async fn continue_command(
+    values: Arc<Vec<Value>>,
+    data: Arc<InterpreterData>,
+) -> Result<Value, FslError> {
+    data.continue_flag
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(Value::None)
+}
+
+pub async fn exit(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    Ok(Value::None)
 }
 
 #[cfg(test)]

@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use async_recursion::async_recursion;
 use std::sync::Mutex;
@@ -56,6 +59,9 @@ pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
 pub const SPLIT: &str = "split";
 pub const RANDOM_RANGE: &str = "random_range";
 pub const RANDOM_ENTRY: &str = "random_entry";
+pub const EXIT: &str = "exit";
+pub const BREAK: &str = "break";
+pub const CONTINUE: &str = "continue";
 
 #[derive(Debug, Clone)]
 pub struct ErrorContext {
@@ -188,6 +194,8 @@ pub struct InterpreterData {
     pub vars: VarMap,
     pub loop_limit: Option<usize>,
     pub loops: Arc<tokio::sync::Mutex<usize>>,
+    pub break_flag: AtomicBool,
+    pub continue_flag: AtomicBool,
 }
 
 impl InterpreterData {
@@ -197,6 +205,8 @@ impl InterpreterData {
             output: Arc::new(tokio::sync::Mutex::new(String::new())),
             vars: VarMap::new(),
             loops: Arc::new(tokio::sync::Mutex::new(0)),
+            break_flag: AtomicBool::new(false),
+            continue_flag: AtomicBool::new(false),
         }
     }
 
@@ -312,7 +322,12 @@ impl FslInterpreter {
             Ok(expressions) => {
                 for expression in expressions {
                     let command = match self.parse_expression(expression).await? {
-                        Value::Command(command) => command,
+                        Value::Command(command) => {
+                            if command.get_label() == "exit" {
+                                break;
+                            }
+                            command
+                        }
                         _ => unreachable!("parse expression should always return a command"),
                     };
                     command.execute(self.data.clone()).await?;
@@ -558,6 +573,18 @@ impl FslInterpreter {
             &RANDOM_ENTRY_RULES,
             Self::construct_executor(commands::random_entry),
         );
+
+        self.add_command(EXIT, &NO_RULES, Self::construct_executor(commands::exit));
+        self.add_command(
+            BREAK,
+            &NO_RULES,
+            Self::construct_executor(commands::break_command),
+        );
+        self.add_command(
+            CONTINUE,
+            &NO_RULES,
+            Self::construct_executor(commands::continue_command),
+        );
     }
 }
 
@@ -670,6 +697,35 @@ mod interpreter {
     #[tokio::test]
     async fn hello_world() {
         test_interpreter("print(\"Hello, world!\")", "Hello, world!").await;
+    }
+
+    #[tokio::test]
+    async fn exit_command() {
+        test_interpreter("exit() print(\"Hello, world!\")", "").await;
+    }
+
+    #[tokio::test]
+    async fn break_command() {
+        test_interpreter(
+            r#"
+            i.store(0)
+            repeat(5, if_then(i.eq(2), break()), i.inc(), print("-"))
+            "#,
+            r#"--"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn continue_command() {
+        test_interpreter(
+            r#"
+            i.store(0)
+            repeat(5, i.inc(), if_then(i.eq(2), continue()), print("-"))
+            "#,
+            r#"----"#,
+        )
+        .await;
     }
 
     #[tokio::test]
