@@ -39,7 +39,12 @@ pub const LENGTH: &str = "length";
 pub const SWAP: &str = "swap";
 pub const INSERT: &str = "insert";
 pub const REMOVE: &str = "remove";
+pub const PUSH: &str = "push";
+pub const POP: &str = "pop";
 pub const REPLACE: &str = "replace";
+pub const INC: &str = "inc";
+pub const DEC: &str = "dec";
+pub const CONTAINS: &str = "contains";
 pub const STARTS_WITH: &str = "starts_with";
 pub const ENDS_WITH: &str = "ends_with";
 pub const CONCAT: &str = "concat";
@@ -467,10 +472,24 @@ impl FslInterpreter {
             Self::construct_executor(commands::remove),
         );
 
+        self.add_command(PUSH, &PUSH_RULES, Self::construct_executor(commands::push));
+
+        self.add_command(POP, &POP_RULES, Self::construct_executor(commands::pop));
+
         self.add_command(
             REPLACE,
             &REPLACE_RULES,
             Self::construct_executor(commands::replace),
+        );
+
+        self.add_command(INC, &INC_RULES, Self::construct_executor(commands::inc));
+
+        self.add_command(DEC, &DEC_RULES, Self::construct_executor(commands::dec));
+
+        self.add_command(
+            CONTAINS,
+            &CONCAT_RULES,
+            Self::construct_executor(commands::contains),
         );
 
         self.add_command(
@@ -660,6 +679,95 @@ mod interpreter {
         test_interpreter(
             r#"print(split("some text to split by whitespace", " "))"#,
             r#"[Text("some"), Text("text"), Text("to"), Text("split"), Text("by"), Text("whitespace")]"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn contains_command() {
+        test_interpreter(
+            r#"
+            a.store("test")
+            b.store([1, 2, 3, a])
+            print(a.contains("p"))
+            print(a.contains("t"))
+            print(b.contains(a))
+            print(b.contains(1))
+            print(b.contains(5))
+            "#,
+            r#"falsetruetruetruefalse"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inc_command() {
+        test_interpreter(
+            r#"
+                i.store(0)
+                i.inc()
+                print(i)
+                i.inc()
+                print(i)
+            "#,
+            r#"12"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dec_command() {
+        test_interpreter(
+            r#"
+                i.store(0)
+                i.dec()
+                print(i)
+                i.dec()
+                print(i)
+            "#,
+            r#"-1-2"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn var_insert() {
+        test_interpreter(
+            r#"
+                i.store([1, 2])
+                i.push(3)
+                print(i.index(2))
+            "#,
+            r#"3"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn push_pop() {
+        test_interpreter(
+            r#"
+                text.store("hello")
+                text.push("o")
+                print(text)
+                print("\n")
+                text.pop()
+                print(text)
+            "#,
+            "helloo\nhello",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn matrix_manipulation() {
+        test_interpreter(
+            r#"
+                matrix.store([[1, 2, 3], [#, #, #], [7, 8, 9]])
+                matrix.replace(1, matrix.index(1).replace(1, "X"))
+                print(matrix.index(1).index(1))
+            "#,
+            r#"X"#,
         )
         .await;
     }

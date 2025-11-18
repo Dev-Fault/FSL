@@ -408,9 +408,9 @@ pub async fn index(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
 
     if array.is_type(crate::types::FslType::List) {
         let list = array.as_list(data.clone()).await?;
-        let i = values[1].as_int(data).await?;
+        let i = values[1].as_int(data.clone()).await?;
         match list.get(i as usize) {
-            Some(value) => Ok(value.clone()),
+            Some(value) => Ok(value.as_raw(data).await?),
             None => Err(FslError::OutOfBounds(ErrorContext::new(
                 INDEX.into(),
                 format!("index {} was outside the bounds of list: {:?}", i, list),
@@ -449,7 +449,7 @@ pub async fn length(
 }
 
 pub const SWAP_RULES: [ArgRule; 3] = [
-    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
 ];
@@ -460,7 +460,7 @@ pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
     let b = values[2].as_int(data.clone()).await? as usize;
 
     if array.is_type(crate::types::FslType::List) {
-        let mut list = array.as_list(data).await?;
+        let mut list = array.as_list(data.clone()).await?;
         if list.get(a).is_none() {
             Err(FslError::OutOfBounds(ErrorContext::new(
                 SWAP.into(),
@@ -475,10 +475,14 @@ pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
             let tmp = list[a].clone();
             list[a] = list[b].clone();
             list[b] = tmp;
-            Ok(list.into())
+            let list = Value::List(list);
+            if values[0].is_type(FslType::Var) {
+                data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+            }
+            Ok(list)
         }
     } else {
-        let text = array.as_text(data).await?;
+        let text = array.as_text(data.clone()).await?;
 
         if text.chars().nth(a).is_none() {
             Err(FslError::OutOfBounds(ErrorContext::new(
@@ -495,13 +499,17 @@ pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
             let tmp = text[a].clone();
             text[a] = text[b].clone();
             text[b] = tmp;
-            Ok(text.iter().collect::<String>().into())
+            let text = Value::Text(text.iter().collect::<String>().into());
+            if values[0].is_type(FslType::Var) {
+                data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+            }
+            Ok(text)
         }
     }
 }
 
-pub const INSERT_RULES: [ArgRule; 3] = [
-    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+pub const INSERT_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
     ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
 ];
@@ -515,7 +523,7 @@ pub async fn insert(
 
     if array.is_type(crate::types::FslType::List) {
         let mut list = array.as_list(data.clone()).await?;
-        let to_insert = values[1].as_raw(data).await?;
+        let to_insert = values[1].as_raw(data.clone()).await?;
 
         if i > list.len() {
             Err(FslError::OutOfBounds(ErrorContext::new(
@@ -524,11 +532,15 @@ pub async fn insert(
             )))
         } else {
             list.insert(i, to_insert);
-            Ok(list.into())
+            let list = Value::List(list);
+            if values[0].is_type(FslType::Var) {
+                data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+            }
+            Ok(list)
         }
     } else {
         let mut text = array.as_text(data.clone()).await?;
-        let to_insert = values[1].as_text(data).await?;
+        let to_insert = values[1].as_text(data.clone()).await?;
 
         if i > text.len() {
             Err(FslError::OutOfBounds(ErrorContext::new(
@@ -537,13 +549,78 @@ pub async fn insert(
             )))
         } else {
             text.insert_str(i, &to_insert);
-            Ok(text.into())
+            let text = Value::Text(text);
+            if values[0].is_type(FslType::Var) {
+                data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+            }
+            Ok(text)
+        }
+    }
+}
+
+pub const PUSH_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
+pub async fn push(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let array = values[0].as_raw(data.clone()).await?;
+
+    if array.is_type(crate::types::FslType::List) {
+        let mut list = array.as_list(data.clone()).await?;
+        let to_push = values[1].as_raw(data.clone()).await?;
+
+        list.push(to_push);
+        let list = Value::List(list);
+        if values[0].is_type(FslType::Var) {
+            data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+        }
+        Ok(list)
+    } else {
+        let mut text = array.as_text(data.clone()).await?;
+        let to_insert = values[1].as_text(data.clone()).await?;
+
+        text.push_str(&to_insert);
+        let text = Value::Text(text);
+        if values[0].is_type(FslType::Var) {
+            data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+        }
+        Ok(text)
+    }
+}
+
+pub const POP_RULES: &[ArgRule] = &[ArgRule::new(
+    ArgPos::Index(0),
+    &[FslType::List, FslType::Text],
+)];
+pub async fn pop(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let array = values[0].as_raw(data.clone()).await?;
+
+    if array.is_type(crate::types::FslType::List) {
+        let mut list = array.as_list(data.clone()).await?;
+
+        let ret_value = list.pop();
+        let list = Value::List(list);
+        if values[0].is_type(FslType::Var) {
+            data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+        }
+        Ok(ret_value.unwrap_or(Value::None))
+    } else {
+        let mut text = array.as_text(data.clone()).await?;
+
+        let ret_value = text.pop();
+        let text = Value::Text(text);
+        if values[0].is_type(FslType::Var) {
+            data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+        }
+        match ret_value {
+            Some(ch) => Ok(Value::Text(ch.to_string())),
+            None => Ok(Value::None),
         }
     }
 }
 
 pub const REMOVE_RULES: [ArgRule; 2] = [
-    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub async fn remove(
@@ -554,11 +631,15 @@ pub async fn remove(
 
     if array.is_type(crate::types::FslType::List) {
         let mut list = array.as_list(data.clone()).await?;
-        let i = values[1].as_int(data).await? as usize;
+        let i = values[1].as_int(data.clone()).await? as usize;
         match list.get(i) {
             Some(_) => {
                 list.remove(i);
-                Ok(list.into())
+                let list = Value::List(list);
+                if values[0].is_type(FslType::Var) {
+                    data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+                }
+                Ok(list)
             }
             None => Err(FslError::OutOfBounds(ErrorContext::new(
                 SWAP.into(),
@@ -567,11 +648,15 @@ pub async fn remove(
         }
     } else {
         let mut text = array.as_text(data.clone()).await?;
-        let i = values[1].as_int(data).await? as usize;
+        let i = values[1].as_int(data.clone()).await? as usize;
         match text.chars().nth(i) {
             Some(_) => {
                 text.remove(i);
-                Ok(text.into())
+                let text = Value::Text(text);
+                if values[0].is_type(FslType::Var) {
+                    data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+                }
+                Ok(text)
             }
             None => Err(FslError::OutOfBounds(ErrorContext::new(
                 SWAP.into(),
@@ -582,9 +667,9 @@ pub async fn remove(
 }
 
 pub const REPLACE_RULES: [ArgRule; 3] = [
-    ArgRule::new(ArgPos::Index(0), &[FslType::List]),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
-    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
+    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
 ];
 pub async fn replace(
     values: Arc<Vec<Value>>,
@@ -592,11 +677,11 @@ pub async fn replace(
 ) -> Result<Value, FslError> {
     let array = values[0].as_raw(data.clone()).await?;
 
-    let i = values[2].as_int(data.clone()).await? as usize;
+    let i = values[1].as_int(data.clone()).await? as usize;
 
     if array.is_type(crate::types::FslType::List) {
-        let mut list = array.as_list(data).await?;
-        let replacement = values[1].clone();
+        let mut list = array.as_list(data.clone()).await?;
+        let replacement = values[2].as_raw(data.clone()).await?;
         if list.get(i).is_none() {
             Err(FslError::OutOfBounds(ErrorContext::new(
                 SWAP.into(),
@@ -604,11 +689,15 @@ pub async fn replace(
             )))
         } else {
             list[i] = replacement;
-            Ok(list.into())
+            let list = Value::List(list);
+            if values[0].is_type(FslType::Var) {
+                data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+            }
+            Ok(list)
         }
     } else {
         let mut text = array.as_text(data.clone()).await?;
-        let replacement = values[1].as_text(data).await?;
+        let replacement = values[2].as_text(data.clone()).await?;
 
         if text.chars().nth(i).is_none() {
             Err(FslError::OutOfBounds(ErrorContext::new(
@@ -617,8 +706,47 @@ pub async fn replace(
             )))
         } else {
             text.replace_range(i..i + 1, &replacement);
-            Ok(text.into())
+            let text = Value::Text(text);
+            if values[0].is_type(FslType::Var) {
+                data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+            }
+            Ok(text)
         }
+    }
+}
+pub const INC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub async fn inc(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let n = values[0].as_int(data.clone()).await?;
+    let new_value = Value::Int(n + 1);
+    data.vars
+        .insert_value(&values[0].get_var_label()?, &new_value)?;
+    Ok(new_value)
+}
+
+pub const DEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub async fn dec(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let n = values[0].as_int(data.clone()).await?;
+    let new_value = Value::Int(n - 1);
+    data.vars
+        .insert_value(&values[0].get_var_label()?, &new_value)?;
+    Ok(new_value)
+}
+
+pub const CONTAINS_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::Text, FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
+pub async fn contains(
+    values: Arc<Vec<Value>>,
+    data: Arc<InterpreterData>,
+) -> Result<Value, FslError> {
+    let a = values[0].as_raw(data.clone()).await?;
+    let b = &values[1];
+    if let Value::List(list) = a {
+        return Ok(Value::Bool(list.contains(b)));
+    } else {
+        let text = a.as_text(data.clone()).await?;
+        return Ok(Value::Bool(text.contains(&b.as_text(data).await?)));
     }
 }
 
