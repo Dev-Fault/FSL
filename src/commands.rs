@@ -304,20 +304,22 @@ pub async fn not(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
     Ok((!values[0].as_bool(data).await?).into())
 }
 
-pub const AND_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), LOGIC_TYPES),
-];
+pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
 pub async fn and(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FSLError> {
-    Ok((values[0].as_bool(data.clone()).await? && values[1].as_bool(data.clone()).await?).into())
+    let mut result = values[0].as_bool(data.clone()).await?;
+    for value in &values[1..values.len()] {
+        result = result && value.as_bool(data.clone()).await?;
+    }
+    Ok(result.into())
 }
 
-pub const OR_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), LOGIC_TYPES),
-];
+pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
 pub async fn or(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FSLError> {
-    Ok((values[0].as_bool(data.clone()).await? || values[1].as_bool(data.clone()).await?).into())
+    let mut result = values[0].as_bool(data.clone()).await?;
+    for value in &values[1..values.len()] {
+        result = result || value.as_bool(data.clone()).await?;
+    }
+    Ok(result.into())
 }
 
 pub const IF_THEN_RULES: &'static [ArgRule] = &[
@@ -745,7 +747,7 @@ pub async fn random_entry(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FSLError> {
-    Ok(values[rand::random_range(0..values.len())].clone())
+    Ok(values[0].as_list(data).await?[rand::random_range(0..values.len())].clone())
 }
 
 #[cfg(test)]
