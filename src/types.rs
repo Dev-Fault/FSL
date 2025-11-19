@@ -292,6 +292,32 @@ fn gen_failed_parse_error(from: FslType, to: FslType) -> FslError {
 }
 
 impl Value {
+    pub fn cmp(&self, other: &Value) -> Result<bool, FslError> {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
+            (Value::Bool(a), Value::Bool(b)) => Ok(*a == *b),
+            (Value::Text(a), Value::Text(b)) => Ok(*a == *b),
+            (Value::List(a_list), Value::List(b_list)) => {
+                if a_list.len() != b_list.len() {
+                    return Ok(false);
+                } else {
+                    for i in 0..a_list.len() {
+                        if !a_list[i].cmp(&b_list[i])? {
+                            return Ok(false);
+                        }
+                    }
+                }
+                Ok(true)
+            }
+            (Value::None, Value::None) => todo!(),
+            _ => Err(FslError::InvalidComparison(format!(
+                "Cannot compare {} with {}",
+                self.as_type().as_str(),
+                other.as_type().as_str()
+            ))),
+        }
+    }
+
     pub fn as_type(&self) -> FslType {
         match self {
             Value::Int(_) => FslType::Int,

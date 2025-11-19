@@ -101,6 +101,7 @@ pub enum FslError {
     InvalidValueConversion(ErrorContext),
     InvalidVarLabel(ErrorContext),
     InvalidVarValue(ErrorContext),
+    InvalidComparison(String),
     CustomError(ErrorContext),
     UnmatchedCurlyBraces(String),
     ProgramExited(),
@@ -173,6 +174,7 @@ impl ToString for FslError {
             }
             FslError::UnmatchedCurlyBraces(error) => error.clone(),
             FslError::ProgramExited() => format!("Program was exited"),
+            FslError::InvalidComparison(error) => error.clone(),
         }
     }
 }
@@ -802,6 +804,32 @@ mod interpreter {
             print(b.contains("test"))
             "#,
             r#"false true true true false true"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn contains_sub_array() {
+        test_interpreter(
+            r#"
+            a.store([[1, 2], [3, 4], [5, 6]])
+            print(a.contains([1, 3]))
+            print(" ")
+            print(a.contains([1, 2]))
+            "#,
+            r#"false true"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn contains_deep_array() {
+        test_interpreter(
+            r#"
+            a.store([[1, 2], [[1, 3], 4], [5, 6]])
+            print(a.contains([1, 3]))
+            "#,
+            r#"false"#,
         )
         .await;
     }
