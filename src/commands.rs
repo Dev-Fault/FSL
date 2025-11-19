@@ -766,7 +766,6 @@ pub async fn contains(
     let b = values[1].as_raw(data.clone()).await?;
     if let Value::List(list) = a {
         for value in list {
-            println!("list: a: {:?} b: {:?}", value, b);
             match value.as_raw(data.clone()).await?.cmp(&b) {
                 Ok(is_eq) => {
                     if is_eq {
@@ -778,7 +777,6 @@ pub async fn contains(
         }
         return Ok(Value::Bool(false));
     } else {
-        println!("text: a: {:?} b: {:?}", a, b);
         let text = a.as_text(data.clone()).await?;
         return Ok(Value::Bool(text.contains(&b.as_text(data).await?)));
     }
