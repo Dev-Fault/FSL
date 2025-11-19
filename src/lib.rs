@@ -459,7 +459,7 @@ impl FslInterpreter {
         self.add_command(
             WHILE_LOOP,
             WHILE_RULES,
-            Self::construct_executor(commands::while_loop),
+            Self::construct_executor(commands::while_command),
         );
 
         self.add_command(

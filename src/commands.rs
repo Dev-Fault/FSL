@@ -366,7 +366,7 @@ pub const WHILE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
     ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
 ];
-pub async fn while_loop(
+pub async fn while_command(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
@@ -374,12 +374,12 @@ pub async fn while_loop(
 
     'outer: while values[0].as_bool(data.clone()).await? {
         for command in &values[1..] {
+            let command = command.as_command()?;
+            final_value = command.execute(data.clone()).await?;
             if data.continue_flag.load(Ordering::Relaxed) {
                 data.continue_flag.store(false, Ordering::Relaxed);
                 continue 'outer;
             }
-            let command = command.as_command()?;
-            final_value = command.execute(data.clone()).await?;
             if data.break_flag.load(Ordering::Relaxed) {
                 data.break_flag.store(false, Ordering::Relaxed);
                 break 'outer;
@@ -404,12 +404,12 @@ pub async fn repeat(
 
     'outer: for _ in 0..repetitions {
         for command in &values[1..] {
+            let command = command.as_command()?;
+            final_value = command.execute(data.clone()).await?;
             if data.continue_flag.load(Ordering::Relaxed) {
                 data.continue_flag.store(false, Ordering::Relaxed);
                 continue 'outer;
             }
-            let command = command.as_command()?;
-            final_value = command.execute(data.clone()).await?;
             if data.break_flag.load(Ordering::Relaxed) {
                 data.break_flag.store(false, Ordering::Relaxed);
                 break 'outer;
@@ -1752,7 +1752,7 @@ mod tests {
         let mut add_command = get_command("add");
         add_command.set_args(vec![5.into(), 4.into()]);
         let add_command = Arc::new(add_command);
-        let result = while_loop(
+        let result = while_command(
             Arc::new(vec![true.into(), add_command.into()]),
             interpreter.data.clone(),
         )
