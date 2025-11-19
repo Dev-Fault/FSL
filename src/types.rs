@@ -81,7 +81,7 @@ pub struct Command {
 }
 
 impl FslType {
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             FslType::Int => "int",
             FslType::Float => "float",
@@ -447,7 +447,17 @@ impl Value {
             Value::Float(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::Text(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::Bool(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::List(values) => Ok(values.clone()),
+            Value::List(values) => {
+                let mut computed_values = vec![];
+                for value in values {
+                    if let Ok(command) = value.as_command() {
+                        computed_values.push(command.execute(data.clone()).await?);
+                    } else {
+                        computed_values.push(value.clone());
+                    }
+                }
+                Ok(computed_values)
+            }
             Value::Var(label) => data.vars.get_value(label)?.as_list(data).await,
             Value::Command(command) => {
                 command
@@ -460,11 +470,13 @@ impl Value {
         }
     }
 
-    pub async fn as_raw(&self, interpreter_data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    pub async fn as_raw(&self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
         if self.is_type(FslType::Var) {
-            Ok(self.get_var_value(interpreter_data.clone())?)
+            Ok(self.get_var_value(data.clone())?)
         } else if self.is_type(FslType::Command) {
-            Ok(self.as_command()?.execute(interpreter_data.clone()).await?)
+            Ok(self.as_command()?.execute(data.clone()).await?)
+        } else if self.is_type(FslType::List) {
+            Ok(Value::List(self.as_list(data.clone()).await?))
         } else {
             Ok(self.clone())
         }

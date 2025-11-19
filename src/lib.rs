@@ -104,6 +104,7 @@ pub enum FslError {
     InvalidComparison(String),
     CustomError(ErrorContext),
     UnmatchedCurlyBraces(String),
+    CannotStoreValueInVar(String),
     ProgramExited(),
 }
 
@@ -173,8 +174,9 @@ impl ToString for FslError {
                 )
             }
             FslError::UnmatchedCurlyBraces(error) => error.clone(),
-            FslError::ProgramExited() => format!("Program was exited"),
             FslError::InvalidComparison(error) => error.clone(),
+            FslError::CannotStoreValueInVar(error) => error.clone(),
+            FslError::ProgramExited() => format!("Program was exited"),
         }
     }
 }
@@ -385,7 +387,8 @@ impl FslInterpreter {
             parser::Arg::List(args) => {
                 let mut list: Vec<Value> = vec![];
                 for arg in args {
-                    list.push(self.parse_arg(arg).await?);
+                    let parsed_arg = self.parse_arg(arg).await?;
+                    list.push(parsed_arg);
                 }
                 Ok(Value::List(list))
             }
@@ -512,7 +515,7 @@ impl FslInterpreter {
 
         self.add_command(
             CONTAINS,
-            &CONCAT_RULES,
+            &CONTAINS_RULES,
             Self::construct_executor(commands::contains),
         );
 

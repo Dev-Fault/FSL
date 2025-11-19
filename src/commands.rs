@@ -217,11 +217,17 @@ pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
                 .vars
                 .insert_value(label, &command.execute(data.clone()).await?)?;
         }
-        Value::None => todo!(),
+        Value::None => {
+            return Err(FslError::CannotStoreValueInVar(format!(
+                "Cannot store {} in a var",
+                FslType::None.as_str()
+            )));
+        }
         _ => {
             data.vars.insert_value(label, &values[1])?;
         }
     }
+    dbg!(data.vars.get_value(label)?);
     Ok(data.vars.get_value(label)?)
 }
 
@@ -585,10 +591,7 @@ pub const PUSH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub async fn push(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
-
-    if array.is_type(crate::types::FslType::List) {
-        let mut list = array.as_list(data.clone()).await?;
+    if let Ok(mut list) = values[0].as_list(data.clone()).await {
         let to_push = values[1].as_raw(data.clone()).await?;
 
         list.push(to_push);
@@ -598,7 +601,7 @@ pub async fn push(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
         }
         Ok(list)
     } else {
-        let mut text = array.as_text(data.clone()).await?;
+        let mut text = values[0].as_text(data.clone()).await?;
         let to_insert = values[1].as_text(data.clone()).await?;
 
         text.push_str(&to_insert);
