@@ -729,6 +729,39 @@ mod interpreter {
     }
 
     #[tokio::test]
+    async fn print_list() {
+        test_interpreter(r#"print([1, 2, 3])"#, r#"[1, 2, 3]"#).await;
+    }
+
+    #[tokio::test]
+    async fn print_var_list() {
+        test_interpreter(
+            r#"a.store(0), b.store(0), c.store(0), print([a, b, c])"#,
+            r#"[0, 0, 0]"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn print_matrix() {
+        test_interpreter(
+            r#"print([[1, 2, 3], [4, 5, 6], [7, 8, 9]])"#,
+            r#"[[1, 2, 3], [4, 5, 6], [7, 8, 9]]"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn print_empty_list() {
+        test_interpreter(r#"print([])"#, r#"[]"#).await;
+    }
+
+    #[tokio::test]
+    async fn print_list_with_one_item() {
+        test_interpreter(r#"print([1])"#, r#"[1]"#).await;
+    }
+
+    #[tokio::test]
     async fn interpret_embedded() {
         test_interpreter_embedded(
             r#"{print("hello", "{print(",", "{print(" world")}")}")}"#,
@@ -741,7 +774,7 @@ mod interpreter {
     async fn split_command() {
         test_interpreter(
             r#"print(split("some text to split by whitespace", " "))"#,
-            r#"[Text("some"), Text("text"), Text("to"), Text("split"), Text("by"), Text("whitespace")]"#,
+            r#"[some, text, to, split, by, whitespace]"#,
         )
         .await;
     }
@@ -851,7 +884,7 @@ mod interpreter {
     }
 
     #[tokio::test]
-    async fn print_list() {
+    async fn print_iterated_list() {
         test_interpreter(
             r#"
 

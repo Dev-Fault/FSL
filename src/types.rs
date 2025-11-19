@@ -360,7 +360,19 @@ impl Value {
             Value::Float(value) => Ok(value.to_string()),
             Value::Text(value) => Ok(value.clone()),
             Value::Bool(value) => Ok(value.to_string()),
-            Value::List(values) => Ok(format!("{:?}", values)),
+            Value::List(values) => {
+                let mut output = String::new();
+                output.push('[');
+                for value in values {
+                    output.push_str(&format!("{}, ", value.as_text(data.clone()).await?));
+                }
+                if !values.is_empty() {
+                    output.pop();
+                    output.pop();
+                }
+                output.push(']');
+                Ok(output)
+            }
             Value::Var(label) => data.vars.get_value(label)?.as_text(data).await,
             Value::Command(command) => {
                 command

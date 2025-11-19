@@ -1863,7 +1863,7 @@ mod tests {
         let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
         let text = Value::Text("example".into());
         let result = replace(
-            Arc::new(vec![list, 10.into(), 1.into()]),
+            Arc::new(vec![list, 1.into(), 10.into()]),
             interpreter.data.clone(),
         )
         .await
@@ -1872,7 +1872,7 @@ mod tests {
         assert!(result == Value::List(vec![1.into(), 10.into(), 3.into()]));
 
         let result = replace(
-            Arc::new(vec![text, 10.into(), 2.into()]),
+            Arc::new(vec![text, 2.into(), 10.into()]),
             interpreter.data.clone(),
         )
         .await
