@@ -8,7 +8,7 @@ use std::{
 
 use async_recursion::async_recursion;
 
-use crate::{ErrorContext, FslError, FslInterpreter, InterpreterData};
+use crate::{EXIT, ErrorContext, FslError, FslInterpreter, InterpreterData};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FslType {
@@ -147,6 +147,10 @@ impl Command {
 
     /// Executes command ensuring arg rules are obeyed
     pub async fn execute(&self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+        if self.label == EXIT {
+            return Err(FslError::ProgramExited());
+        }
+
         let mut max_args = 0;
         for arg_rule in self.arg_rules {
             match &arg_rule.position {

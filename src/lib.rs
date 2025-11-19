@@ -103,6 +103,7 @@ pub enum FslError {
     InvalidVarValue(ErrorContext),
     CustomError(ErrorContext),
     UnmatchedCurlyBraces(String),
+    ProgramExited(),
 }
 
 impl ToString for FslError {
@@ -119,7 +120,6 @@ impl ToString for FslError {
             FslError::DivisionByZero(error_context) => {
                 format!("Error: Division by zero\n{}", error_context.to_string())
             }
-
             FslError::OutOfBounds(error_context) => {
                 format!("Error: Index out of bounds\n{}", error_context.to_string())
             }
@@ -153,7 +153,6 @@ impl ToString for FslError {
                     error_context.to_string()
                 )
             }
-
             FslError::InvalidVarLabel(error_context) => {
                 format!(
                     "Error: Invalid label for variable\n{}",
@@ -173,6 +172,7 @@ impl ToString for FslError {
                 )
             }
             FslError::UnmatchedCurlyBraces(error) => error.clone(),
+            FslError::ProgramExited() => format!("Program was exited"),
         }
     }
 }
@@ -322,15 +322,15 @@ impl FslInterpreter {
             Ok(expressions) => {
                 for expression in expressions {
                     let command = match self.parse_expression(expression).await? {
-                        Value::Command(command) => {
-                            if command.get_label() == "exit" {
-                                break;
-                            }
-                            command
-                        }
+                        Value::Command(command) => command,
                         _ => unreachable!("parse expression should always return a command"),
                     };
-                    command.execute(self.data.clone()).await?;
+                    if let Err(e) = command.execute(self.data.clone()).await {
+                        match e {
+                            FslError::ProgramExited() => break,
+                            _ => return Err(e.into()),
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -702,6 +702,15 @@ mod interpreter {
     #[tokio::test]
     async fn exit_command() {
         test_interpreter("exit() print(\"Hello, world!\")", "").await;
+    }
+
+    #[tokio::test]
+    async fn exit_loop() {
+        test_interpreter(
+            "repeat(10, print(\"Hello, world!\"), exit())",
+            "Hello, world!",
+        )
+        .await;
     }
 
     #[tokio::test]
