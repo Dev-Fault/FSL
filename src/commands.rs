@@ -758,7 +758,7 @@ pub async fn dec(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 }
 
 pub const CONTAINS_RULES: [ArgRule; 2] = [
-    ArgRule::new(ArgPos::Index(0), &[FslType::Text, FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub async fn contains(
