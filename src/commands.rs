@@ -227,7 +227,6 @@ pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
             data.vars.insert_value(label, &values[1])?;
         }
     }
-    dbg!(data.vars.get_value(label)?);
     Ok(data.vars.get_value(label)?)
 }
 
