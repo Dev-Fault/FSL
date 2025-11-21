@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, atomic::AtomicBool},
 };
 
@@ -10,7 +10,7 @@ use crate::{
     commands::*,
     lexer::LexerError,
     parser::{Expression, Parser, ParserError},
-    types::{ArgRule, Command, Executor, FslType, Value},
+    types::{ArgRule, Command, CommandSpec, Executor, FslType, Value},
 };
 
 pub mod commands;
@@ -262,17 +262,26 @@ impl FslInterpreter {
         Ok(output)
     }
 
-    pub fn add_command(&mut self, label: &str, rules: &'static [ArgRule], executor: Executor) {
-        self.commands
-            .insert(label.to_string(), Command::new(label, rules, executor));
+    pub fn add_command(
+        &mut self,
+        label: &'static str,
+        rules: &'static [ArgRule],
+        executor: Executor,
+    ) {
+        self.commands.insert(
+            label.to_string(),
+            Command::new(CommandSpec::new(label, rules), executor),
+        );
     }
 
-    pub fn construct_executor<F, Fut>(command: F) -> Executor
+    pub fn construct_executor<F, Fut>(closure: F) -> Executor
     where
-        F: Fn(Arc<Vec<Value>>, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
+        F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Value, FslError>> + Send + 'static,
     {
-        Arc::new(move |values, vars| Box::pin(command(values, vars)))
+        Some(Arc::new(move |command: Command, vars| {
+            Box::pin(closure(command, vars))
+        }))
     }
 
     async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, FslError> {
@@ -304,15 +313,15 @@ impl FslInterpreter {
             Some(command) => {
                 let mut command = command.clone();
 
-                let mut args: Vec<Value> = vec![];
+                let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
 
                 for arg in expression.args {
-                    args.push(self.parse_arg(arg).await?);
+                    args.push_back(self.parse_arg(arg).await?);
                 }
 
                 command.set_args(args);
 
-                Ok(Value::Command(Arc::new(command)))
+                Ok(Value::Command(command))
             }
             None => {
                 return Err(FslError::NonExistantCommand(ErrorContext::new(
@@ -565,7 +574,7 @@ impl VarMap {
         }
     }
 
-    pub fn insert_value(&self, label: &str, value: &Value) -> Result<(), FslError> {
+    pub fn insert_value(&self, label: &str, value: Value) -> Result<(), FslError> {
         match value {
             Value::Var(_) => {
                 return Err(FslError::InvalidVarValue(ErrorContext::new(
@@ -607,7 +616,7 @@ impl VarMap {
                 if value.is_type(FslType::Var) {
                     return self.get_value(&value.get_var_label()?);
                 } else {
-                    Ok(value.clone())
+                    Ok(value)
                 }
             }
             None => Err(FslError::NonExistantVar(ErrorContext::new(

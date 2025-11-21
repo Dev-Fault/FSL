@@ -1,10 +1,13 @@
-use std::sync::{Arc, atomic::Ordering};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, atomic::Ordering},
+};
 
 use async_recursion::async_recursion;
 
 use crate::{
     ErrorContext, FslError, InterpreterData,
-    types::{ArgPos, ArgRule, FslType, Value},
+    types::{self, ArgPos, ArgRule, Command, FslType, Value},
 };
 
 pub const ALL_VALUES: &[FslType] = &[
@@ -45,7 +48,7 @@ pub const NUMERIC_TYPES: &[FslType] = &[
     FslType::Text,
 ];
 
-pub const LOGIC_TYPES: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
+pub const LOGIC_TYPES: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
 
 pub const NO_RULES: &[ArgRule] = &[ArgRule {
     position: ArgPos::None,
@@ -68,7 +71,10 @@ pub const MATH_RULES: &[ArgRule] = &[
 ];
 
 #[async_recursion]
-async fn contains_float(values: &Vec<Value>, data: Arc<InterpreterData>) -> Result<bool, FslError> {
+async fn contains_float(
+    values: &VecDeque<Value>,
+    data: Arc<InterpreterData>,
+) -> Result<bool, FslError> {
     for value in values {
         match value {
             Value::Float(_) => return Ok(true),
@@ -84,7 +90,7 @@ async fn contains_float(values: &Vec<Value>, data: Arc<InterpreterData>) -> Resu
                 if data
                     .clone()
                     .vars
-                    .get_value(var)?
+                    .get_value(&var)?
                     .as_raw(data.clone())
                     .await?
                     .is_type(FslType::Float)
@@ -104,16 +110,17 @@ async fn contains_float(values: &Vec<Value>, data: Arc<InterpreterData>) -> Resu
 }
 
 pub const ADD: &str = "add";
-pub async fn add(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let values = command.take_args();
     if contains_float(&values, data.clone()).await? {
         let mut sum: f64 = 0.0;
-        for value in values.iter() {
+        for value in values {
             sum = sum + value.as_float(data.clone()).await?;
         }
         Ok(Value::Float(sum))
     } else {
         let mut sum: i64 = 0;
-        for value in values.iter() {
+        for value in values {
             sum = sum + value.as_int(data.clone()).await?;
         }
         Ok(Value::Int(sum))
@@ -121,16 +128,17 @@ pub async fn add(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 }
 
 pub const SUB: &str = "sub";
-pub async fn sub(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
-        let mut diff = values[0].as_float(data.clone()).await?;
-        for value in &values[1..values.len()] {
+        let mut diff = values.pop_front().unwrap().as_float(data.clone()).await?;
+        while let Some(value) = values.pop_front() {
             diff = diff - value.as_float(data.clone()).await?;
         }
         Ok(Value::Float(diff))
     } else {
-        let mut diff = values[0].as_int(data.clone()).await?;
-        for value in &values[1..values.len()] {
+        let mut diff = values.pop_front().unwrap().as_int(data.clone()).await?;
+        while let Some(value) = values.pop_front() {
             diff = diff - value.as_int(data.clone()).await?;
         }
         Ok(Value::Int(diff))
@@ -138,16 +146,17 @@ pub async fn sub(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 }
 
 pub const MUL: &str = "mul";
-pub async fn mul(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
-        let mut product = values[0].as_float(data.clone()).await?;
-        for value in &values[1..values.len()] {
+        let mut product = values.pop_front().unwrap().as_float(data.clone()).await?;
+        while let Some(value) = values.pop_front() {
             product = product * value.as_float(data.clone()).await?;
         }
         Ok(Value::Float(product))
     } else {
-        let mut product = values[0].as_int(data.clone()).await?;
-        for value in &values[1..values.len()] {
+        let mut product = values.pop_front().unwrap().as_int(data.clone()).await?;
+        while let Some(value) = values.pop_front() {
             product = product * value.as_int(data.clone()).await?;
         }
         Ok(Value::Int(product))
@@ -155,10 +164,11 @@ pub async fn mul(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 }
 
 pub const DIV: &str = "div";
-pub async fn div(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
-        let mut quotient = values[0].as_float(data.clone()).await?;
-        for value in &values[1..values.len()] {
+        let mut quotient = values.pop_front().unwrap().as_float(data.clone()).await?;
+        while let Some(value) = values.pop_front() {
             let value = value.as_float(data.clone()).await?;
             if value == 0.0 {
                 return Err(FslError::DivisionByZero(ErrorContext::new(
@@ -170,8 +180,8 @@ pub async fn div(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
         }
         Ok(Value::Float(quotient))
     } else {
-        let mut quotient = values[0].as_int(data.clone()).await?;
-        for value in &values[1..values.len()] {
+        let mut quotient = values.pop_front().unwrap().as_int(data.clone()).await?;
+        while let Some(value) = values.pop_front() {
             let value = value.as_int(data.clone()).await?;
             if value == 0 {
                 return Err(FslError::DivisionByZero(ErrorContext::new(
@@ -186,12 +196,10 @@ pub async fn div(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 }
 
 pub const MODULUS: &str = "mod";
-pub async fn modulus(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let mut remainder = values[0].as_int(data.clone()).await?;
-    for value in &values[1..values.len()] {
+pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let mut remainder = values.pop_front().unwrap().as_int(data.clone()).await?;
+    while let Some(value) = values.pop_front() {
         let value = value.as_int(data.clone()).await?;
         if value == 0 {
             return Err(FslError::DivisionByZero(ErrorContext::new(
@@ -208,19 +216,22 @@ pub const STORE_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(0), VAR_VALUES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
 ];
-
 pub const STORE: &str = "store";
-pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let label = &values[0].get_var_label()?;
-    match &values[1] {
+pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+    let label = arg_0.get_var_label()?;
+
+    match arg_1 {
         Value::Var(var) => {
-            let value = data.vars.get_value(var)?.as_raw(data.clone()).await?;
-            data.vars.insert_value(label, &value)?;
+            let value = data.vars.get_value(&var)?.as_raw(data.clone()).await?;
+            data.vars.insert_value(label, value)?;
         }
         Value::Command(command) => {
             data.clone()
                 .vars
-                .insert_value(label, &command.execute(data.clone()).await?)?;
+                .insert_value(label, command.execute(data.clone()).await?)?;
         }
         Value::None => {
             return Err(FslError::CannotStoreValueInVar(format!(
@@ -229,7 +240,7 @@ pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
             )));
         }
         _ => {
-            data.vars.insert_value(label, &values[1])?;
+            data.vars.insert_value(label, arg_1)?;
         }
     }
     Ok(data.vars.get_value(label)?)
@@ -237,15 +248,20 @@ pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
 
 pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub const CLONE: &str = "clone";
-pub async fn clone(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let value = &values[0].get_var_value(data)?;
+pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let value = command
+        .take_args()
+        .pop_front()
+        .unwrap()
+        .get_var_value(data)?;
     Ok(value.clone())
 }
 
 pub const FREE: &str = "free";
 pub const FREE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
-pub async fn free(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let label = &values[0].get_var_label()?;
+pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let arg_0 = command.take_args().pop_front().unwrap();
+    let label = arg_0.get_var_label()?;
     match data.vars.remove_value(label) {
         Some(value) => Ok(value),
         None => Ok(Value::None),
@@ -253,12 +269,12 @@ pub async fn free(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
 }
 
 pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
-
 pub const PRINT: &str = "print";
-pub async fn print(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let values = command.take_args();
     let mut output = String::new();
 
-    for value in values.iter() {
+    for value in values {
         output.push_str(&value.as_text(data.clone()).await?);
     }
 
@@ -267,11 +283,13 @@ pub async fn print(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
     Ok(Value::None)
 }
 
-pub const SCOPE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
+pub const SCOPE_RULES: &'static [ArgRule] =
+    &[ArgRule::new(ArgPos::AnyAfter(0), &[FslType::Command])];
 pub const SCOPE: &str = "";
-pub async fn scope(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    for value in values.iter() {
-        value.as_raw(data.clone()).await?;
+pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let values = command.take_args();
+    for value in values {
+        value.as_command()?.execute(data.clone()).await?;
     }
 
     Ok(Value::None)
@@ -282,11 +300,12 @@ pub const EQ_RULES: &'static [ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const EQ: &str = "eq";
-pub async fn eq(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let a = values[0].as_raw(data.clone()).await?;
-    let b = values[1].as_raw(data.clone()).await?;
+pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let a = values.pop_front().unwrap().as_raw(data.clone()).await?;
+    let b = values.pop_front().unwrap().as_raw(data.clone()).await?;
 
-    Ok(Value::Bool(a == b))
+    Ok(Value::Bool(a.eq(&b)?))
 }
 
 pub const GT_RULES: &[ArgRule; 2] = &[
@@ -294,15 +313,18 @@ pub const GT_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const GT: &str = "gt";
-pub async fn gt(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
-        Ok(Value::Bool(
-            values[0].as_float(data.clone()).await? > values[1].as_float(data).await?,
-        ))
+        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+
+        Ok(Value::Bool(a > b))
     } else {
-        Ok(Value::Bool(
-            values[0].as_int(data.clone()).await? > values[1].as_int(data).await?,
-        ))
+        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+
+        Ok(Value::Bool(a > b))
     }
 }
 
@@ -311,42 +333,50 @@ pub const LT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const LT: &str = "lt";
-pub async fn lt(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+
     if contains_float(&values, data.clone()).await? {
-        Ok(Value::Bool(
-            values[0].as_float(data.clone()).await? < values[1].as_float(data).await?,
-        ))
+        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+
+        Ok(Value::Bool(a < b))
     } else {
-        Ok(Value::Bool(
-            values[0].as_int(data.clone()).await? < values[1].as_int(data).await?,
-        ))
+        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+
+        Ok(Value::Bool(a < b))
     }
 }
 
 pub const NOT_RULES: &[ArgRule; 1] = &[ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
 pub const NOT: &str = "not";
-pub async fn not(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    Ok((!values[0].as_bool(data).await?).into())
+pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let a = values.pop_front().unwrap().as_bool(data.clone()).await?;
+    Ok((!a).into())
 }
 
 pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
 pub const AND: &str = "and";
-pub async fn and(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let mut result = values[0].as_bool(data.clone()).await?;
-    for value in &values[1..values.len()] {
-        result = result && value.as_bool(data.clone()).await?;
+pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let mut arg_0 = values.pop_front().unwrap().as_bool(data.clone()).await?;
+    for value in values {
+        arg_0 = arg_0 && value.as_bool(data.clone()).await?;
     }
-    Ok(result.into())
+    Ok(arg_0.into())
 }
 
 pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
 pub const OR: &str = "or";
-pub async fn or(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let mut result = values[0].as_bool(data.clone()).await?;
-    for value in &values[1..values.len()] {
-        result = result || value.as_bool(data.clone()).await?;
+pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let mut arg_0 = values.pop_front().unwrap().as_bool(data.clone()).await?;
+    for value in values {
+        arg_0 = arg_0 || value.as_bool(data.clone()).await?;
     }
-    Ok(result.into())
+    Ok(arg_0.into())
 }
 
 pub const IF_THEN_RULES: &'static [ArgRule] = &[
@@ -354,12 +384,13 @@ pub const IF_THEN_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
 ];
 pub const IF_THEN: &str = "if_then";
-pub async fn if_then(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    if values[0].as_bool(data.clone()).await? {
-        let result = values[1].as_command()?.execute(data).await?;
+pub async fn if_then(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+
+    if arg_0.as_bool(data.clone()).await? {
+        let result = arg_1.as_command()?.execute(data).await?;
         Ok(result)
     } else {
         Ok(Value::None)
@@ -372,15 +403,17 @@ pub const IF_THEN_ELSE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), &[FslType::Command]),
 ];
 pub const IF_THEN_ELSE: &str = "if_then_else";
-pub async fn if_then_else(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    if values[0].as_bool(data.clone()).await? {
-        let result = values[1].as_command()?.execute(data).await?;
+pub async fn if_then_else(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+    let arg_2 = values.pop_front().unwrap();
+
+    if arg_0.as_bool(data.clone()).await? {
+        let result = arg_1.as_command()?.execute(data).await?;
         Ok(result)
     } else {
-        let result = values[2].as_command()?.execute(data).await?;
+        let result = arg_2.as_command()?.execute(data).await?;
         Ok(result)
     }
 }
@@ -391,14 +424,17 @@ pub const WHILE_RULES: &'static [ArgRule] = &[
 ];
 pub const WHILE_LOOP: &str = "while";
 pub async fn while_command(
-    values: Arc<Vec<Value>>,
+    command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let while_condition = values.pop_front().unwrap();
+
     let mut final_value = Value::None;
 
-    'outer: while values[0].as_bool(data.clone()).await? {
-        for command in &values[1..] {
-            let command = command.as_command()?;
+    'outer: while while_condition.clone().as_bool(data.clone()).await? {
+        for command in &values {
+            let command = command.clone().as_command()?;
             final_value = command.execute(data.clone()).await?;
             if data.continue_flag.load(Ordering::Relaxed) {
                 data.continue_flag.store(false, Ordering::Relaxed);
@@ -420,16 +456,14 @@ pub const REPEAT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
 ];
 pub const REPEAT: &str = "repeat";
-pub async fn repeat(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let repetitions = values[0].as_int(data.clone()).await?;
+pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let repetitions = values.pop_front().unwrap().as_int(data.clone()).await?;
     let mut final_value = Value::None;
 
     'outer: for _ in 0..repetitions {
-        for command in &values[1..] {
-            let command = command.as_command()?;
+        for command in &values {
+            let command = command.clone().as_command()?;
             final_value = command.execute(data.clone()).await?;
             if data.continue_flag.load(Ordering::Relaxed) {
                 data.continue_flag.store(false, Ordering::Relaxed);
@@ -451,14 +485,18 @@ pub const INDEX_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const INDEX: &str = "index";
-pub async fn index(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
+pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
 
-    if array.is_type(crate::types::FslType::List) {
+    let array = arg_0.as_raw(data.clone()).await?;
+
+    if array.is_type(FslType::List) {
         let list = array.as_list(data.clone()).await?;
-        let i = values[1].as_int(data.clone()).await?;
+        let i = arg_1.as_int(data.clone()).await?;
         match list.get(i as usize) {
-            Some(value) => Ok(value.as_raw(data).await?),
+            Some(value) => Ok(value.clone().as_raw(data).await?),
             None => Err(FslError::OutOfBounds(ErrorContext::new(
                 INDEX.into(),
                 format!("index {} was outside the bounds of list: {:?}", i, list),
@@ -466,11 +504,65 @@ pub async fn index(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
         }
     } else {
         let text = array.as_text(data.clone()).await?;
-        let i = values[1].as_int(data).await?;
+        let i = arg_1.as_int(data).await?;
         match text.chars().nth(i as usize) {
             Some(char) => Ok(char.into()),
             None => Err(FslError::OutOfBounds(ErrorContext::new(
                 INDEX.into(),
+                format!("index {} was outside the bounds of text: {}", i, text),
+            ))),
+        }
+    }
+}
+
+pub const REMOVE_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
+pub const REMOVE: &str = "remove";
+pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+
+    let var_label = if let Ok(label) = arg_0.get_var_label() {
+        Some(label.to_string())
+    } else {
+        None
+    };
+
+    let array = arg_0.as_raw(data.clone()).await?;
+    let i = arg_1.as_int(data.clone()).await? as usize;
+
+    if array.is_type(FslType::List) {
+        let mut list = array.as_list(data.clone()).await?;
+        match list.get(i) {
+            Some(_) => {
+                list.remove(i);
+                let list = Value::List(list);
+                if let Some(label) = var_label {
+                    data.vars.insert_value(&label, list.clone())?;
+                }
+                Ok(list)
+            }
+            None => Err(FslError::OutOfBounds(ErrorContext::new(
+                REMOVE.into(),
+                format!("index {} was outside the bounds of list: {:?}", i, list),
+            ))),
+        }
+    } else {
+        let mut text = array.as_text(data.clone()).await?;
+        match text.chars().nth(i) {
+            Some(_) => {
+                text.remove(i);
+                let text = Value::Text(text);
+                if let Some(label) = var_label {
+                    data.vars.insert_value(&label, text.clone())?;
+                }
+                Ok(text)
+            }
+            None => Err(FslError::OutOfBounds(ErrorContext::new(
+                REMOVE.into(),
                 format!("index {} was outside the bounds of text: {}", i, text),
             ))),
         }
@@ -482,13 +574,11 @@ pub const LENGTH_RULES: [ArgRule; 1] = [ArgRule::new(
     &[FslType::List, FslType::Text],
 )];
 pub const LENGTH: &str = "length";
-pub async fn length(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
+pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let array = values.pop_front().unwrap().as_raw(data.clone()).await?;
 
-    if array.is_type(crate::types::FslType::List) {
+    if array.is_type(FslType::List) {
         let list = array.as_list(data).await?;
         Ok((list.len() as i64).into())
     } else {
@@ -503,13 +593,24 @@ pub const SWAP_RULES: [ArgRule; 3] = [
     ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
 ];
 pub const SWAP: &str = "swap";
-pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
+pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
 
-    let a = values[1].as_int(data.clone()).await? as usize;
-    let b = values[2].as_int(data.clone()).await? as usize;
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+    let arg_2 = values.pop_front().unwrap();
 
-    if array.is_type(crate::types::FslType::List) {
+    let var_label = if let Ok(label) = arg_0.get_var_label() {
+        Some(label.to_string())
+    } else {
+        None
+    };
+
+    let array = arg_0.as_raw(data.clone()).await?;
+    let a = arg_1.as_int(data.clone()).await? as usize;
+    let b = arg_2.as_int(data.clone()).await? as usize;
+
+    if array.is_type(FslType::List) {
         let mut list = array.as_list(data.clone()).await?;
         if list.get(a).is_none() {
             Err(FslError::OutOfBounds(ErrorContext::new(
@@ -526,8 +627,8 @@ pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
             list[a] = list[b].clone();
             list[b] = tmp;
             let list = Value::List(list);
-            if values[0].is_type(FslType::Var) {
-                data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+            if let Some(label) = var_label {
+                data.vars.insert_value(&label, list.clone())?;
             }
             Ok(list)
         }
@@ -550,8 +651,66 @@ pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
             text[a] = text[b].clone();
             text[b] = tmp;
             let text = Value::Text(text.iter().collect::<String>().into());
-            if values[0].is_type(FslType::Var) {
-                data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+            if let Some(label) = var_label {
+                data.vars.insert_value(&label, text.clone())?;
+            }
+            Ok(text)
+        }
+    }
+}
+
+pub const REPLACE_RULES: [ArgRule; 3] = [
+    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
+    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
+];
+pub const REPLACE: &str = "replace";
+pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+    let arg_2 = values.pop_front().unwrap();
+
+    let var_label = if let Ok(label) = arg_0.get_var_label() {
+        Some(label.to_string())
+    } else {
+        None
+    };
+
+    let array = arg_0.as_raw(data.clone()).await?;
+    let i = arg_1.as_int(data.clone()).await? as usize;
+
+    if array.is_type(FslType::List) {
+        let mut list = array.as_list(data.clone()).await?;
+        let replacement = arg_2.as_raw(data.clone()).await?;
+        if list.get(i).is_none() {
+            Err(FslError::OutOfBounds(ErrorContext::new(
+                REPLACE.into(),
+                format!("index {} was outside the bounds of list: {:?}", i, list),
+            )))
+        } else {
+            list[i] = replacement;
+            let list = Value::List(list);
+            if let Some(label) = var_label {
+                data.vars.insert_value(&label, list.clone())?;
+            }
+            Ok(list)
+        }
+    } else {
+        let mut text = array.as_text(data.clone()).await?;
+        let replacement = arg_2.as_text(data.clone()).await?;
+
+        if text.chars().nth(i).is_none() {
+            Err(FslError::OutOfBounds(ErrorContext::new(
+                REPLACE.into(),
+                format!("index {} was outside the bounds of text: {}", i, text),
+            )))
+        } else {
+            text.replace_range(i..i + 1, &replacement);
+            let text = Value::Text(text);
+            if let Some(label) = var_label {
+                data.vars.insert_value(&label, text.clone())?;
             }
             Ok(text)
         }
@@ -560,49 +719,57 @@ pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
 
 pub const INSERT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
-    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
 ];
 pub const INSERT: &str = "insert";
-pub async fn insert(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
+pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
 
-    let i = values[2].as_int(data.clone()).await? as usize;
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+    let arg_2 = values.pop_front().unwrap();
 
-    if array.is_type(crate::types::FslType::List) {
+    let var_label = if let Ok(label) = arg_0.get_var_label() {
+        Some(label.to_string())
+    } else {
+        None
+    };
+
+    let array = arg_0.as_raw(data.clone()).await?;
+    let i = arg_1.as_int(data.clone()).await? as usize;
+
+    if array.is_type(FslType::List) {
         let mut list = array.as_list(data.clone()).await?;
-        let to_insert = values[1].as_raw(data.clone()).await?;
+        let to_insert = arg_2.as_raw(data.clone()).await?;
 
         if i > list.len() {
             Err(FslError::OutOfBounds(ErrorContext::new(
-                SWAP.into(),
+                INSERT.into(),
                 format!("index {} was outside the bounds of list: {:?}", i, list),
             )))
         } else {
             list.insert(i, to_insert);
             let list = Value::List(list);
-            if values[0].is_type(FslType::Var) {
-                data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+            if let Some(label) = var_label {
+                data.vars.insert_value(&label, list.clone())?;
             }
             Ok(list)
         }
     } else {
         let mut text = array.as_text(data.clone()).await?;
-        let to_insert = values[1].as_text(data.clone()).await?;
+        let to_insert = arg_2.as_text(data.clone()).await?;
 
         if i > text.len() {
             Err(FslError::OutOfBounds(ErrorContext::new(
-                SWAP.into(),
+                INSERT.into(),
                 format!("index {} was outside the bounds of text: {}", i, text),
             )))
         } else {
             text.insert_str(i, &to_insert);
             let text = Value::Text(text);
-            if values[0].is_type(FslType::Var) {
-                data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+            if let Some(label) = var_label {
+                data.vars.insert_value(&label, text.clone())?;
             }
             Ok(text)
         }
@@ -614,24 +781,38 @@ pub const PUSH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const PUSH: &str = "push";
-pub async fn push(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    if let Ok(mut list) = values[0].as_list(data.clone()).await {
-        let to_push = values[1].as_raw(data.clone()).await?;
+pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+
+    let var_label = if let Ok(label) = arg_0.get_var_label() {
+        Some(label.to_string())
+    } else {
+        None
+    };
+
+    let array = arg_0.as_raw(data.clone()).await?;
+
+    if array.is_type(FslType::List) {
+        let mut list = array.as_list(data.clone()).await?;
+        let to_push = arg_1.as_raw(data.clone()).await?;
 
         list.push(to_push);
         let list = Value::List(list);
-        if values[0].is_type(FslType::Var) {
-            data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+        if let Some(label) = var_label {
+            data.vars.insert_value(&label, list.clone())?;
         }
         Ok(list)
     } else {
-        let mut text = values[0].as_text(data.clone()).await?;
-        let to_insert = values[1].as_text(data.clone()).await?;
+        let mut text = array.as_text(data.clone()).await?;
+        let to_push = arg_1.as_text(data.clone()).await?;
 
-        text.push_str(&to_insert);
+        text.push_str(&to_push);
         let text = Value::Text(text);
-        if values[0].is_type(FslType::Var) {
-            data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+        if let Some(label) = var_label {
+            data.vars.insert_value(&label, text.clone())?;
         }
         Ok(text)
     }
@@ -642,16 +823,26 @@ pub const POP_RULES: &[ArgRule] = &[ArgRule::new(
     &[FslType::List, FslType::Text],
 )];
 pub const POP: &str = "pop";
-pub async fn pop(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
+pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
 
-    if array.is_type(crate::types::FslType::List) {
+    let arg_0 = values.pop_front().unwrap();
+
+    let var_label = if let Ok(label) = arg_0.get_var_label() {
+        Some(label.to_string())
+    } else {
+        None
+    };
+
+    let array = arg_0.as_raw(data.clone()).await?;
+
+    if array.is_type(FslType::List) {
         let mut list = array.as_list(data.clone()).await?;
 
         let ret_value = list.pop();
         let list = Value::List(list);
-        if values[0].is_type(FslType::Var) {
-            data.vars.insert_value(&values[0].get_var_label()?, &list)?;
+        if let Some(label) = var_label {
+            data.vars.insert_value(&label, list)?;
         }
         Ok(ret_value.unwrap_or(Value::None))
     } else {
@@ -659,8 +850,8 @@ pub async fn pop(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 
         let ret_value = text.pop();
         let text = Value::Text(text);
-        if values[0].is_type(FslType::Var) {
-            data.vars.insert_value(&values[0].get_var_label()?, &text)?;
+        if let Some(label) = var_label {
+            data.vars.insert_value(&label, text)?;
         }
         match ret_value {
             Some(ch) => Ok(Value::Text(ch.to_string())),
@@ -669,120 +860,25 @@ pub async fn pop(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
     }
 }
 
-pub const REMOVE_RULES: [ArgRule; 2] = [
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
-];
-pub const REMOVE: &str = "remove";
-pub async fn remove(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
-
-    if array.is_type(crate::types::FslType::List) {
-        let mut list = array.as_list(data.clone()).await?;
-        let i = values[1].as_int(data.clone()).await? as usize;
-        match list.get(i) {
-            Some(_) => {
-                list.remove(i);
-                let list = Value::List(list);
-                if values[0].is_type(FslType::Var) {
-                    data.vars.insert_value(&values[0].get_var_label()?, &list)?;
-                }
-                Ok(list)
-            }
-            None => Err(FslError::OutOfBounds(ErrorContext::new(
-                SWAP.into(),
-                format!("index {} was outside the bounds of list: {:?}", i, list),
-            ))),
-        }
-    } else {
-        let mut text = array.as_text(data.clone()).await?;
-        let i = values[1].as_int(data.clone()).await? as usize;
-        match text.chars().nth(i) {
-            Some(_) => {
-                text.remove(i);
-                let text = Value::Text(text);
-                if values[0].is_type(FslType::Var) {
-                    data.vars.insert_value(&values[0].get_var_label()?, &text)?;
-                }
-                Ok(text)
-            }
-            None => Err(FslError::OutOfBounds(ErrorContext::new(
-                SWAP.into(),
-                format!("index {} was outside the bounds of text: {}", i, text),
-            ))),
-        }
-    }
-}
-
-pub const REPLACE_RULES: [ArgRule; 3] = [
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
-    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
-];
-pub const REPLACE: &str = "replace";
-pub async fn replace(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let array = values[0].as_raw(data.clone()).await?;
-
-    let i = values[1].as_int(data.clone()).await? as usize;
-
-    if array.is_type(crate::types::FslType::List) {
-        let mut list = array.as_list(data.clone()).await?;
-        let replacement = values[2].as_raw(data.clone()).await?;
-        if list.get(i).is_none() {
-            Err(FslError::OutOfBounds(ErrorContext::new(
-                SWAP.into(),
-                format!("index {} was outside the bounds of list: {:?}", i, list),
-            )))
-        } else {
-            list[i] = replacement;
-            let list = Value::List(list);
-            if values[0].is_type(FslType::Var) {
-                data.vars.insert_value(&values[0].get_var_label()?, &list)?;
-            }
-            Ok(list)
-        }
-    } else {
-        let mut text = array.as_text(data.clone()).await?;
-        let replacement = values[2].as_text(data.clone()).await?;
-
-        if text.chars().nth(i).is_none() {
-            Err(FslError::OutOfBounds(ErrorContext::new(
-                SWAP.into(),
-                format!("index {} was outside the bounds of text: {}", i, text),
-            )))
-        } else {
-            text.replace_range(i..i + 1, &replacement);
-            let text = Value::Text(text);
-            if values[0].is_type(FslType::Var) {
-                data.vars.insert_value(&values[0].get_var_label()?, &text)?;
-            }
-            Ok(text)
-        }
-    }
-}
 pub const INC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub const INC: &str = "inc";
-pub async fn inc(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let n = values[0].as_int(data.clone()).await?;
+pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let values = command.take_args();
+    let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n + 1);
     data.vars
-        .insert_value(&values[0].get_var_label()?, &new_value)?;
+        .insert_value(&values[0].get_var_label()?, new_value.clone())?;
     Ok(new_value)
 }
 
 pub const DEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub const DEC: &str = "dec";
-pub async fn dec(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let n = values[0].as_int(data.clone()).await?;
+pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let values = command.take_args();
+    let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n - 1);
     data.vars
-        .insert_value(&values[0].get_var_label()?, &new_value)?;
+        .insert_value(&values[0].get_var_label()?, new_value.clone())?;
     Ok(new_value)
 }
 
@@ -791,15 +887,13 @@ pub const CONTAINS_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const CONTAINS: &str = "contains";
-pub async fn contains(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let a = values[0].as_raw(data.clone()).await?;
-    let b = values[1].as_raw(data.clone()).await?;
+pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let a = values.pop_front().unwrap().as_raw(data.clone()).await?;
+    let b = values.pop_front().unwrap().as_raw(data.clone()).await?;
     if let Value::List(list) = a {
         for value in list {
-            match value.as_raw(data.clone()).await?.cmp(&b) {
+            match value.as_raw(data.clone()).await?.eq(&b) {
                 Ok(is_eq) => {
                     if is_eq {
                         return Ok(Value::Bool(true));
@@ -820,15 +914,11 @@ pub const STARTS_WITH_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const STARTS_WITH: &str = "starts_with";
-pub async fn starts_with(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    Ok(values[0]
-        .as_text(data.clone())
-        .await?
-        .starts_with(&values[1].as_text(data.clone()).await?)
-        .into())
+pub async fn starts_with(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let arg_1 = values.pop_front().unwrap().as_text(data.clone()).await?;
+    Ok(arg_0.starts_with(&arg_1).into())
 }
 
 pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
@@ -836,26 +926,21 @@ pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const ENDS_WITH: &str = "ends_with";
-pub async fn ends_with(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    Ok(values[0]
-        .as_text(data.clone())
-        .await?
-        .ends_with(&values[1].as_text(data.clone()).await?)
-        .into())
+pub async fn ends_with(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let arg_1 = values.pop_front().unwrap().as_text(data.clone()).await?;
+    Ok(arg_0.ends_with(&arg_1).into())
 }
 
 pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
 pub const CONCAT: &str = "concat";
-pub async fn concat(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let values = command.take_args();
+
     let mut cat_string = String::new();
 
-    for value in values.iter() {
+    for value in values {
         cat_string.push_str(&value.as_text(data.clone()).await?);
     }
 
@@ -864,11 +949,9 @@ pub async fn concat(
 
 pub const CAPITALIZE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const CAPITALIZE: &str = "capitalize";
-pub async fn capitalize(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let text = values[0].as_text(data).await?;
+pub async fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let text = values.pop_front().unwrap().as_text(data).await?;
     if text.len() < 1 {
         Ok("".into())
     } else {
@@ -878,35 +961,30 @@ pub async fn capitalize(
 
 pub const UPPERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const UPPERCASE: &str = "uppercase";
-pub async fn uppercase(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    Ok(values[0].as_text(data).await?.to_uppercase().into())
+pub async fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let text = values.pop_front().unwrap().as_text(data).await?;
+    Ok(text.to_uppercase().into())
 }
 
 pub const LOWERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const LOWERCASE: &str = "lowercase";
-pub async fn lowercase(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    Ok(values[0].as_text(data).await?.to_lowercase().into())
+pub async fn lowercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let text = values.pop_front().unwrap().as_text(data).await?;
+    Ok(text.to_lowercase().into())
 }
 
 pub const REMOVE_WHITESPACE_RULES: [ArgRule; 1] =
     [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
 pub async fn remove_whitespace(
-    values: Arc<Vec<Value>>,
+    command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
-    Ok(values[0]
-        .as_text(data)
-        .await?
-        .split_whitespace()
-        .collect::<String>()
-        .into())
+    let mut values = command.take_args();
+    let text = values.pop_front().unwrap().as_text(data).await?;
+    Ok(text.split_whitespace().collect::<String>().into())
 }
 
 pub const SPLIT_RULES: [ArgRule; 2] = [
@@ -914,9 +992,10 @@ pub const SPLIT_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const SPLIT: &str = "split";
-pub async fn split(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    let text_to_split = values[0].as_text(data.clone()).await?;
-    let pattern = values[1].as_text(data.clone()).await?;
+pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let text_to_split = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let pattern = values.pop_front().unwrap().as_text(data.clone()).await?;
     let split = text_to_split
         .split(&pattern)
         .map(|s| Value::Text(s.to_string()))
@@ -929,13 +1008,12 @@ pub const RANDOM_RANGE_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const RANDOM_RANGE: &str = "random_range";
-pub async fn random_range(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+pub async fn random_range(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+
     if contains_float(&values, data.clone()).await? {
-        let min = values[0].as_float(data.clone()).await?;
-        let max = values[1].as_float(data.clone()).await?;
+        let min = values.pop_front().unwrap().as_float(data.clone()).await?;
+        let max = values.pop_front().unwrap().as_float(data.clone()).await?;
         if min >= max {
             Err(FslError::InvalidRange(ErrorContext::new(
                 RANDOM_RANGE.into(),
@@ -945,8 +1023,8 @@ pub async fn random_range(
             Ok(rand::random_range(min..=max).into())
         }
     } else {
-        let min = values[0].as_int(data.clone()).await?;
-        let max = values[1].as_int(data.clone()).await?;
+        let min = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let max = values.pop_front().unwrap().as_int(data.clone()).await?;
         if min >= max {
             Err(FslError::InvalidRange(ErrorContext::new(
                 RANDOM_RANGE.into(),
@@ -960,17 +1038,15 @@ pub async fn random_range(
 
 pub const RANDOM_ENTRY_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::List])];
 pub const RANDOM_ENTRY: &str = "random_entry";
-pub async fn random_entry(
-    values: Arc<Vec<Value>>,
-    data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
-    let list = values[0].as_list(data).await?;
+pub async fn random_entry(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let list = values.pop_front().unwrap().as_list(data).await?;
     Ok(list[rand::random_range(0..list.len())].clone())
 }
 
 pub const BREAK: &str = "break";
 pub async fn break_command(
-    values: Arc<Vec<Value>>,
+    command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
     data.break_flag
@@ -980,7 +1056,7 @@ pub async fn break_command(
 
 pub const CONTINUE: &str = "continue";
 pub async fn continue_command(
-    values: Arc<Vec<Value>>,
+    command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
     data.continue_flag
@@ -989,1078 +1065,457 @@ pub async fn continue_command(
 }
 
 pub const EXIT: &str = "exit";
-pub async fn exit(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     Ok(Value::None)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use crate::{FslError, FslInterpreter};
 
-    use crate::types::Command;
-    use crate::{FslInterpreter, VarMap};
+    async fn test_interpreter(code: &str, expected_output: &str) {
+        let result = FslInterpreter::new().interpret(code).await;
 
-    use super::*;
+        println!("DEBUG");
+        dbg!(&result);
 
-    fn get_command(label: &str) -> Command {
-        let interpreter = FslInterpreter::new();
-        interpreter.commands.get(label).cloned().unwrap()
+        let result = result.unwrap();
+        println!("PRETTY PRINT");
+        println!("{}", &result);
+
+        assert!(result == expected_output);
     }
 
-    async fn test_math(
-        args: &Vec<Value>,
-        command: &mut Command,
-        expected_value: Value,
-        vars: Option<Arc<FslInterpreter>>,
-    ) {
-        let args = args.clone();
-        let default = FslInterpreter::new();
-        let interpreter = match vars {
-            Some(vars) => vars,
-            None => Arc::new(default),
-        };
-        match expected_value {
-            Value::None => {
-                // Should be error
-                command.set_args(args);
-                let output = command.execute(interpreter.data.clone()).await;
-                dbg!(&output);
-                match output {
-                    Ok(_) => panic!(),
-                    Err(e) => {
-                        dbg!(e);
-                    }
-                }
-            }
-            _ => {
-                command.set_args(args);
-                let output = command.execute(interpreter.data.clone()).await.unwrap();
-                dbg!(&output);
-                assert!(output == expected_value);
-            }
-        }
+    async fn test_interpreter_embedded(code: &str, expected_output: &str) {
+        let result = FslInterpreter::new().interpret_embedded_code(code).await;
+
+        println!("DEBUG");
+        dbg!(&result);
+
+        let result = result.unwrap();
+        println!("PRETTY PRINT");
+        println!("{}", &result);
+
+        assert!(result == expected_output);
+    }
+
+    async fn test_interpreter_err(code: &str) -> FslError {
+        let result = FslInterpreter::new().interpret(code).await;
+        dbg!(&result);
+        assert!(result.is_err());
+        result.err().unwrap()
     }
 
     #[tokio::test]
-    async fn math_two_ints() {
-        test_math(
-            &vec![5.into(), 4.into()],
-            &mut get_command("add"),
-            Value::Int(9),
-            None,
-        )
-        .await;
-        test_math(
-            &vec![5.into(), 4.into()],
-            &mut get_command("sub"),
-            Value::Int(1),
-            None,
-        )
-        .await;
-        test_math(
-            &vec![5.into(), 4.into()],
-            &mut get_command("mul"),
-            Value::Int(20),
-            None,
-        )
-        .await;
-        test_math(
-            &vec![5.into(), 4.into()],
-            &mut get_command("div"),
-            Value::Int(1),
-            None,
-        )
-        .await;
-        test_math(
-            &vec![5.into(), 4.into()],
-            &mut get_command("mod"),
-            Value::Int(1),
-            None,
-        )
-        .await;
+    async fn add_two_ints() {
+        test_interpreter("print(add(1, 2))", "3").await;
     }
 
     #[tokio::test]
-    async fn math_two_floats() {
-        test_math(
-            &vec![5.0.into(), 4.0.into()],
-            &mut get_command("add"),
-            Value::Float(9.0),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.0.into()],
-            &mut get_command("sub"),
-            Value::Float(1.0),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.0.into()],
-            &mut get_command("mul"),
-            Value::Float(20.0),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.0.into()],
-            &mut get_command("div"),
-            Value::Float(1.25),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.0.into()],
-            &mut get_command("mod"),
-            Value::Int(1),
-            None,
-        )
-        .await;
+    async fn sub_two_ints() {
+        test_interpreter("print(sub(1, 2))", "-1").await;
     }
 
     #[tokio::test]
-    async fn math_int_and_float() {
-        test_math(
-            &vec![5.0.into(), 4.into()],
-            &mut get_command("add"),
-            Value::Float(9.0),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.into()],
-            &mut get_command("sub"),
-            Value::Float(1.0),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.into()],
-            &mut get_command("mul"),
-            Value::Float(20.0),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.into()],
-            &mut get_command("div"),
-            Value::Float(1.25),
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![5.0.into(), 4.into()],
-            &mut get_command("mod"),
-            Value::Int(1),
-            None,
-        )
-        .await;
+    async fn mul_two_ints() {
+        test_interpreter("print(mul(1, 2))", "2").await;
     }
 
     #[tokio::test]
-    async fn math_no_args() {
-        test_math(&vec![], &mut get_command("add"), Value::None, None).await;
-        test_math(&vec![], &mut get_command("sub"), Value::None, None).await;
-        test_math(&vec![], &mut get_command("mul"), Value::None, None).await;
-        test_math(&vec![], &mut get_command("div"), Value::None, None).await;
-        test_math(&vec![], &mut get_command("mod"), Value::None, None).await;
+    async fn div_two_ints() {
+        test_interpreter("print(div(1, 2))", "0").await;
     }
 
     #[tokio::test]
-    async fn math_one_arg() {
-        test_math(&vec![1.into()], &mut get_command("add"), Value::None, None).await;
-        test_math(&vec![1.into()], &mut get_command("sub"), Value::None, None).await;
-        test_math(&vec![1.into()], &mut get_command("mul"), Value::None, None).await;
-        test_math(&vec![1.into()], &mut get_command("div"), Value::None, None).await;
-        test_math(&vec![1.into()], &mut get_command("mod"), Value::None, None).await;
+    async fn mod_two_ints() {
+        test_interpreter("print(mod(8, 2))", "0").await;
     }
 
     #[tokio::test]
-    async fn math_wrong_type() {
-        test_math(
-            &vec![true.into(), Value::Int(1)],
-            &mut get_command("add"),
-            Value::None,
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![true.into(), Value::Int(1)],
-            &mut get_command("sub"),
-            Value::None,
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![true.into(), Value::Int(1)],
-            &mut get_command("mul"),
-            Value::None,
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![true.into(), Value::Int(1)],
-            &mut get_command("div"),
-            Value::None,
-            None,
-        )
-        .await;
-
-        test_math(
-            &vec![true.into(), Value::Int(1)],
-            &mut get_command("mod"),
-            Value::None,
-            None,
-        )
-        .await;
+    async fn add_two_floats() {
+        test_interpreter("print(add(1.0, 2.0))", "3").await;
     }
 
     #[tokio::test]
-    async fn math_many_args() {
-        let args = vec![5.0.into(), 3.into(), 3.into(), 100.into(), 57.into()];
-        test_math(&args, &mut get_command("add"), Value::Float(168.0), None).await;
-        test_math(&args, &mut get_command("sub"), Value::Float(-158.0), None).await;
-        test_math(&args, &mut get_command("mul"), Value::Float(256500.0), None).await;
-        test_math(
-            &args,
-            &mut get_command("div"),
-            Value::Float(9.746588693957115e-5),
-            None,
-        )
-        .await;
-        test_math(&args, &mut get_command("mod"), Value::Int(2), None).await;
+    async fn sub_two_floats() {
+        test_interpreter("print(sub(1.0, 2.0))", "-1").await;
     }
 
     #[tokio::test]
-    async fn math_vars() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        interpreter.data.vars.insert_value("one", &1.into());
-        let var = Value::Var("one".to_string());
-        let args = vec![var.clone(), var.clone()];
-        test_math(
-            &args,
-            &mut get_command("add"),
-            Value::Int(2),
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("sub"),
-            Value::Int(0),
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("mul"),
-            Value::Int(1),
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("div"),
-            Value::Int(1),
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("mod"),
-            Value::Int(0),
-            Some(interpreter.clone()),
+    async fn mul_two_floats() {
+        test_interpreter("print(mul(1.0, 2.0))", "2").await;
+    }
+
+    #[tokio::test]
+    async fn div_two_floats() {
+        test_interpreter("print(div(1.0, 2.0))", "0.5").await;
+    }
+
+    #[tokio::test]
+    async fn mod_two_floats() {
+        test_interpreter("print(mod(8.0, 2.0))", "0").await;
+    }
+
+    #[tokio::test]
+    async fn add_float_and_int() {
+        test_interpreter("print(add(1, 2.0))", "3").await;
+    }
+
+    #[tokio::test]
+    async fn sub_float_and_int() {
+        test_interpreter("print(sub(1, 2.0))", "-1").await;
+    }
+
+    #[tokio::test]
+    async fn mul_float_and_int() {
+        test_interpreter("print(mul(1, 2.0))", "2").await;
+    }
+
+    #[tokio::test]
+    async fn div_float_and_int() {
+        test_interpreter("print(div(1, 2.0))", "0.5").await;
+    }
+
+    #[tokio::test]
+    async fn mod_float_and_int() {
+        test_interpreter("print(mod(4, 2.0))", "0").await;
+        test_interpreter("print(mod(4.0, 2))", "0").await;
+    }
+
+    #[tokio::test]
+    async fn div_by_zero() {
+        let err = test_interpreter_err("print(div(1, 0))").await;
+        assert!(matches!(err, FslError::DivisionByZero(_)));
+    }
+
+    #[tokio::test]
+    async fn mod_by_zero() {
+        let err = test_interpreter_err("print(mod(1, 0))").await;
+        assert!(matches!(err, FslError::DivisionByZero(_)));
+    }
+
+    #[tokio::test]
+    async fn store_var() {
+        test_interpreter("number.store(1) print(number)", "1").await;
+    }
+
+    #[tokio::test]
+    async fn store_command_result_in_var() {
+        test_interpreter("number.store(add(1,1)) print(number)", "2").await;
+    }
+
+    #[tokio::test]
+    async fn store_list_in_var() {
+        test_interpreter("numbers.store([1, 2, 3]) print(numbers)", "[1, 2, 3]").await;
+    }
+
+    #[tokio::test]
+    async fn store_var_in_var() {
+        test_interpreter("a.store(1), b.store(a) print(b)", "1").await;
+    }
+
+    #[tokio::test]
+    async fn clone_var() {
+        test_interpreter(
+            "a.store([1, 2, 3]) b.store(a), print(b.clone())",
+            "[1, 2, 3]",
         )
         .await;
     }
-
-    #[tokio::test]
-    async fn math_wrong_var() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        interpreter.data.vars.insert_value("one", &"one".into());
-        let var = Value::Var("one".to_string());
-        let args = vec![var.clone(), var.clone()];
-        test_math(
-            &args,
-            &mut get_command("add"),
-            Value::None,
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("sub"),
-            Value::None,
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("mul"),
-            Value::None,
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("div"),
-            Value::None,
-            Some(interpreter.clone()),
-        )
-        .await;
-        test_math(
-            &args,
-            &mut get_command("mod"),
-            Value::None,
-            Some(interpreter.clone()),
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn math_commands() {
-        let interpreter = FslInterpreter::new();
-        let args = vec![5.into(), 4.into()];
-        let mut command = interpreter.commands.get("add").cloned().unwrap();
-        command.set_args(args);
-        let command = Arc::new(command);
-
-        let args = vec![command.clone().into(), command.clone().into()];
-
-        test_math(&args, &mut get_command("add"), Value::Int(18), None).await;
-        test_math(&args, &mut get_command("sub"), Value::Int(0), None).await;
-        test_math(&args, &mut get_command("mul"), Value::Int(81), None).await;
-        test_math(&args, &mut get_command("div"), Value::Int(1), None).await;
-        test_math(&args, &mut get_command("mod"), Value::Int(0), None).await;
-    }
-
-    #[tokio::test]
-    async fn math_text() {
-        let args = vec!["5".into(), "4".into()];
-        test_math(&args, &mut get_command("add"), Value::Int(9), None).await;
-        test_math(&args, &mut get_command("sub"), Value::Int(1), None).await;
-        test_math(&args, &mut get_command("mul"), Value::Int(20), None).await;
-        test_math(&args, &mut get_command("div"), Value::Int(1), None).await;
-        test_math(&args, &mut get_command("mod"), Value::Int(1), None).await;
-    }
-
-    #[tokio::test]
-    async fn detects_nested_float_in_command() {
-        let interpreter = FslInterpreter::new();
-        let args = vec![5.0.into(), 4.into()];
-        let mut command = interpreter.commands.get("add").cloned().unwrap();
-        command.set_args(args);
-        let command = Arc::new(command);
-
-        let args = vec![command.clone().into(), command.clone().into()];
-
-        test_math(&args, &mut get_command("add"), Value::Float(18.0), None).await;
-    }
-
-    #[tokio::test]
-    async fn detects_float_in_var() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        interpreter
-            .data
-            .vars
-            .insert_value("one", &1.0.into())
-            .unwrap();
-        let var = Value::Var("one".to_string());
-        let args = vec![var.clone(), var.clone()];
-        test_math(
-            &args,
-            &mut get_command("add"),
-            Value::Float(2.0),
-            Some(interpreter),
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn division_by_zero() {
-        let args = vec![1.into(), 0.into()];
-        test_math(&args, &mut get_command("div"), Value::None, None).await;
-        test_math(&args, &mut get_command("mod"), Value::None, None).await;
-    }
-
-    #[tokio::test]
-    async fn repeat_add() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let args = vec![5.into(), 4.into()];
-        let mut command = get_command("add");
-        command.set_args(args);
-        let command = Arc::new(command);
-
-        let args = vec![5.into(), Value::Command(command)];
-        let mut command = get_command("repeat");
-        command.set_args(args);
-        let output = command.execute(interpreter.data.clone()).await.unwrap();
-        dbg!(&output);
-        assert!(output == Value::Int(9));
-    }
-
-    #[tokio::test]
-    async fn repeat_limit() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let args = vec![5.into(), 4.into()];
-        let mut command = get_command("add");
-        command.set_args(args);
-        let command = Arc::new(command);
-
-        let args = vec![
-            ((interpreter.data.clone().loop_limit.unwrap() + 1) as i64).into(),
-            Value::Command(command),
-        ];
-        let mut command = get_command("repeat");
-        command.set_args(args);
-        let output = command.execute(interpreter.data.clone()).await;
-        dbg!(&output);
-        assert!(output.is_err());
-    }
-
-    #[tokio::test]
-    async fn repeat_limit_nested() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let mut add_command = get_command("add");
-        add_command.set_args(vec![5.into(), 4.into()]);
-        let add_command = Arc::new(add_command);
-
-        let loops = Value::Int((interpreter.data.clone().loop_limit.unwrap() - 10) as i64);
-        let mut nested_repeat = get_command("repeat");
-        nested_repeat.set_args(vec![loops.clone(), Value::Command(add_command)]);
-        let nested_repeat = Arc::new(nested_repeat);
-
-        let args = vec![2.into(), nested_repeat.into()];
-        let mut command = get_command("repeat");
-        command.set_args(args);
-        let output = command.execute(interpreter.data.clone()).await;
-        dbg!(&output);
-        assert!(output.is_err());
-    }
-
-    #[tokio::test]
-    #[should_panic]
-    async fn repeat_wrong_repititions() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let mut vars = Arc::new(VarMap::new());
-        let args = vec![5.into(), 4.into()];
-        let mut command = get_command("add");
-        command.set_args(args);
-        let command = Arc::new(command);
-
-        let args = vec!["five".into(), Value::Command(command)];
-        let mut command = get_command("repeat");
-        command.set_args(args);
-        let output = command.execute(interpreter.data.clone()).await;
-        dbg!(&output);
-        output.unwrap();
-    }
-
-    #[tokio::test]
-    #[should_panic]
-    async fn repeat_wrong_thing_to_repeat() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let args = vec![5.into(), 4.into()];
-        let mut command = get_command("add");
-        command.set_args(args);
-        let command = Arc::new(command);
-
-        let args = vec![5.into(), 5.into()];
-        let mut command = get_command("repeat");
-        command.set_args(args);
-        let output = command.execute(interpreter.data.clone()).await;
-        dbg!(&output);
-        output.unwrap();
-    }
-
-    #[tokio::test]
-    #[should_panic]
-    async fn repeat_too_many_args() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let args = vec![5.into(), 4.into()];
-        let mut command = get_command("add");
-        command.set_args(args);
-        let command = Arc::new(command);
-
-        let args = vec![5.into(), Value::Command(command), 5.into()];
-        let mut command = get_command("repeat");
-        command.set_args(args);
-        let output = command.execute(interpreter.data.clone()).await;
-        dbg!(&output);
-        output.unwrap();
-    }
-
-    #[tokio::test]
-    async fn create_var() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let result = store(
-            Arc::new(vec![Value::Var("n".to_string()), Value::Int(1)]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        assert!(result == Value::Int(1));
-        assert!(interpreter.data.vars.get_value("n").unwrap() == Value::Int(1));
-    }
-
-    /*
-    #[tokio::test]
-    async fn create_list() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let result = store(
-            Arc::new(vec![
-                Value::Var("list".to_string()),
-                Value::List(vec!["1".into(), 2.into(), 3.0.into()]),
-            ]),
-            interpreter.clone(),
-        )
-        .await
-        .unwrap();
-        let cmp_list = Value::List(vec!["1".into(), 2.into(), 3.0.into()]);
-        assert!(result == cmp_list);
-        assert!(interpreter.vars.get_value("list").unwrap() == cmp_list);
-    }
-    */
 
     #[tokio::test]
     async fn free_var() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let vars = Arc::new(VarMap::new());
-        store(
-            Arc::new(vec![Value::Var("n".to_string()), Value::Int(1)]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        let result = free(
-            Arc::new(vec![Value::Var("n".to_string())]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        assert!(result == Value::Int(1));
-        assert!(vars.get_value("n").is_err());
+        let err = test_interpreter_err("a.store(1) print(a) a.free() print(a)").await;
+        assert!(matches!(err, FslError::NonExistantVar(_)));
     }
 
     #[tokio::test]
     async fn print_values() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        print(
-            Arc::new(vec!["One plus one equals ".into(), 2.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(
-            interpreter
-                .data
-                .output
-                .lock()
-                .await
-                .eq("One plus one equals 2")
-        );
-    }
-
-    #[tokio::test]
-    async fn value_eq_compare() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = eq(
-            Arc::new(vec!["1".into(), "1".into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-
-        let result = eq(
-            Arc::new(vec![1.into(), 1.into()]),
-            interpreter.data.clone().clone(),
-        )
-        .await
-        .unwrap();
-        assert!(
-            result
-                .as_bool(interpreter.data.clone().clone())
-                .await
-                .unwrap()
-                == true
-        );
-
-        let result = eq(
-            Arc::new(vec![1.into(), 1.3.into()]),
-            interpreter.data.clone().clone(),
-        )
-        .await
-        .unwrap();
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == false);
-    }
-
-    #[tokio::test]
-    async fn value_gt_compare() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = gt(
-            Arc::new(vec!["1".into(), "2".into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == false);
-
-        let result = gt(Arc::new(vec![2.into(), 1.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-
-        let result = gt(
-            Arc::new(vec![1.into(), 1.3.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == false);
-    }
-
-    #[tokio::test]
-    async fn value_lt_compare() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = lt(
-            Arc::new(vec!["1".into(), "2".into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-
-        let result = lt(Arc::new(vec![2.into(), 1.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == false);
-
-        let result = lt(
-            Arc::new(vec![1.into(), 1.3.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-    }
-
-    #[tokio::test]
-    async fn bool_logic_not() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = not(Arc::new(vec![false.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-
-        let result = not(Arc::new(vec![true.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == false);
-    }
-
-    #[tokio::test]
-    async fn bool_logic_and() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = and(
-            Arc::new(vec![false.into(), true.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == false);
-
-        let result = and(
-            Arc::new(vec![true.into(), true.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-    }
-
-    #[tokio::test]
-    async fn bool_logic_or() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = or(
-            Arc::new(vec![false.into(), true.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-
-        let result = or(
-            Arc::new(vec![true.into(), true.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-
-        assert!(result.as_bool(interpreter.data.clone()).await.unwrap() == true);
-    }
-
-    #[tokio::test]
-    async fn logic_if_then() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let mut print_command = get_command("print");
-        print_command.set_args(vec!["hello".into()]);
-        let print_command = Arc::new(print_command);
-        let result = if_then(
-            Arc::new(vec![true.into(), print_command.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        println!("{}", *interpreter.data.output.lock().await);
-        assert!(*interpreter.data.output.lock().await == "hello");
-
-        let mut print_command = get_command("print");
-        print_command.set_args(vec![", world".into()]);
-        let print_command = Arc::new(print_command);
-        let result = if_then(
-            Arc::new(vec![true.into(), print_command.into()]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        println!("{}", *interpreter.data.output.lock().await);
-        assert!(*interpreter.data.output.lock().await == "hello, world");
-    }
-
-    #[tokio::test]
-    async fn logic_if_then_else() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let mut print_command = get_command("print");
-        print_command.set_args(vec!["hello".into()]);
-        let print_command = Arc::new(print_command);
-
-        let mut print_command2 = get_command("print");
-        print_command2.set_args(vec!["goodbye".into()]);
-        let print_command2 = Arc::new(print_command2);
-
-        let result = if_then_else(
-            Arc::new(vec![
-                true.into(),
-                print_command.clone().into(),
-                print_command2.clone().into(),
-            ]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        println!("{}", *interpreter.data.output.lock().await);
-        assert!(*interpreter.data.output.lock().await == "hello");
-
-        let result = if_then_else(
-            Arc::new(vec![
-                false.into(),
-                print_command.into(),
-                print_command2.into(),
-            ]),
-            interpreter.data.clone(),
-        )
-        .await
-        .unwrap();
-        println!("{}", *interpreter.data.output.lock().await);
-        assert!(*interpreter.data.output.lock().await == "hellogoodbye");
-    }
-
-    #[tokio::test]
-    async fn logic_while() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let mut add_command = get_command("add");
-        add_command.set_args(vec![5.into(), 4.into()]);
-        let add_command = Arc::new(add_command);
-        let result = while_command(
-            Arc::new(vec![true.into(), add_command.into()]),
-            interpreter.data.clone(),
+        test_interpreter(
+            r#"a.store(1), print("1", " ", 1, " ", a, " ", [1])"#,
+            "1 1 1 [1]",
         )
         .await;
-        dbg!(result.clone());
-        assert!(result.is_err_and(|e| matches!(e, FslError::LoopLimitExceeded(_))));
     }
 
     #[tokio::test]
-    async fn get_index() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
-        let text = Value::Text("example".into());
-        let result = index(Arc::new(vec![list, 1.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result == Value::Int(2));
-
-        let result = index(Arc::new(vec![text, 1.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result == Value::Text("x".into()));
+    async fn commands_in_scope() {
+        test_interpreter(r#"(a.store(1), a.inc(), a.print())"#, "2").await;
     }
 
     #[tokio::test]
-    async fn get_length() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
-        let text = Value::Text("example".into());
-        let result = length(Arc::new(vec![list]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result == Value::Int(3));
-
-        let result = length(Arc::new(vec![text]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result == Value::Int(7));
+    async fn values_in_scope() {
+        let err = test_interpreter_err(r#"(1)"#).await;
+        assert!(matches!(err, FslError::IncorrectArgs(_)));
     }
 
     #[tokio::test]
-    async fn array_swap_indicies() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
-        let text = Value::Text("example".into());
-        let result = swap(
-            Arc::new(vec![list, 1.into(), 2.into()]),
-            interpreter.data.clone(),
+    async fn int_cmp() {
+        test_interpreter(r#"print(eq(1, 2))"#, "false").await;
+        test_interpreter(r#"print(eq(2, 2))"#, "true").await;
+
+        test_interpreter(r#"print(lt(1, 2))"#, "true").await;
+        test_interpreter(r#"print(lt(2, 1))"#, "false").await;
+        test_interpreter(r#"print(lt(2, 2))"#, "false").await;
+
+        test_interpreter(r#"print(gt(1, 2))"#, "false").await;
+        test_interpreter(r#"print(gt(2, 1))"#, "true").await;
+        test_interpreter(r#"print(gt(2, 2))"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn float_cmp() {
+        test_interpreter(r#"print(eq(1.2, 1.1))"#, "false").await;
+        test_interpreter(r#"print(eq(1.1, 1.1))"#, "true").await;
+
+        test_interpreter(r#"print(lt(1.1, 1.2))"#, "true").await;
+        test_interpreter(r#"print(lt(2.1, 1.02))"#, "false").await;
+        test_interpreter(r#"print(lt(2.0, 2.0))"#, "false").await;
+
+        test_interpreter(r#"print(gt(1.4, 2.2))"#, "false").await;
+        test_interpreter(r#"print(gt(2.2, 1.2))"#, "true").await;
+        test_interpreter(r#"print(gt(2.0, 2.0))"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn text_cmp() {
+        test_interpreter(r#"print(eq("text", "ext"))"#, "false").await;
+        test_interpreter(r#"print(eq("test", "test"))"#, "true").await;
+
+        test_interpreter(r#"print(lt("1.1", 1.2))"#, "true").await;
+        test_interpreter(r#"print(lt("2.1", 1.02))"#, "false").await;
+        test_interpreter(r#"print(lt("2.0", 2.0))"#, "false").await;
+
+        test_interpreter(r#"print(gt("1.4", 2.2))"#, "false").await;
+        test_interpreter(r#"print(gt("2.2", 1.2))"#, "true").await;
+        test_interpreter(r#"print(gt("2.0", 2.0))"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn bool_eq() {
+        test_interpreter(r#"print(eq(false, false))"#, "true").await;
+        test_interpreter(r#"print(eq(true, false))"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn not_condition() {
+        test_interpreter(r#"print(not(true))"#, "false").await;
+        test_interpreter(r#"print(not(false))"#, "true").await;
+    }
+
+    #[tokio::test]
+    async fn and_condition() {
+        test_interpreter(r#"print(and(true, false))"#, "false").await;
+        test_interpreter(r#"print(and(true, true))"#, "true").await;
+    }
+
+    #[tokio::test]
+    async fn or_condition() {
+        test_interpreter(r#"print(or(true, false))"#, "true").await;
+        test_interpreter(r#"print(and(true, true))"#, "true").await;
+        test_interpreter(r#"print(and(false, false))"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn if_then() {
+        test_interpreter(r#"if_then(true, print("true"))"#, "true").await;
+        test_interpreter(r#"if_then(false, print("true"))"#, "").await;
+    }
+
+    #[tokio::test]
+    async fn if_then_else() {
+        test_interpreter(
+            r#"if_then_else(true, print("true"), print("false"))"#,
+            "true",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::List(vec![1.into(), 3.into(), 2.into()]));
-
-        let result = swap(
-            Arc::new(vec![text, 1.into(), 2.into()]),
-            interpreter.data.clone(),
+        .await;
+        test_interpreter(
+            r#"if_then_else(false, print("true"), print("false"))"#,
+            "false",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("eaxmple".into()));
+        .await;
     }
 
     #[tokio::test]
-    async fn array_insert() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
-        let text = Value::Text("example".into());
-        let result = insert(
-            Arc::new(vec![list, 10.into(), 1.into()]),
-            interpreter.data.clone(),
+    async fn while_loop() {
+        test_interpreter(
+            r#"i.store(0), while(i.lt(3), print(i, " "), i.inc())"#,
+            "0 1 2 ",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::List(vec![1.into(), 10.into(), 2.into(), 3.into()]));
+        .await;
+    }
 
-        let result = insert(
-            Arc::new(vec![text, 10.into(), 2.into()]),
-            interpreter.data.clone(),
+    #[tokio::test]
+    async fn repeat() {
+        test_interpreter(r#"i.store(0), repeat(3, print(i, " "), i.inc())"#, "0 1 2 ").await;
+    }
+
+    #[tokio::test]
+    async fn index() {
+        test_interpreter(r#"nums.store([1, 2, 3]) nums.index(1).print()"#, "2").await;
+        test_interpreter(r#"nums.store("123") nums.index(1).print()"#, "2").await;
+    }
+
+    #[tokio::test]
+    async fn remove() {
+        test_interpreter(r#"nums.store([1, 2, 3]) nums.remove(1).print()"#, "[1, 3]").await;
+        test_interpreter(r#"text.store("text") text.remove(1).print()"#, "txt").await;
+    }
+
+    #[tokio::test]
+    async fn length() {
+        test_interpreter(r#"nums.store([1, 2, 3]) nums.length().print()"#, "3").await;
+        test_interpreter(r#"nums.store("123") nums.length().print()"#, "3").await;
+    }
+
+    #[tokio::test]
+    async fn swap() {
+        test_interpreter(
+            r#"nums.store([1, 2, 3]) nums.swap(0, 2).print()"#,
+            "[3, 2, 1]",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("ex10ample".into()));
+        .await;
+        test_interpreter(r#"nums.store("123") nums.swap(0, 2).print()"#, "321").await;
     }
 
     #[tokio::test]
-    async fn remove_index() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
-        let text = Value::Text("example".into());
-        let result = remove(Arc::new(vec![list, 1.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result == Value::List(vec![1.into(), 3.into()]));
-
-        let result = remove(Arc::new(vec![text, 1.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result == Value::Text("eample".into()));
-    }
-
-    #[tokio::test]
-    async fn array_replace_at() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let list = Value::List(vec![1.into(), 2.into(), 3.into()]);
-        let text = Value::Text("example".into());
-        let result = replace(
-            Arc::new(vec![list, 1.into(), 10.into()]),
-            interpreter.data.clone(),
+    async fn replace() {
+        test_interpreter(
+            r#"nums.store([1, 2, 3]) nums.replace(0, 2).print()"#,
+            "[2, 2, 3]",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::List(vec![1.into(), 10.into(), 3.into()]));
+        .await;
+        test_interpreter(r#"nums.store("123") nums.replace(0, 2).print()"#, "223").await;
+    }
 
-        let result = replace(
-            Arc::new(vec![text, 2.into(), 10.into()]),
-            interpreter.data.clone(),
+    #[tokio::test]
+    async fn insert() {
+        test_interpreter(
+            r#"nums.store([1, 2, 3]) nums.insert(0, 0).print()"#,
+            "[0, 1, 2, 3]",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("ex10mple".into()));
+        .await;
+        test_interpreter(r#"nums.store("123") nums.insert(0, 0).print()"#, "0123").await;
     }
 
     #[tokio::test]
-    async fn text_starts_with() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let text = Value::Text("example".into());
-        let result = starts_with(
-            Arc::new(vec![text.clone(), "ex".into()]),
-            interpreter.data.clone(),
+    async fn push() {
+        test_interpreter(
+            r#"nums.store([1, 2, 3]) nums.push(0).print()"#,
+            "[1, 2, 3, 0]",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Bool(true));
-        let result = starts_with(Arc::new(vec![text, "x".into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Bool(false));
+        .await;
+        test_interpreter(r#"nums.store("123") nums.push(0).print()"#, "1230").await;
     }
 
     #[tokio::test]
-    async fn text_ends_with() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let text = Value::Text("example".into());
-        let result = ends_with(
-            Arc::new(vec![text.clone(), "le".into()]),
-            interpreter.data.clone(),
+    async fn pop() {
+        test_interpreter(
+            r#"nums.store([1, 2, 3]) nums.pop().print(" ") nums.print()"#,
+            "3 [1, 2]",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Bool(true));
-        let result = starts_with(Arc::new(vec![text, "x".into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Bool(false));
-    }
-
-    #[tokio::test]
-    async fn concat_values() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let text = Value::Text("example".into());
-        let number = Value::Int(10);
-        let bool = Value::Bool(false);
-
-        let result = concat(Arc::new(vec![text, number, bool]), interpreter.data.clone())
-            .await
-            .unwrap();
-        assert!(result == Value::Text("example10false".into()));
-    }
-
-    #[tokio::test]
-    async fn text_capitalize() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let text = Value::Text("example".into());
-
-        let result = capitalize(Arc::new(vec![text]), interpreter.data.clone())
-            .await
-            .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("Example".into()));
-    }
-
-    #[tokio::test]
-    async fn text_uppercase() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let text = Value::Text("example".into());
-
-        let result = uppercase(Arc::new(vec![text]), interpreter.data.clone())
-            .await
-            .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("EXAMPLE".into()));
-    }
-
-    #[tokio::test]
-    async fn text_lowercase() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let text = Value::Text("EXAMPLE".into());
-
-        let result = lowercase(Arc::new(vec![text]), interpreter.data.clone())
-            .await
-            .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("example".into()));
-    }
-
-    #[tokio::test]
-    async fn text_remove_whitespace() {
-        let interpreter = Arc::new(FslInterpreter::new());
-        let text = Value::Text("e\nx\t a m p l e".into());
-
-        let result = remove_whitespace(Arc::new(vec![text]), interpreter.data.clone())
-            .await
-            .unwrap();
-        dbg!(result.clone());
-        assert!(result == Value::Text("example".into()));
-    }
-
-    #[tokio::test]
-    async fn get_random_range() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = random_range(Arc::new(vec![1.into(), 6.into()]), interpreter.data.clone())
-            .await
-            .unwrap();
-        dbg!(result.clone());
-        assert!(result.is_type(crate::types::FslType::Int));
-        let rnd = result.as_int(interpreter.data.clone()).await.unwrap();
-        assert!(rnd <= 6 && rnd >= 1)
-    }
-
-    #[tokio::test]
-    async fn get_random_entry() {
-        let interpreter = Arc::new(FslInterpreter::new());
-
-        let result = random_entry(
-            Arc::new(vec![Value::List(vec![
-                "one".into(),
-                "two".into(),
-                "three".into(),
-            ])]),
-            interpreter.data.clone(),
+        .await;
+        test_interpreter(
+            r#"nums.store("123") nums.pop().print(" ") nums.print()"#,
+            "3 12",
         )
-        .await
-        .unwrap();
-        dbg!(result.clone());
-        assert!(result.is_type(crate::types::FslType::Text));
-        let rnd = result.as_text(interpreter.data.clone()).await.unwrap();
-        assert!(rnd == "one" || rnd == "two" || rnd == "three");
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inc() {
+        test_interpreter(r#"i.store(1) i.inc().print()"#, "2").await;
+    }
+
+    #[tokio::test]
+    async fn dec() {
+        test_interpreter(r#"i.store(1) i.dec().print()"#, "0").await;
+    }
+
+    #[tokio::test]
+    async fn contains() {
+        test_interpreter(r#"nums.store([1, 2, 3]) nums.contains(2).print()"#, "true").await;
+        test_interpreter(r#"nums.store([1, 2, 3]) nums.contains(4).print()"#, "false").await;
+        test_interpreter(r#"nums.store("123") nums.contains("2").print()"#, "true").await;
+        test_interpreter(r#"nums.store("123") nums.contains("0").print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn starts_with() {
+        test_interpreter(r#"starts_with("text", "t").print()"#, "true").await;
+        test_interpreter(r#"starts_with("text", "f").print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn ends_with() {
+        test_interpreter(r#"ends_with("text", "t").print()"#, "true").await;
+        test_interpreter(r#"ends_with("text", "f").print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn concat() {
+        test_interpreter(r#"concat(1, 2, "3").print()"#, "123").await;
+    }
+
+    #[tokio::test]
+    async fn capitalize() {
+        test_interpreter(r#"capitalize("hey").print()"#, "Hey").await;
+    }
+
+    #[tokio::test]
+    async fn uppercase() {
+        test_interpreter(r#"uppercase("hey").print()"#, "HEY").await;
+    }
+
+    #[tokio::test]
+    async fn lowercase() {
+        test_interpreter(r#"lowercase("HEY").print()"#, "hey").await;
+    }
+
+    #[tokio::test]
+    async fn remove_whitespace() {
+        test_interpreter(r#"remove_whitespace(" h e y ").print()"#, "hey").await;
+    }
+
+    #[tokio::test]
+    async fn split() {
+        test_interpreter(r#"split("h e y", " ").print()"#, r#"[h, e, y]"#).await;
+    }
+
+    #[tokio::test]
+    async fn random_range() {
+        test_interpreter(
+            r#"n.store(random_range(1, 6)) print(and(n.lt(7), n.gt(0)))"#,
+            r#"true"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn random_entry() {
+        test_interpreter(
+            r#"n.store(random_entry([1, 2, 3])) print(and(or(n.eq(1), n.eq(2), n.eq(3)), n.lt(4), n.gt(0)))"#,
+            r#"true"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn r#break() {
+        test_interpreter(r#"while(true, print("1"), break())"#, r#"1"#).await;
+    }
+
+    #[tokio::test]
+    async fn r#continue() {
+        test_interpreter(
+            r#"i.store(0) repeat(2, if_then(i.eq(0), (i.inc(), continue())), print("1"))"#,
+            r#"1"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn exit() {
+        test_interpreter(r#"print("hello") exit() print(" world")"#, "hello").await;
     }
 }
