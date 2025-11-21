@@ -3,8 +3,7 @@ use std::sync::{Arc, atomic::Ordering};
 use async_recursion::async_recursion;
 
 use crate::{
-    DIV, ErrorContext, FslError, FslInterpreter, INDEX, InterpreterData, MODULUS, RANDOM_RANGE,
-    REPEAT, SWAP, WHILE_LOOP,
+    ErrorContext, FslError, InterpreterData,
     types::{ArgPos, ArgRule, FslType, Value},
 };
 
@@ -104,6 +103,7 @@ async fn contains_float(values: &Vec<Value>, data: Arc<InterpreterData>) -> Resu
     Ok(false)
 }
 
+pub const ADD: &str = "add";
 pub async fn add(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     if contains_float(&values, data.clone()).await? {
         let mut sum: f64 = 0.0;
@@ -120,6 +120,7 @@ pub async fn add(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
     }
 }
 
+pub const SUB: &str = "sub";
 pub async fn sub(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     if contains_float(&values, data.clone()).await? {
         let mut diff = values[0].as_float(data.clone()).await?;
@@ -136,6 +137,7 @@ pub async fn sub(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
     }
 }
 
+pub const MUL: &str = "mul";
 pub async fn mul(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     if contains_float(&values, data.clone()).await? {
         let mut product = values[0].as_float(data.clone()).await?;
@@ -152,6 +154,7 @@ pub async fn mul(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
     }
 }
 
+pub const DIV: &str = "div";
 pub async fn div(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     if contains_float(&values, data.clone()).await? {
         let mut quotient = values[0].as_float(data.clone()).await?;
@@ -182,6 +185,7 @@ pub async fn div(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
     }
 }
 
+pub const MODULUS: &str = "mod";
 pub async fn modulus(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -205,6 +209,7 @@ pub const STORE_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
 ];
 
+pub const STORE: &str = "store";
 pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let label = &values[0].get_var_label()?;
     match &values[1] {
@@ -231,11 +236,13 @@ pub async fn store(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
 }
 
 pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub const CLONE: &str = "clone";
 pub async fn clone(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let value = &values[0].get_var_value(data)?;
     Ok(value.clone())
 }
 
+pub const FREE: &str = "free";
 pub const FREE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub async fn free(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let label = &values[0].get_var_label()?;
@@ -246,6 +253,8 @@ pub async fn free(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
 }
 
 pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
+
+pub const PRINT: &str = "print";
 pub async fn print(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut output = String::new();
 
@@ -259,6 +268,7 @@ pub async fn print(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Resul
 }
 
 pub const SCOPE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
+pub const SCOPE: &str = "";
 pub async fn scope(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     for value in values.iter() {
         value.as_raw(data.clone()).await?;
@@ -271,6 +281,7 @@ pub const EQ_RULES: &'static [ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
+pub const EQ: &str = "eq";
 pub async fn eq(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let a = values[0].as_raw(data.clone()).await?;
     let b = values[1].as_raw(data.clone()).await?;
@@ -282,6 +293,7 @@ pub const GT_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
+pub const GT: &str = "gt";
 pub async fn gt(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     if contains_float(&values, data.clone()).await? {
         Ok(Value::Bool(
@@ -298,6 +310,7 @@ pub const LT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
+pub const LT: &str = "lt";
 pub async fn lt(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     if contains_float(&values, data.clone()).await? {
         Ok(Value::Bool(
@@ -311,11 +324,13 @@ pub async fn lt(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<V
 }
 
 pub const NOT_RULES: &[ArgRule; 1] = &[ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
+pub const NOT: &str = "not";
 pub async fn not(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     Ok((!values[0].as_bool(data).await?).into())
 }
 
 pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
+pub const AND: &str = "and";
 pub async fn and(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut result = values[0].as_bool(data.clone()).await?;
     for value in &values[1..values.len()] {
@@ -325,6 +340,7 @@ pub async fn and(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 }
 
 pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
+pub const OR: &str = "or";
 pub async fn or(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut result = values[0].as_bool(data.clone()).await?;
     for value in &values[1..values.len()] {
@@ -337,6 +353,7 @@ pub const IF_THEN_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
 ];
+pub const IF_THEN: &str = "if_then";
 pub async fn if_then(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -354,6 +371,7 @@ pub const IF_THEN_ELSE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
     ArgRule::new(ArgPos::Index(2), &[FslType::Command]),
 ];
+pub const IF_THEN_ELSE: &str = "if_then_else";
 pub async fn if_then_else(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -371,6 +389,7 @@ pub const WHILE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
     ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
 ];
+pub const WHILE_LOOP: &str = "while";
 pub async fn while_command(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -400,6 +419,7 @@ pub const REPEAT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
 ];
+pub const REPEAT: &str = "repeat";
 pub async fn repeat(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -430,6 +450,7 @@ pub const INDEX_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
+pub const INDEX: &str = "index";
 pub async fn index(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let array = values[0].as_raw(data.clone()).await?;
 
@@ -460,6 +481,7 @@ pub const LENGTH_RULES: [ArgRule; 1] = [ArgRule::new(
     ArgPos::Index(0),
     &[FslType::List, FslType::Text],
 )];
+pub const LENGTH: &str = "length";
 pub async fn length(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -480,6 +502,7 @@ pub const SWAP_RULES: [ArgRule; 3] = [
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
 ];
+pub const SWAP: &str = "swap";
 pub async fn swap(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let array = values[0].as_raw(data.clone()).await?;
 
@@ -540,6 +563,7 @@ pub const INSERT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
     ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
 ];
+pub const INSERT: &str = "insert";
 pub async fn insert(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -589,6 +613,7 @@ pub const PUSH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
+pub const PUSH: &str = "push";
 pub async fn push(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     if let Ok(mut list) = values[0].as_list(data.clone()).await {
         let to_push = values[1].as_raw(data.clone()).await?;
@@ -616,6 +641,7 @@ pub const POP_RULES: &[ArgRule] = &[ArgRule::new(
     ArgPos::Index(0),
     &[FslType::List, FslType::Text],
 )];
+pub const POP: &str = "pop";
 pub async fn pop(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let array = values[0].as_raw(data.clone()).await?;
 
@@ -647,6 +673,7 @@ pub const REMOVE_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
+pub const REMOVE: &str = "remove";
 pub async fn remove(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -695,6 +722,7 @@ pub const REPLACE_RULES: [ArgRule; 3] = [
     ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
     ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
 ];
+pub const REPLACE: &str = "replace";
 pub async fn replace(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -739,6 +767,7 @@ pub async fn replace(
     }
 }
 pub const INC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub const INC: &str = "inc";
 pub async fn inc(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let n = values[0].as_int(data.clone()).await?;
     let new_value = Value::Int(n + 1);
@@ -748,6 +777,7 @@ pub async fn inc(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<
 }
 
 pub const DEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub const DEC: &str = "dec";
 pub async fn dec(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let n = values[0].as_int(data.clone()).await?;
     let new_value = Value::Int(n - 1);
@@ -760,6 +790,7 @@ pub const CONTAINS_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
+pub const CONTAINS: &str = "contains";
 pub async fn contains(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -788,6 +819,7 @@ pub const STARTS_WITH_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
+pub const STARTS_WITH: &str = "starts_with";
 pub async fn starts_with(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -803,6 +835,7 @@ pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
+pub const ENDS_WITH: &str = "ends_with";
 pub async fn ends_with(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -815,6 +848,7 @@ pub async fn ends_with(
 }
 
 pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
+pub const CONCAT: &str = "concat";
 pub async fn concat(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -829,6 +863,7 @@ pub async fn concat(
 }
 
 pub const CAPITALIZE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const CAPITALIZE: &str = "capitalize";
 pub async fn capitalize(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -842,6 +877,7 @@ pub async fn capitalize(
 }
 
 pub const UPPERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const UPPERCASE: &str = "uppercase";
 pub async fn uppercase(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -850,6 +886,7 @@ pub async fn uppercase(
 }
 
 pub const LOWERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const LOWERCASE: &str = "lowercase";
 pub async fn lowercase(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -859,6 +896,7 @@ pub async fn lowercase(
 
 pub const REMOVE_WHITESPACE_RULES: [ArgRule; 1] =
     [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
 pub async fn remove_whitespace(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -875,6 +913,7 @@ pub const SPLIT_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
+pub const SPLIT: &str = "split";
 pub async fn split(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let text_to_split = values[0].as_text(data.clone()).await?;
     let pattern = values[1].as_text(data.clone()).await?;
@@ -889,6 +928,7 @@ pub const RANDOM_RANGE_RULES: [ArgRule; 2] = [
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
+pub const RANDOM_RANGE: &str = "random_range";
 pub async fn random_range(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -919,6 +959,7 @@ pub async fn random_range(
 }
 
 pub const RANDOM_ENTRY_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::List])];
+pub const RANDOM_ENTRY: &str = "random_entry";
 pub async fn random_entry(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -927,6 +968,7 @@ pub async fn random_entry(
     Ok(list[rand::random_range(0..list.len())].clone())
 }
 
+pub const BREAK: &str = "break";
 pub async fn break_command(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -936,6 +978,7 @@ pub async fn break_command(
     Ok(Value::None)
 }
 
+pub const CONTINUE: &str = "continue";
 pub async fn continue_command(
     values: Arc<Vec<Value>>,
     data: Arc<InterpreterData>,
@@ -945,6 +988,7 @@ pub async fn continue_command(
     Ok(Value::None)
 }
 
+pub const EXIT: &str = "exit";
 pub async fn exit(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     Ok(Value::None)
 }
@@ -953,8 +997,8 @@ pub async fn exit(values: Arc<Vec<Value>>, data: Arc<InterpreterData>) -> Result
 mod tests {
     use std::sync::Arc;
 
-    use crate::VarMap;
     use crate::types::Command;
+    use crate::{FslInterpreter, VarMap};
 
     use super::*;
 

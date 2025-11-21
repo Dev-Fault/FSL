@@ -18,51 +18,6 @@ mod lexer;
 mod parser;
 pub mod types;
 
-pub const ADD: &str = "add";
-pub const SUB: &str = "sub";
-pub const MUL: &str = "mul";
-pub const DIV: &str = "div";
-pub const MODULUS: &str = "mod";
-pub const STORE: &str = "store";
-pub const CLONE: &str = "clone";
-pub const FREE: &str = "free";
-pub const PRINT: &str = "print";
-pub const SCOPE: &str = "";
-pub const EQ: &str = "eq";
-pub const GT: &str = "gt";
-pub const LT: &str = "lt";
-pub const NOT: &str = "not";
-pub const AND: &str = "and";
-pub const OR: &str = "or";
-pub const IF_THEN: &str = "if_then";
-pub const IF_THEN_ELSE: &str = "if_then_else";
-pub const WHILE_LOOP: &str = "while";
-pub const REPEAT: &str = "repeat";
-pub const INDEX: &str = "index";
-pub const LENGTH: &str = "length";
-pub const SWAP: &str = "swap";
-pub const INSERT: &str = "insert";
-pub const REMOVE: &str = "remove";
-pub const PUSH: &str = "push";
-pub const POP: &str = "pop";
-pub const REPLACE: &str = "replace";
-pub const INC: &str = "inc";
-pub const DEC: &str = "dec";
-pub const CONTAINS: &str = "contains";
-pub const STARTS_WITH: &str = "starts_with";
-pub const ENDS_WITH: &str = "ends_with";
-pub const CONCAT: &str = "concat";
-pub const CAPITALIZE: &str = "capitalize";
-pub const UPPERCASE: &str = "uppercase";
-pub const LOWERCASE: &str = "lowercase";
-pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
-pub const SPLIT: &str = "split";
-pub const RANDOM_RANGE: &str = "random_range";
-pub const RANDOM_ENTRY: &str = "random_entry";
-pub const EXIT: &str = "exit";
-pub const BREAK: &str = "break";
-pub const CONTINUE: &str = "continue";
-
 #[derive(Debug, Clone)]
 pub struct ErrorContext {
     context: String,
