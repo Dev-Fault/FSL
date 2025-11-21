@@ -108,7 +108,7 @@ impl Parser {
 
     fn parse_symbol<'a>(
         &mut self,
-        token: &Token,
+        token: Token,
         next_token: Option<&Token>,
         symbol: Symbol,
         code: &'a str,
@@ -168,8 +168,7 @@ impl Parser {
                 }
                 None => {
                     return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
-                        code,
-                        token.clone(),
+                        code, token,
                     )));
                 }
             },
@@ -198,8 +197,7 @@ impl Parser {
                     }
                 } else {
                     return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
-                        code,
-                        token.clone(),
+                        code, token,
                     )));
                 }
             }
@@ -210,19 +208,16 @@ impl Parser {
                         if let Arg::Var(object) = dot_arg {
                             if let Arg::Var(property) = arg {
                                 return Err(ParserError::ObjectsNotSupported(ErrorContext::new(
-                                    code,
-                                    token.clone(),
+                                    code, token,
                                 )));
                             } else {
                                 return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
-                                    code,
-                                    token.clone(),
+                                    code, token,
                                 )));
                             }
                         } else {
                             return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
-                                code,
-                                token.clone(),
+                                code, token,
                             )));
                         }
                     } else {
@@ -233,8 +228,7 @@ impl Parser {
                     self.dot_arg = Some(Arg::Expression(dot_expression));
                 } else {
                     return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
-                        code,
-                        token.clone(),
+                        code, token,
                     )));
                 }
             }
@@ -253,8 +247,7 @@ impl Parser {
                         }
                     } else {
                         return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
-                            code,
-                            token.clone(),
+                            code, token,
                         )));
                     }
                 }
@@ -264,10 +257,12 @@ impl Parser {
     }
 
     pub fn parse<'a>(mut self, code: &'a str) -> Result<Vec<Expression>, ParserError<'a>> {
-        let tokens = Lexer::new().tokenize(code)?;
+        let mut tokens = Lexer::new().tokenize(code)?;
 
-        for (i, token) in tokens.iter().enumerate() {
-            match token.token_type.clone() {
+        let token_len = tokens.len();
+        for i in 0..token_len {
+            let token = std::mem::take(&mut tokens[i]);
+            match token.token_type {
                 TokenType::Symbol(symbol) => {
                     self.parse_symbol(token, tokens.get(i + 1), symbol, code)?
                 }
@@ -276,6 +271,7 @@ impl Parser {
                 TokenType::String(string) => self.current_arg = Some(Arg::String(string)),
                 TokenType::Keyword(keyword) => self.current_arg = Some(Arg::Keyword(keyword)),
                 TokenType::Var(var) => self.current_arg = Some(Arg::Var(var)),
+                TokenType::None => unreachable!("Lexer will not create None token types"),
             };
         }
 

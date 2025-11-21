@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{collections::VecDeque, sync::OnceLock};
 
 const QUOTE: &str = "\"";
 const OPEN_PAREN: &str = "(";
@@ -243,6 +243,13 @@ pub enum TokenType {
     String(String),
     Keyword(Keyword),
     Var(String),
+    None,
+}
+
+impl Default for TokenType {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 impl TokenType {
@@ -254,11 +261,12 @@ impl TokenType {
             TokenType::String(string) => string,
             TokenType::Keyword(keyword) => keyword.as_str(),
             TokenType::Var(var) => var,
+            TokenType::None => "",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub location: usize,
@@ -302,9 +310,9 @@ pub trait LastType {
     fn last_type(&self) -> Option<&TokenType>;
 }
 
-impl LastType for Vec<Token> {
+impl LastType for VecDeque<Token> {
     fn last_type(&self) -> Option<&TokenType> {
-        Some(&self.last()?.token_type)
+        Some(&self.into_iter().last()?.token_type)
     }
 }
 
@@ -318,8 +326,8 @@ impl Lexer {
     }
 
     /// Turns input into a vec of Tokens
-    pub fn tokenize<'a>(mut self, code: &'a str) -> Result<Vec<Token>, LexerError<'a>> {
-        let mut tokens = Vec::new();
+    pub fn tokenize<'a>(mut self, code: &'a str) -> Result<VecDeque<Token>, LexerError<'a>> {
+        let mut tokens = VecDeque::new();
         let mut buf = String::with_capacity(u8::MAX.into());
         let mut prev_ch = '\0';
         let mut escaped = false;
@@ -370,10 +378,13 @@ impl Lexer {
                 match symbol {
                     Symbol::Quote => {
                         if self.inside_string {
-                            tokens.push(Token::new(TokenType::String(buf.clone()), i));
-                            tokens.push(Token::new(TokenType::Symbol(Symbol::Quote), i));
+                            tokens.push_back(Token::new(
+                                TokenType::String(std::mem::take(&mut buf)),
+                                i,
+                            ));
+                            tokens.push_back(Token::new(TokenType::Symbol(Symbol::Quote), i));
                         } else {
-                            tokens.push(Token::new(TokenType::Symbol(Symbol::Quote), i));
+                            tokens.push_back(Token::new(TokenType::Symbol(Symbol::Quote), i));
                         }
 
                         self.inside_string = !self.inside_string;
@@ -384,17 +395,17 @@ impl Lexer {
                             //return Err(LexerError::OpenParenNotPrecededByCommand(err_context));
                         }
 
-                        tokens.push(Token::new(TokenType::Command(buf.clone()), i));
-                        tokens.push(Token::new(TokenType::Symbol(Symbol::OpenParen), i));
+                        tokens
+                            .push_back(Token::new(TokenType::Command(std::mem::take(&mut buf)), i));
+                        tokens.push_back(Token::new(TokenType::Symbol(Symbol::OpenParen), i));
                         self.command_depth += 1;
-                        buf.clear();
                     }
                     Symbol::ClosedParen if !self.inside_string => {
                         const INVALID_PRECEDING_SYMBOLS: &[Symbol] =
                             &[Symbol::Dot, Symbol::OpenBracket];
 
                         if !buf.is_empty() {
-                            tokens.push(Token::new(parse_token(buf.clone()), i));
+                            tokens.push_back(Token::new(parse_token(std::mem::take(&mut buf)), i));
                         }
 
                         if tokens.is_empty() || self.command_depth == 0 {
@@ -404,13 +415,12 @@ impl Lexer {
                         {
                             return Err(LexerError::ClosedParenPrecededByInvalidToken(err_context));
                         } else {
-                            tokens.push(Token::new(TokenType::Symbol(Symbol::ClosedParen), i));
+                            tokens.push_back(Token::new(TokenType::Symbol(Symbol::ClosedParen), i));
                             self.command_depth -= 1;
-                            buf.clear();
                         }
                     }
                     Symbol::OpenBracket if !self.inside_string => {
-                        tokens.push(Token::new(TokenType::Symbol(Symbol::OpenBracket), i));
+                        tokens.push_back(Token::new(TokenType::Symbol(Symbol::OpenBracket), i));
                         self.list_depth += 1;
                         buf.clear();
                     }
@@ -428,11 +438,14 @@ impl Lexer {
                             ));
                         } else {
                             if !buf.is_empty() {
-                                tokens.push(Token::new(parse_token(buf.clone()), i));
+                                tokens.push_back(Token::new(
+                                    parse_token(std::mem::take(&mut buf)),
+                                    i,
+                                ));
                             }
-                            tokens.push(Token::new(TokenType::Symbol(Symbol::ClosedBracket), i));
+                            tokens
+                                .push_back(Token::new(TokenType::Symbol(Symbol::ClosedBracket), i));
                             self.list_depth -= 1;
-                            buf.clear();
                         }
                     }
                     Symbol::Dot if !self.inside_string => {
@@ -461,12 +474,14 @@ impl Lexer {
                             return Err(LexerError::DotPreceededByInvalidToken(err_context));
                         } else {
                             if !buf.is_empty() {
-                                tokens.push(Token::new(TokenType::Var(buf.clone()), i));
+                                tokens.push_back(Token::new(
+                                    TokenType::Var(std::mem::take(&mut buf)),
+                                    i,
+                                ));
                             } else if tokens.is_empty() {
                                 return Err(LexerError::DotPreceededByInvalidToken(err_context));
                             }
-                            tokens.push(Token::new(TokenType::Symbol(Symbol::Dot), i));
-                            buf.clear();
+                            tokens.push_back(Token::new(TokenType::Symbol(Symbol::Dot), i));
                         }
                     }
                     Symbol::Comma if !self.inside_string => {
@@ -474,15 +489,14 @@ impl Lexer {
                             &[Symbol::Quote, Symbol::ClosedParen, Symbol::ClosedBracket];
 
                         if !buf.is_empty() {
-                            tokens.push(Token::new(parse_token(buf.clone()), i));
+                            tokens.push_back(Token::new(parse_token(std::mem::take(&mut buf)), i));
                         } else if let Some(TokenType::Symbol(symbol)) = tokens.last_type()
                             && !VALID_PRECEDING_SYMBOLS.contains(symbol)
                         {
                             return Err(LexerError::CommaPrecededByInvalidToken(err_context));
                         }
 
-                        tokens.push(Token::new(TokenType::Symbol(Symbol::Comma), i));
-                        buf.clear();
+                        tokens.push_back(Token::new(TokenType::Symbol(Symbol::Comma), i));
                     }
                     _ => {
                         if self.inside_string {
@@ -518,8 +532,8 @@ impl Lexer {
                 code.len(),
             )));
         } else if tokens
-            .last()
-            .is_some_and(|t| t.token_type != TokenType::Symbol(Symbol::ClosedParen))
+            .last_type()
+            .is_some_and(|t| *t != TokenType::Symbol(Symbol::ClosedParen))
         {
             return Err(LexerError::TrailingToken(ErrorContext::new(
                 code,

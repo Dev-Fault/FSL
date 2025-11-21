@@ -7,7 +7,7 @@ use async_recursion::async_recursion;
 
 use crate::{
     ErrorContext, FslError, InterpreterData,
-    types::{self, ArgPos, ArgRule, Command, FslType, Value},
+    types::{ArgPos, ArgRule, Command, FslType, Value},
 };
 
 pub const ALL_VALUES: &[FslType] = &[

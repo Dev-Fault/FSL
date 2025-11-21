@@ -331,6 +331,8 @@ impl Value {
     pub fn eq(&self, other: &Value) -> Result<bool, FslError> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
+            (Value::Float(a), Value::Int(b)) => Ok(*a == *b as f64),
+            (Value::Int(a), Value::Float(b)) => Ok(*a as f64 == *b),
             (Value::Float(a), Value::Float(b)) => Ok(*a == *b),
             (Value::Bool(a), Value::Bool(b)) => Ok(*a == *b),
             (Value::Text(a), Value::Text(b)) => Ok(*a == *b),
@@ -376,8 +378,8 @@ impl Value {
     pub async fn as_int(self, data: Arc<InterpreterData>) -> Result<i64, FslError> {
         let to_type = FslType::Int;
         match self {
-            Value::Int(value) => Ok(value.clone()),
-            Value::Float(value) => Ok(value.clone() as i64),
+            Value::Int(value) => Ok(value),
+            Value::Float(value) => Ok(value as i64),
             Value::Var(label) => data.vars.get_value(&label)?.as_int(data).await,
             Value::Command(command) => {
                 command
@@ -400,8 +402,8 @@ impl Value {
     pub async fn as_float(self, data: Arc<InterpreterData>) -> Result<f64, FslError> {
         let to_type = FslType::Float;
         match self {
-            Value::Int(value) => Ok(value.clone() as f64),
-            Value::Float(value) => Ok(value.clone()),
+            Value::Int(value) => Ok(value as f64),
+            Value::Float(value) => Ok(value),
             Value::Var(label) => data.vars.get_value(&label)?.as_float(data).await,
             Value::Command(command) => {
                 command
@@ -463,7 +465,7 @@ impl Value {
                 Ok(value) => Ok(value),
                 Err(_) => Err(gen_failed_parse_error(FslType::Text, to_type)),
             },
-            Value::Bool(value) => Ok(value.clone()),
+            Value::Bool(value) => Ok(value),
             Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::Var(label) => data.vars.get_value(&label)?.as_bool(data).await,
             Value::Command(command) => {

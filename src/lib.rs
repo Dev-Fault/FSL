@@ -1162,7 +1162,7 @@ mod interpreter {
             num.store(numbers.index(i)),
             if_then(
                 eq(mod(num, 2), 0),
-                evens.store(evens.insert(num, evens.length()))
+                evens.store(evens.insert(evens.length(), num))
             ),
             i.store(add(i, 1))
         )
@@ -1373,7 +1373,7 @@ mod interpreter {
             r#"
         empty.store([])
         print("Length: ", empty.length())
-        empty.store(empty.insert(42, 0))
+        empty.store(empty.insert(0, 42))
         print(" After insert: ", empty.index(0))
         "#,
             "Length: 0 After insert: 42",
@@ -1644,7 +1644,7 @@ mod interpreter {
         test_interpreter(
             r#"
         text.store("helo")
-        text.store(text.insert("l", 3))
+        text.store(text.insert(3, "l"))
         print(text)
         "#,
             "hello",
