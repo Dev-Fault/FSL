@@ -1,9 +1,4 @@
-use std::{collections::btree_map::Values, ops::Deref};
-
-use crate::{
-    lexer::{Keyword, Lexer, LexerError, Symbol, Token, TokenType, format_error_context},
-    types::Command,
-};
+use crate::lexer::{Keyword, Lexer, LexerError, Symbol, Token, TokenType, format_error_context};
 
 #[derive(Debug, Clone, PartialEq)]
 struct ErrorContext<'a> {

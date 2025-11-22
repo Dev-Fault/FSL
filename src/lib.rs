@@ -10,7 +10,11 @@ use crate::{
     commands::*,
     lexer::LexerError,
     parser::{Expression, Parser, ParserError},
-    types::{ArgRule, Command, CommandSpec, Executor, FslType, Value},
+    types::{
+        FslType,
+        command::{ArgRule, Command, CommandSpec, Executor},
+        value::Value,
+    },
 };
 
 pub mod commands;
@@ -148,11 +152,77 @@ impl<'a> From<ParserError<'a>> for FslError {
     }
 }
 
+pub type CommandMap = HashMap<&'static str, Command>;
+pub type UserCommands = HashMap<String, Command>;
+
+#[derive(Debug)]
+pub struct VarMap(Mutex<HashMap<String, Value>>);
+
+impl VarMap {
+    pub fn new() -> Self {
+        Self {
+            0: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn insert_value(&self, label: &str, value: Value) -> Result<(), FslError> {
+        match value {
+            Value::Var(_) => {
+                return Err(FslError::InvalidVarValue(ErrorContext::new(
+                    "".into(),
+                    "cannot store var in var".into(),
+                )));
+            }
+            Value::Command(_) => {
+                return Err(FslError::InvalidVarValue(ErrorContext::new(
+                    "".into(),
+                    "cannot store command in var".into(),
+                )));
+            }
+            Value::None => {
+                return Err(FslError::InvalidVarValue(ErrorContext::new(
+                    "".into(),
+                    "cannot store none in var".into(),
+                )));
+            }
+            _ => {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .insert(label.to_string(), value.clone());
+                Ok(())
+            }
+        }
+    }
+
+    pub fn remove_value(&self, label: &str) -> Option<Value> {
+        self.0.lock().unwrap().remove(label)
+    }
+
+    pub fn get_value(&self, label: &str) -> Result<Value, FslError> {
+        let value = self.0.lock().unwrap().get(label).cloned();
+
+        match value {
+            Some(value) => {
+                if value.is_type(FslType::Var) {
+                    return self.get_value(&value.get_var_label()?);
+                } else {
+                    Ok(value)
+                }
+            }
+            None => Err(FslError::NonExistantVar(ErrorContext::new(
+                label.to_string(),
+                format!("cannot get the value of a non existant var"),
+            ))),
+        }
+    }
+}
+
 pub struct InterpreterData {
     pub output: Arc<tokio::sync::Mutex<String>>,
     pub vars: VarMap,
     pub loop_limit: Option<usize>,
-    pub loops: Arc<tokio::sync::Mutex<usize>>,
+    pub loops: tokio::sync::Mutex<usize>,
     pub break_flag: AtomicBool,
     pub continue_flag: AtomicBool,
 }
@@ -163,7 +233,7 @@ impl InterpreterData {
             loop_limit: Some(u16::MAX as usize),
             output: Arc::new(tokio::sync::Mutex::new(String::new())),
             vars: VarMap::new(),
-            loops: Arc::new(tokio::sync::Mutex::new(0)),
+            loops: tokio::sync::Mutex::new(0),
             break_flag: AtomicBool::new(false),
             continue_flag: AtomicBool::new(false),
         }
@@ -269,7 +339,7 @@ impl FslInterpreter {
         executor: Executor,
     ) {
         self.commands.insert(
-            label.to_string(),
+            label,
             Command::new(CommandSpec::new(label, rules), executor),
         );
     }
@@ -309,7 +379,7 @@ impl FslInterpreter {
     }
 
     async fn parse_expression(&self, expression: Expression) -> Result<Value, FslError> {
-        match self.commands.get(&expression.name) {
+        match self.commands.get(expression.name.as_str()) {
             Some(command) => {
                 let mut command = command.clone();
 
@@ -560,70 +630,6 @@ impl FslInterpreter {
 impl Default for FslInterpreter {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-pub type CommandMap = HashMap<String, Command>;
-#[derive(Debug)]
-pub struct VarMap(Arc<Mutex<HashMap<String, Value>>>);
-
-impl VarMap {
-    pub fn new() -> Self {
-        Self {
-            0: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    pub fn insert_value(&self, label: &str, value: Value) -> Result<(), FslError> {
-        match value {
-            Value::Var(_) => {
-                return Err(FslError::InvalidVarValue(ErrorContext::new(
-                    "".into(),
-                    "cannot store var in var".into(),
-                )));
-            }
-            Value::Command(_) => {
-                return Err(FslError::InvalidVarValue(ErrorContext::new(
-                    "".into(),
-                    "cannot store command in var".into(),
-                )));
-            }
-            Value::None => {
-                return Err(FslError::InvalidVarValue(ErrorContext::new(
-                    "".into(),
-                    "cannot store none in var".into(),
-                )));
-            }
-            _ => {
-                self.0
-                    .lock()
-                    .unwrap()
-                    .insert(label.to_string(), value.clone());
-                Ok(())
-            }
-        }
-    }
-
-    pub fn remove_value(&self, label: &str) -> Option<Value> {
-        self.0.lock().unwrap().remove(label)
-    }
-
-    pub fn get_value(&self, label: &str) -> Result<Value, FslError> {
-        let value = self.0.lock().unwrap().get(label).cloned();
-
-        match value {
-            Some(value) => {
-                if value.is_type(FslType::Var) {
-                    return self.get_value(&value.get_var_label()?);
-                } else {
-                    Ok(value)
-                }
-            }
-            None => Err(FslError::NonExistantVar(ErrorContext::new(
-                label.to_string(),
-                format!("cannot get the value of a non existant var"),
-            ))),
-        }
     }
 }
 
