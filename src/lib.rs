@@ -12,7 +12,7 @@ use crate::{
     parser::{Expression, Parser, ParserError},
     types::{
         FslType,
-        command::{ArgRule, Command, CommandSpec, Executor},
+        command::{ArgRule, Command, CommandSpec, Executor, UserCommand},
         value::Value,
     },
 };
@@ -54,7 +54,9 @@ pub enum FslError {
     OutOfBounds(ErrorContext),
     InvalidRange(ErrorContext),
     NonExistantCommand(ErrorContext),
-    IncorrectArgs(ErrorContext),
+    WrongNumberOfArgs(ErrorContext),
+    WrongOrderOfArgs(ErrorContext),
+    WrongTypeOfArgs(ErrorContext),
     NonExistantVar(ErrorContext),
     FailedValueParse(ErrorContext),
     InvalidValueConversion(ErrorContext),
@@ -90,11 +92,17 @@ impl ToString for FslError {
             FslError::NonExistantCommand(error_context) => {
                 format!("Error: Non existant command\n{}", error_context.to_string())
             }
-            FslError::IncorrectArgs(error_context) => {
+            FslError::WrongNumberOfArgs(error_context) => {
                 format!(
                     "Error: Incorrect number of arguments\n{}",
                     error_context.to_string()
                 )
+            }
+            FslError::WrongOrderOfArgs(error_context) => {
+                format!("Error: Wrong order of args\n{}", error_context.to_string())
+            }
+            FslError::WrongTypeOfArgs(error_context) => {
+                format!("Error: Wrong type of args\n{}", error_context.to_string())
             }
             FslError::NonExistantVar(error_context) => {
                 format!(
@@ -153,7 +161,7 @@ impl<'a> From<ParserError<'a>> for FslError {
 }
 
 pub type CommandMap = HashMap<&'static str, Command>;
-pub type UserCommands = HashMap<String, Command>;
+pub type UserCommands = HashMap<String, UserCommand>;
 
 #[derive(Debug)]
 pub struct VarMap(Mutex<HashMap<String, Value>>);
@@ -177,12 +185,6 @@ impl VarMap {
                 return Err(FslError::InvalidVarValue(ErrorContext::new(
                     "".into(),
                     "cannot store command in var".into(),
-                )));
-            }
-            Value::None => {
-                return Err(FslError::InvalidVarValue(ErrorContext::new(
-                    "".into(),
-                    "cannot store none in var".into(),
                 )));
             }
             _ => {
@@ -219,8 +221,9 @@ impl VarMap {
 }
 
 pub struct InterpreterData {
-    pub output: Arc<tokio::sync::Mutex<String>>,
+    pub output: tokio::sync::Mutex<String>,
     pub vars: VarMap,
+    pub user_commands: tokio::sync::Mutex<UserCommands>,
     pub loop_limit: Option<usize>,
     pub loops: tokio::sync::Mutex<usize>,
     pub break_flag: AtomicBool,
@@ -231,8 +234,9 @@ impl InterpreterData {
     pub fn new() -> Self {
         InterpreterData {
             loop_limit: Some(u16::MAX as usize),
-            output: Arc::new(tokio::sync::Mutex::new(String::new())),
+            output: tokio::sync::Mutex::new(String::new()),
             vars: VarMap::new(),
+            user_commands: tokio::sync::Mutex::new(UserCommands::new()),
             loops: tokio::sync::Mutex::new(0),
             break_flag: AtomicBool::new(false),
             continue_flag: AtomicBool::new(false),
@@ -379,26 +383,45 @@ impl FslInterpreter {
     }
 
     async fn parse_expression(&self, expression: Expression) -> Result<Value, FslError> {
-        match self.commands.get(expression.name.as_str()) {
-            Some(command) => {
-                let mut command = command.clone();
+        if let Some(command) = self.commands.get(expression.name.as_str()) {
+            let mut command = command.clone();
 
-                let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
+            let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
 
-                for arg in expression.args {
-                    args.push_back(self.parse_arg(arg).await?);
-                }
-
-                command.set_args(args);
-
-                Ok(Value::Command(command))
+            for arg in expression.args {
+                args.push_back(self.parse_arg(arg).await?);
             }
-            None => {
-                return Err(FslError::NonExistantCommand(ErrorContext::new(
-                    expression.name,
-                    "".into(),
-                )));
+
+            command.set_args(args);
+
+            Ok(Value::Command(command))
+        } else if let Some(user_command) = self
+            .data
+            .user_commands
+            .lock()
+            .await
+            .get(expression.name.as_str())
+        {
+            let mut command = Command::new(
+                CommandSpec::new("", RUN_RULES),
+                Self::construct_executor(commands::run),
+            );
+
+            let mut args = VecDeque::new();
+            args.push_back(Value::Var(user_command.label.clone()));
+
+            for arg in expression.args {
+                args.push_back(self.parse_arg(arg).await?);
             }
+
+            command.set_args(args);
+
+            Ok(Value::Command(command))
+        } else {
+            return Err(FslError::NonExistantCommand(ErrorContext::new(
+                expression.name,
+                "".into(),
+            )));
         }
     }
 
@@ -613,15 +636,17 @@ impl FslInterpreter {
             Self::construct_executor(commands::random_entry),
         );
 
-        self.add_command(EXIT, &NO_RULES, Self::construct_executor(commands::exit));
+        self.add_command(DEF, &DEF_RULES, Self::construct_executor(commands::def));
+
+        self.add_command(EXIT, &NO_ARGS, Self::construct_executor(commands::exit));
         self.add_command(
             BREAK,
-            &NO_RULES,
+            &NO_ARGS,
             Self::construct_executor(commands::break_command),
         );
         self.add_command(
             CONTINUE,
-            &NO_RULES,
+            &NO_ARGS,
             Self::construct_executor(commands::continue_command),
         );
     }

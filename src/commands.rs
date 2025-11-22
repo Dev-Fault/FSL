@@ -1,15 +1,15 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, atomic::Ordering},
 };
 
 use async_recursion::async_recursion;
 
 use crate::{
-    ErrorContext, FslError, InterpreterData,
+    ErrorContext, FslError, InterpreterData, VarMap,
     types::{
         FslType,
-        command::{ArgPos, ArgRule, Command},
+        command::{ArgPos, ArgRule, Command, UserCommand},
         value::Value,
     },
 };
@@ -54,14 +54,14 @@ pub const NUMERIC_TYPES: &[FslType] = &[
 
 pub const LOGIC_TYPES: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
 
-pub const NO_RULES: &[ArgRule] = &[ArgRule {
+pub const NO_ARGS: &[ArgRule] = &[ArgRule {
     position: ArgPos::None,
     valid_types: &[],
 }];
 
 pub const MATH_RULES: &[ArgRule] = &[
     ArgRule {
-        position: ArgPos::AnyAfter(0),
+        position: ArgPos::AnyFrom(0),
         valid_types: NUMERIC_TYPES,
     },
     ArgRule {
@@ -272,7 +272,7 @@ pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 }
 
-pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
+pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
 pub const PRINT: &str = "print";
 pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let values = command.take_args();
@@ -288,7 +288,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
 }
 
 pub const SCOPE_RULES: &'static [ArgRule] =
-    &[ArgRule::new(ArgPos::AnyAfter(0), &[FslType::Command])];
+    &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
 pub const SCOPE: &str = "";
 pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let values = command.take_args();
@@ -361,7 +361,7 @@ pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     Ok((!a).into())
 }
 
-pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
+pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), LOGIC_TYPES)];
 pub const AND: &str = "and";
 pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -372,7 +372,7 @@ pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     Ok(arg_0.into())
 }
 
-pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyAfter(0), LOGIC_TYPES)];
+pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), LOGIC_TYPES)];
 pub const OR: &str = "or";
 pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -424,7 +424,7 @@ pub async fn if_then_else(command: Command, data: Arc<InterpreterData>) -> Resul
 
 pub const WHILE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
+    ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const WHILE_LOOP: &str = "while";
 pub async fn while_command(
@@ -457,7 +457,7 @@ pub async fn while_command(
 
 pub const REPEAT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::AnyAfter(1), &[FslType::Command]),
+    ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const REPEAT: &str = "repeat";
 pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
@@ -937,7 +937,7 @@ pub async fn ends_with(command: Command, data: Arc<InterpreterData>) -> Result<V
     Ok(arg_0.ends_with(&arg_1).into())
 }
 
-pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::AnyAfter(0), NON_NONE_VALUES)];
+pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
 pub const CONCAT: &str = "concat";
 pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let values = command.take_args();
@@ -1048,6 +1048,107 @@ pub async fn random_entry(command: Command, data: Arc<InterpreterData>) -> Resul
     Ok(list[rand::random_range(0..list.len())].clone())
 }
 
+pub const DEF_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Var, FslType::Command]),
+];
+pub const DEF: &str = "def";
+pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let label = values.pop_front().unwrap().get_var_label()?.to_string();
+    let mut local_vars: VecDeque<String> = VecDeque::new();
+    let mut commands: Vec<Command> = Vec::new();
+
+    let values_len = values.len();
+    let mut encountered_command = false;
+    for i in 0..values_len {
+        if values[i].is_type(FslType::Var) {
+            if encountered_command {
+                return Err(FslError::WrongOrderOfArgs(ErrorContext::new(
+                    DEF.into(),
+                    format!("argument labels to command must come before inner commands"),
+                )));
+            }
+            let var_label = values[i].get_var_label()?.to_string();
+            local_vars.push_back(var_label);
+        } else {
+            encountered_command = true;
+            let command = values[i].clone().as_command()?;
+            commands.push(command);
+        }
+    }
+
+    let mut user_commands = data.user_commands.lock().await;
+    let user_command = UserCommand {
+        label: label.clone(),
+        vars: local_vars,
+        commands: commands,
+    };
+    user_commands.insert(label.clone(), user_command);
+
+    Ok(Value::None)
+}
+
+fn substitute_args(
+    command: &mut Command,
+    var_map: &HashMap<String, Value>,
+) -> Result<(), FslError> {
+    for arg in command.get_args_mut() {
+        if arg.is_type(FslType::Var)
+            && let Some(value) = var_map.get(arg.get_var_label()?)
+        {
+            *arg = value.clone();
+        } else if arg.is_type(FslType::Command) {
+            let mut inner_command = std::mem::take(arg).as_command()?;
+            substitute_args(&mut inner_command, var_map)?;
+            *arg = Value::Command(inner_command);
+        } else {
+        }
+    }
+
+    Ok(())
+}
+
+pub const RUN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
+pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+
+    let command_label = values.pop_front().unwrap().get_var_label()?.to_string();
+
+    let commands_lock = data.user_commands.lock().await;
+
+    let mut var_labels = commands_lock.get(&command_label).unwrap().vars.clone();
+    let commands = commands_lock.get(&command_label).unwrap().commands.clone();
+    drop(commands_lock);
+
+    if values.len() != var_labels.len() {
+        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
+            command_label,
+            format!(
+                "expected {} args but got {}",
+                var_labels.len(),
+                values.len()
+            ),
+        )));
+    }
+
+    let mut var_map: HashMap<String, Value> = HashMap::new();
+
+    let vars = var_labels.len();
+    for _ in 0..vars {
+        let value = values.pop_front().unwrap().as_raw(data.clone()).await?;
+        var_map.insert(var_labels.pop_front().unwrap(), value);
+    }
+
+    let mut final_value = Value::None;
+    for mut command in commands {
+        substitute_args(&mut command, &var_map)?;
+        final_value = command.execute(data.clone()).await?;
+    }
+
+    Ok(final_value)
+}
+
 pub const BREAK: &str = "break";
 pub async fn break_command(
     command: Command,
@@ -1108,6 +1209,71 @@ mod tests {
         dbg!(&result);
         assert!(result.is_err());
         result.err().unwrap()
+    }
+
+    #[tokio::test]
+    async fn custom_command() {
+        test_interpreter(
+            r#"hey.def(x, y, z, print(x, y, z, "hey")) hey(1, 2, 3)"#,
+            "123hey",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn custom_command_complex() {
+        test_interpreter(
+            r#"
+                print_box.def(background, size,
+                    repeat(size,
+                        repeat(size,
+                            print(background)
+                        )
+                        print("\n")
+                    )
+                )
+
+                print_box("=", 4)
+            "#,
+            "====\n====\n====\n====\n",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn custom_command_no_args() {
+        test_interpreter(
+            r#"        
+                blank.store("=")
+                matrix.store([
+	                [blank, blank, blank],
+	                [blank, blank, blank],
+	                [blank, blank, blank],
+                ])
+                
+                filled_slots.store([])
+                
+                print_game_state.def(
+	                state.store("")
+	                i.store(0)
+	                j.store(0)
+	                repeat(matrix.length()
+		                repeat(matrix.index(i).length()
+			                state.push(matrix.index(i).index(j))
+			                j.inc()
+		                ),
+		                j.store(0)
+		                i.inc()
+		                state.push("\n")
+	                )
+	                print(state)
+                )
+
+                print_game_state()
+            "#,
+            "===\n===\n===\n",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -1250,7 +1416,7 @@ mod tests {
     #[tokio::test]
     async fn values_in_scope() {
         let err = test_interpreter_err(r#"(1)"#).await;
-        assert!(matches!(err, FslError::IncorrectArgs(_)));
+        assert!(matches!(err, FslError::WrongNumberOfArgs(_)));
     }
 
     #[tokio::test]

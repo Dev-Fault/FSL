@@ -1,8 +1,13 @@
 use core::fmt;
-use std::{collections::VecDeque, ops::Range, pin::Pin, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    ops::Range,
+    pin::Pin,
+    sync::Arc,
+};
 
 use crate::{
-    ErrorContext, FslError, InterpreterData,
+    ErrorContext, FslError, InterpreterData, VarMap,
     commands::EXIT,
     types::{FslType, value::Value},
 };
@@ -12,7 +17,7 @@ pub enum ArgPos {
     Index(usize),
     OptionalIndex(usize),
     Range(Range<usize>),
-    AnyAfter(usize),
+    AnyFrom(usize),
     None,
 }
 
@@ -86,6 +91,10 @@ impl Command {
         self.command_spec.label
     }
 
+    pub fn get_rules(&self) -> &'static [ArgRule] {
+        self.command_spec.arg_rules
+    }
+
     pub fn set_args(&mut self, args: VecDeque<Value>) {
         self.args = args;
     }
@@ -94,8 +103,16 @@ impl Command {
         self.args
     }
 
+    pub fn take_executor(self) -> Executor {
+        self.executor
+    }
+
     pub fn get_args(&self) -> &VecDeque<Value> {
         &self.args
+    }
+
+    pub fn get_args_mut(&mut self) -> &mut VecDeque<Value> {
+        &mut self.args
     }
 
     fn validate_arg_range(&self, arg_rule: &ArgRule, range: &Range<usize>) -> Result<(), FslError> {
@@ -103,7 +120,7 @@ impl Command {
             let arg = &self.args[i];
             let fsl_type = arg.as_type();
             if !arg_rule.valid_types.contains(&fsl_type) {
-                return Err(FslError::IncorrectArgs(ErrorContext::new(
+                return Err(FslError::WrongTypeOfArgs(ErrorContext::new(
                     self.get_label().to_string(),
                     format!(
                         "Arg {} of command {} cannot be of type {}\nValid types are {:?}",
@@ -134,7 +151,7 @@ impl Command {
                             self.validate_arg_range(arg_rule, &range)?;
                         }
                         None => {
-                            return Err(FslError::IncorrectArgs(ErrorContext::new(
+                            return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
                                 self.get_label().to_string(),
                                 format!(
                                     "Arg {} of command {} must be present and be of type {:?}",
@@ -153,7 +170,7 @@ impl Command {
                         max_args
                     };
                     if self.args.len() < range.start {
-                        return Err(FslError::IncorrectArgs(ErrorContext::new(
+                        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
                             self.get_label().to_string(),
                             format!(
                                 "Command {} must have at least {} arguments and only {} were given",
@@ -163,7 +180,7 @@ impl Command {
                             ),
                         )));
                     } else if self.args.len() > range.end {
-                        return Err(FslError::IncorrectArgs(ErrorContext::new(
+                        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
                             self.get_label().to_string(),
                             format!(
                                 "Command {} must have no more than {} arguments and {} were given",
@@ -178,13 +195,13 @@ impl Command {
                 }
                 ArgPos::None => {
                     if self.args.len() > 0 {
-                        return Err(FslError::IncorrectArgs(ErrorContext::new(
+                        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
                             self.get_label().to_string(),
                             format!("Command {} does not take any arguments", self.get_label()),
                         )));
                     }
                 }
-                ArgPos::AnyAfter(i) => {
+                ArgPos::AnyFrom(i) => {
                     max_args = usize::MAX;
                     let range = Range::from(*i..self.args.len());
                     self.validate_arg_range(arg_rule, &range)?;
@@ -199,7 +216,7 @@ impl Command {
         }
 
         if self.args.len() > max_args {
-            return Err(FslError::IncorrectArgs(ErrorContext::new(
+            return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
                 self.get_label().to_string(),
                 format!(
                     "Command {} expected {} args but got {}",
@@ -261,4 +278,11 @@ impl Clone for Command {
             executor: self.executor.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct UserCommand {
+    pub label: String,
+    pub vars: VecDeque<String>,
+    pub commands: Vec<Command>,
 }

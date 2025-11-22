@@ -19,6 +19,12 @@ pub enum Value {
     None,
 }
 
+impl Default for Value {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 fn gen_invalid_conversion_error(from: FslType, to: FslType) -> FslError {
     FslError::InvalidValueConversion(ErrorContext::new(
         "".into(),
