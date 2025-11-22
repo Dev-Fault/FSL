@@ -207,16 +207,17 @@ impl Value {
             Value::Float(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::Text(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::Bool(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::List(values) => {
-                let mut computed_values = Vec::with_capacity(values.len());
-                for value in values {
+            Value::List(mut values) => {
+                for value in values.iter_mut() {
                     if value.is_type(FslType::Command) {
-                        computed_values.push(value.as_command()?.execute(data.clone()).await?);
-                    } else {
-                        computed_values.push(value);
+                        let new_value = std::mem::take(value)
+                            .as_command()?
+                            .execute(data.clone())
+                            .await?;
+                        *value = new_value
                     }
                 }
-                Ok(computed_values)
+                Ok(values)
             }
             Value::Var(label) => data.vars.get_value(&label)?.as_list(data).await,
             Value::Command(command) => {
@@ -238,7 +239,7 @@ impl Value {
         } else if self.is_type(FslType::List) {
             Ok(Value::List(self.as_list(data.clone()).await?))
         } else {
-            Ok(self.clone())
+            Ok(self)
         }
     }
 

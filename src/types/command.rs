@@ -228,12 +228,9 @@ impl Command {
         }
         Ok(())
     }
+
     const EXECUTE_EXPECT: &str = "Command should always have executor before being consumed";
     pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-        if self.get_label() == EXIT {
-            return Err(FslError::ProgramExited());
-        }
-
         self.validate_args()?;
 
         let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
@@ -241,10 +238,6 @@ impl Command {
     }
 
     pub async fn execute_clone(&self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-        if self.get_label() == EXIT {
-            return Err(FslError::ProgramExited());
-        }
-
         self.validate_args()?;
 
         Ok(self

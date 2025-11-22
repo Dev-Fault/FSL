@@ -1136,7 +1136,10 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let vars = var_labels.len();
     for _ in 0..vars {
-        let value = values.pop_front().unwrap().as_raw(data.clone()).await?;
+        let mut value = values.pop_front().unwrap();
+        if value.is_type(FslType::Command) || value.is_type(FslType::List) {
+            value = values.pop_front().unwrap().as_raw(data.clone()).await?;
+        };
         var_map.insert(var_labels.pop_front().unwrap(), value);
     }
 
@@ -1171,7 +1174,7 @@ pub async fn continue_command(
 
 pub const EXIT: &str = "exit";
 pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    Ok(Value::None)
+    return Err(FslError::ProgramExited());
 }
 
 #[cfg(test)]
@@ -1416,7 +1419,7 @@ mod tests {
     #[tokio::test]
     async fn values_in_scope() {
         let err = test_interpreter_err(r#"(1)"#).await;
-        assert!(matches!(err, FslError::WrongNumberOfArgs(_)));
+        assert!(matches!(err, FslError::WrongTypeOfArgs(_)));
     }
 
     #[tokio::test]
