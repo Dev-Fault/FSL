@@ -1157,6 +1157,7 @@ pub async fn break_command(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
+    // TODO: add if in loop check
     data.break_flag
         .store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(Value::None)
@@ -1167,6 +1168,7 @@ pub async fn continue_command(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
+    // TODO: add if in loop check
     data.continue_flag
         .store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(Value::None)
@@ -1221,6 +1223,16 @@ mod tests {
             "123hey",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn pass_var_to_custom_command() {
+        test_interpreter(r#"plus.def(f, f.inc()) i.store(0) i.plus() i.print()"#, "1").await;
+    }
+
+    #[tokio::test]
+    async fn pass_var_to_custom_command_with_same_name() {
+        test_interpreter(r#"plus.def(i, i.inc()) i.store(0) i.plus() i.print()"#, "1").await;
     }
 
     #[tokio::test]
