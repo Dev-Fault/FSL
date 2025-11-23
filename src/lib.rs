@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 
 use async_recursion::async_recursion;
@@ -66,7 +69,9 @@ pub enum FslError {
     CustomError(ErrorContext),
     UnmatchedCurlyBraces(String),
     CannotStoreValueInVar(String),
-    ProgramExited(),
+    BreakCalledOutsideLoop,
+    ContinueCalledOutsideLoop,
+    ProgramExited,
 }
 
 impl ToString for FslError {
@@ -143,7 +148,13 @@ impl ToString for FslError {
             FslError::UnmatchedCurlyBraces(error) => error.clone(),
             FslError::InvalidComparison(error) => error.clone(),
             FslError::CannotStoreValueInVar(error) => error.clone(),
-            FslError::ProgramExited() => format!("Program was exited"),
+            FslError::BreakCalledOutsideLoop => {
+                format!("Break cannot be called outside of a loop command (while, repeat)")
+            }
+            FslError::ContinueCalledOutsideLoop => {
+                format!("Continue cannot be called outside of a loop command (while, repeat)")
+            }
+            FslError::ProgramExited => format!("Program was exited"),
         }
     }
 }
@@ -224,8 +235,9 @@ pub struct InterpreterData {
     pub output: tokio::sync::Mutex<String>,
     pub vars: VarMap,
     pub user_commands: tokio::sync::Mutex<UserCommands>,
-    pub loop_limit: Option<usize>,
-    pub loops: tokio::sync::Mutex<usize>,
+    pub total_loop_limit: Option<usize>,
+    pub total_loops: AtomicUsize,
+    pub inside_loop: AtomicBool,
     pub break_flag: AtomicBool,
     pub continue_flag: AtomicBool,
 }
@@ -233,23 +245,24 @@ pub struct InterpreterData {
 impl InterpreterData {
     pub fn new() -> Self {
         InterpreterData {
-            loop_limit: Some(u16::MAX as usize),
             output: tokio::sync::Mutex::new(String::new()),
             vars: VarMap::new(),
             user_commands: tokio::sync::Mutex::new(UserCommands::new()),
-            loops: tokio::sync::Mutex::new(0),
+            total_loop_limit: Some(u16::MAX as usize),
+            total_loops: AtomicUsize::new(0),
+            inside_loop: AtomicBool::new(false),
             break_flag: AtomicBool::new(false),
             continue_flag: AtomicBool::new(false),
         }
     }
 
     pub async fn increment_loops(&self, loop_command: &'static str) -> Result<(), FslError> {
-        match self.loop_limit {
+        match self.total_loop_limit {
             Some(limit) => {
-                let mut loops = self.loops.lock().await;
-                *loops += 1;
-                if *loops >= limit {
-                    *loops = limit;
+                let mut loops = self.total_loops.load(Ordering::Relaxed);
+                loops += 1;
+                self.total_loops.store(loops, Ordering::Relaxed);
+                if loops >= limit {
                     Err(FslError::LoopLimitExceeded(ErrorContext::new(
                         loop_command.into(),
                         "".into(),
@@ -369,7 +382,7 @@ impl FslInterpreter {
                     };
                     if let Err(e) = command.execute(self.data.clone()).await {
                         match e {
-                            FslError::ProgramExited() => break,
+                            FslError::ProgramExited => break,
                             _ => return Err(e.into()),
                         }
                     }
@@ -466,6 +479,12 @@ impl FslInterpreter {
             MODULUS,
             MATH_RULES,
             Self::construct_executor(commands::modulus),
+        );
+
+        self.add_command(
+            PRECISION,
+            &PRECISION_RULES,
+            Self::construct_executor(commands::precision),
         );
 
         self.add_command(

@@ -1,14 +1,8 @@
 use core::fmt;
-use std::{
-    collections::{HashMap, VecDeque},
-    ops::Range,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{collections::VecDeque, ops::Range, pin::Pin, sync::Arc};
 
 use crate::{
-    ErrorContext, FslError, InterpreterData, VarMap,
-    commands::EXIT,
+    ErrorContext, FslError, InterpreterData,
     types::{FslType, value::Value},
 };
 

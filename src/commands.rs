@@ -6,7 +6,7 @@ use std::{
 use async_recursion::async_recursion;
 
 use crate::{
-    ErrorContext, FslError, InterpreterData, VarMap,
+    ErrorContext, FslError, InterpreterData,
     types::{
         FslType,
         command::{ArgPos, ArgRule, Command, UserCommand},
@@ -214,6 +214,22 @@ pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Val
         remainder = remainder % value;
     }
     Ok(Value::Int(remainder))
+}
+
+pub const PRECISION_RULES: [ArgRule; 2] = [
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
+];
+pub const PRECISION: &str = "precision";
+pub async fn precision(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+    let num = arg_0.as_float(data.clone()).await?;
+    let precision = arg_1.as_int(data).await?;
+    let formatted = format!("{:.prec$}", num, prec = precision as usize);
+
+    Ok(Value::Text(formatted))
 }
 
 pub const STORE_RULES: [ArgRule; 2] = [
@@ -436,10 +452,13 @@ pub async fn while_command(
 
     let mut final_value = Value::None;
 
+    data.inside_loop.store(true, Ordering::Relaxed);
+
     'outer: while while_condition.clone().as_bool(data.clone()).await? {
         for command in &values {
             let command = command.clone().as_command()?;
             final_value = command.execute(data.clone()).await?;
+
             if data.continue_flag.load(Ordering::Relaxed) {
                 data.continue_flag.store(false, Ordering::Relaxed);
                 continue 'outer;
@@ -451,6 +470,8 @@ pub async fn while_command(
         }
         data.increment_loops(WHILE_LOOP).await?;
     }
+
+    data.inside_loop.store(false, Ordering::Relaxed);
 
     Ok(final_value)
 }
@@ -464,6 +485,8 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut values = command.take_args();
     let repetitions = values.pop_front().unwrap().as_int(data.clone()).await?;
     let mut final_value = Value::None;
+
+    data.inside_loop.store(true, Ordering::Relaxed);
 
     'outer: for _ in 0..repetitions {
         for command in &values {
@@ -480,6 +503,8 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         }
         data.increment_loops(REPEAT).await?;
     }
+
+    data.inside_loop.store(false, Ordering::Relaxed);
 
     Ok(final_value)
 }
@@ -1157,9 +1182,13 @@ pub async fn break_command(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
-    // TODO: add if in loop check
-    data.break_flag
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    if data.inside_loop.load(Ordering::Relaxed) {
+        data.break_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        return Err(FslError::BreakCalledOutsideLoop);
+    }
+
     Ok(Value::None)
 }
 
@@ -1168,15 +1197,18 @@ pub async fn continue_command(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, FslError> {
-    // TODO: add if in loop check
-    data.continue_flag
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    if data.inside_loop.load(Ordering::Relaxed) {
+        data.continue_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        return Err(FslError::ContinueCalledOutsideLoop);
+    }
     Ok(Value::None)
 }
 
 pub const EXIT: &str = "exit";
 pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    return Err(FslError::ProgramExited());
+    return Err(FslError::ProgramExited);
 }
 
 #[cfg(test)]
@@ -1214,81 +1246,6 @@ mod tests {
         dbg!(&result);
         assert!(result.is_err());
         result.err().unwrap()
-    }
-
-    #[tokio::test]
-    async fn custom_command() {
-        test_interpreter(
-            r#"hey.def(x, y, z, print(x, y, z, "hey")) hey(1, 2, 3)"#,
-            "123hey",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn pass_var_to_custom_command() {
-        test_interpreter(r#"plus.def(f, f.inc()) i.store(0) i.plus() i.print()"#, "1").await;
-    }
-
-    #[tokio::test]
-    async fn pass_var_to_custom_command_with_same_name() {
-        test_interpreter(r#"plus.def(i, i.inc()) i.store(0) i.plus() i.print()"#, "1").await;
-    }
-
-    #[tokio::test]
-    async fn custom_command_complex() {
-        test_interpreter(
-            r#"
-                print_box.def(background, size,
-                    repeat(size,
-                        repeat(size,
-                            print(background)
-                        )
-                        print("\n")
-                    )
-                )
-
-                print_box("=", 4)
-            "#,
-            "====\n====\n====\n====\n",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn custom_command_no_args() {
-        test_interpreter(
-            r#"        
-                blank.store("=")
-                matrix.store([
-	                [blank, blank, blank],
-	                [blank, blank, blank],
-	                [blank, blank, blank],
-                ])
-                
-                filled_slots.store([])
-                
-                print_game_state.def(
-	                state.store("")
-	                i.store(0)
-	                j.store(0)
-	                repeat(matrix.length()
-		                repeat(matrix.index(i).length()
-			                state.push(matrix.index(i).index(j))
-			                j.inc()
-		                ),
-		                j.store(0)
-		                i.inc()
-		                state.push("\n")
-	                )
-	                print(state)
-                )
-
-                print_game_state()
-            "#,
-            "===\n===\n===\n",
-        )
-        .await;
     }
 
     #[tokio::test]
@@ -1691,6 +1648,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn break_nested() {
+        test_interpreter(
+            r#"i.store(0) repeat(2, repeat(2, if_then(i.eq(0), (i.inc(), break()) ), i.print() ))"#,
+            r#"11"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn break_outside_command() {
+        let err = test_interpreter_err(r#"break()"#).await;
+        assert!(matches!(err, FslError::BreakCalledOutsideLoop));
+    }
+
+    #[tokio::test]
     async fn r#continue() {
         test_interpreter(
             r#"i.store(0) repeat(2, if_then(i.eq(0), (i.inc(), continue())), print("1"))"#,
@@ -1700,7 +1672,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn continue_deeply_nested() {
+        test_interpreter(
+        r#"i.store(0) repeat(2, repeat(2, repeat(2, if_then(i.eq(0), (i.inc(), continue()) ), i.print() )))"#,
+        r#"1111111"#,
+    )
+    .await;
+    }
+
+    #[tokio::test]
+    async fn continue_outside_command() {
+        let err = test_interpreter_err(r#"continue()"#).await;
+        assert!(matches!(err, FslError::ContinueCalledOutsideLoop));
+    }
+
+    #[tokio::test]
     async fn exit() {
         test_interpreter(r#"print("hello") exit() print(" world")"#, "hello").await;
+    }
+
+    #[tokio::test]
+    async fn custom_command() {
+        test_interpreter(
+            r#"hey.def(x, y, z, print(x, y, z, "hey")) hey(1, 2, 3)"#,
+            "123hey",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn pass_var_to_custom_command() {
+        test_interpreter(r#"plus.def(f, f.inc()) i.store(0) i.plus() i.print()"#, "1").await;
+    }
+
+    #[tokio::test]
+    async fn pass_var_to_custom_command_with_same_name() {
+        test_interpreter(r#"plus.def(i, i.inc()) i.store(0) i.plus() i.print()"#, "1").await;
+    }
+
+    #[tokio::test]
+    async fn custom_command_complex() {
+        test_interpreter(
+            r#"
+                print_box.def(background, size,
+                    repeat(size,
+                        repeat(size,
+                            print(background)
+                        )
+                        print("\n")
+                    )
+                )
+
+                print_box("=", 4)
+            "#,
+            "====\n====\n====\n====\n",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn custom_command_no_args() {
+        test_interpreter(
+            r#"        
+                blank.store("=")
+                matrix.store([
+	                [blank, blank, blank],
+	                [blank, blank, blank],
+	                [blank, blank, blank],
+                ])
+                
+                filled_slots.store([])
+                
+                print_game_state.def(
+	                state.store("")
+	                i.store(0)
+	                j.store(0)
+	                repeat(matrix.length()
+		                repeat(matrix.index(i).length()
+			                state.push(matrix.index(i).index(j))
+			                j.inc()
+		                ),
+		                j.store(0)
+		                i.inc()
+		                state.push("\n")
+	                )
+	                print(state)
+                )
+
+                print_game_state()
+            "#,
+            "===\n===\n===\n",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn precision() {
+        test_interpreter(r#"print(precision(1.24123, 2))"#, "1.24").await;
     }
 }
