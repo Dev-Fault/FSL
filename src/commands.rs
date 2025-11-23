@@ -968,6 +968,36 @@ pub async fn slice_replace(
     Ok(Value::Text(input))
 }
 
+pub const REVERSE_RULES: [ArgRule; 1] = [ArgRule::new(
+    ArgPos::Index(0),
+    &[FslType::Text, FslType::List],
+)];
+pub const REVERSE: &str = "reverse";
+pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+
+    let array = values.pop_front().unwrap();
+
+    let return_value = manipulate_array(
+        array,
+        data.clone(),
+        async |list| {
+            list.reverse();
+            Ok(None)
+        },
+        async |text| {
+            let mut chars = text.chars().collect::<Vec<char>>();
+            chars.reverse();
+            text.clear();
+            text.push_str(&chars.iter().collect::<String>());
+            Ok(None)
+        },
+    )
+    .await?;
+
+    Ok(return_value)
+}
+
 pub const INC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub const INC: &str = "inc";
 pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
@@ -1893,5 +1923,15 @@ mod tests {
             "5",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn reverse_list() {
+        test_interpreter(r#"list.store([1, 2, 3]).reverse().print()"#, "[3, 2, 1]").await;
+    }
+
+    #[tokio::test]
+    async fn reverse_text() {
+        test_interpreter(r#"print("hello".reverse())"#, "olleh").await;
     }
 }

@@ -624,6 +624,12 @@ impl FslInterpreter {
             Self::construct_executor(commands::search_replace),
         );
 
+        self.add_command(
+            REVERSE,
+            &REVERSE_RULES,
+            Self::construct_executor(commands::reverse),
+        );
+
         self.add_command(INC, &INC_RULES, Self::construct_executor(commands::inc));
 
         self.add_command(DEC, &DEC_RULES, Self::construct_executor(commands::dec));
