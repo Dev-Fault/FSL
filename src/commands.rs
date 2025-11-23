@@ -746,6 +746,65 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     }
 }
 
+pub const SEARCH_REPLACE_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(2), &[FslType::Text]),
+];
+pub const SEARCH_REPLACE: &str = "search_replace";
+pub async fn search_replace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let input = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let from = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let to = values.pop_front().unwrap().as_text(data).await?;
+
+    let input = input.replace(&from, &to);
+
+    Ok(Value::Text(input))
+}
+
+pub const SLICE_REPLACE_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), &[FslType::List]),
+    ArgRule::new(ArgPos::Index(2), &[FslType::Text]),
+];
+pub const SLICE_REPLACE: &str = "slice_replace";
+pub async fn slice_replace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, FslError> {
+    let mut values = command.take_args();
+    let mut input = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let mut range = values.pop_front().unwrap().as_list(data.clone()).await?;
+    let with = values.pop_front().unwrap().as_text(data.clone()).await?;
+
+    if range.len() != 2 {
+        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
+            format!("{}", SLICE_REPLACE),
+            format!("list should contain two items, min and max values for range"),
+        )));
+    }
+
+    let (from, to) = (
+        std::mem::take(&mut range[0]).as_int(data.clone()).await? as usize,
+        std::mem::take(&mut range[1]).as_int(data).await? as usize,
+    );
+
+    if from > input.len() || to > input.len() || from > to {
+        return Err(FslError::OutOfBounds(ErrorContext::new(
+            SLICE_REPLACE.into(),
+            format!("{} or {} was outside the bounds of text", from, to,),
+        )));
+    }
+
+    input.replace_range(from..to, &with);
+
+    Ok(Value::Text(input))
+}
+
 pub const INSERT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
@@ -1440,6 +1499,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn int_text_eq() {
+        test_interpreter(r#"print(eq(1, "1"))"#, "true").await;
+        let err = test_interpreter_err(r#"print(eq(1, "a"))"#).await;
+        assert!(matches!(err, FslError::FailedValueParse(_)));
+    }
+
+    #[tokio::test]
+    async fn float_text_eq() {
+        test_interpreter(r#"print(eq(1.24, "1.24"))"#, "true").await;
+        test_interpreter(r#"print(eq(1.123, "1"))"#, "false").await;
+    }
+
+    #[tokio::test]
     async fn not_condition() {
         test_interpreter(r#"print(not(true))"#, "false").await;
         test_interpreter(r#"print(not(false))"#, "true").await;
@@ -1769,5 +1841,19 @@ mod tests {
     #[tokio::test]
     async fn precision() {
         test_interpreter(r#"print(precision(1.24123, 2))"#, "1.24").await;
+    }
+
+    #[tokio::test]
+    async fn slice_replace() {
+        test_interpreter(r#"slice_replace("hello", [1, 5], "hhhh").print()"#, "hhhhh").await;
+    }
+
+    #[tokio::test]
+    async fn search_replace() {
+        test_interpreter(
+            r#"search_replace("this text has not been replaced", "not", "").print()"#,
+            "this text has  been replaced",
+        )
+        .await;
     }
 }

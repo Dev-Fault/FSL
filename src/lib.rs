@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    num::{ParseFloatError, ParseIntError},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -72,6 +73,24 @@ pub enum FslError {
     BreakCalledOutsideLoop,
     ContinueCalledOutsideLoop,
     ProgramExited,
+}
+
+impl From<ParseIntError> for FslError {
+    fn from(value: ParseIntError) -> Self {
+        FslError::FailedValueParse(ErrorContext::new(
+            "int".into(),
+            "failed to convert text to int (whole number)".into(),
+        ))
+    }
+}
+
+impl From<ParseFloatError> for FslError {
+    fn from(value: ParseFloatError) -> Self {
+        FslError::FailedValueParse(ErrorContext::new(
+            "float".into(),
+            "failed to convert text to float (decimal)".into(),
+        ))
+    }
 }
 
 impl ToString for FslError {
@@ -583,6 +602,24 @@ impl FslInterpreter {
             REPLACE,
             &REPLACE_RULES,
             Self::construct_executor(commands::replace),
+        );
+
+        self.add_command(
+            REPLACE,
+            &REPLACE_RULES,
+            Self::construct_executor(commands::replace),
+        );
+
+        self.add_command(
+            SLICE_REPLACE,
+            &SLICE_REPLACE_RULES,
+            Self::construct_executor(commands::slice_replace),
+        );
+
+        self.add_command(
+            SEARCH_REPLACE,
+            &SEARCH_REPLACE_RULES,
+            Self::construct_executor(commands::search_replace),
         );
 
         self.add_command(INC, &INC_RULES, Self::construct_executor(commands::inc));

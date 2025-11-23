@@ -56,6 +56,10 @@ impl Value {
             (Value::Float(a), Value::Float(b)) => Ok(*a == *b),
             (Value::Bool(a), Value::Bool(b)) => Ok(*a == *b),
             (Value::Text(a), Value::Text(b)) => Ok(*a == *b),
+            (Value::Text(a), Value::Int(b)) => Ok(a.parse::<i64>()? == *b),
+            (Value::Int(a), Value::Text(b)) => Ok(*a == b.parse::<i64>()?),
+            (Value::Text(a), Value::Float(b)) => Ok(a.parse::<f64>()? == *b),
+            (Value::Float(a), Value::Text(b)) => Ok(*a == b.parse::<f64>()?),
             (Value::List(a_list), Value::List(b_list)) => {
                 if a_list.len() != b_list.len() {
                     return Ok(false);
