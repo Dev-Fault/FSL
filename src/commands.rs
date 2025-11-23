@@ -226,8 +226,8 @@ pub async fn precision(command: Command, data: Arc<InterpreterData>) -> Result<V
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
     let num = arg_0.as_float(data.clone()).await?;
-    let precision = arg_1.as_int(data).await?;
-    let formatted = format!("{:.prec$}", num, prec = precision as usize);
+    let precision = arg_1.as_usize(data).await?;
+    let formatted = format!("{:.prec$}", num, prec = precision);
 
     Ok(Value::Text(formatted))
 }
@@ -567,6 +567,34 @@ where
     }
 }
 
+async fn index_matrix(
+    data: Arc<InterpreterData>,
+    matrix: Vec<Value>,
+    accessor: &mut VecDeque<Value>,
+) -> Result<Value, FslError> {
+    let mut matrix = matrix.clone();
+    while let Some(index) = accessor.pop_front() {
+        let index = index.as_usize(data.clone()).await?;
+        match matrix.get_mut(index) {
+            Some(inner) => {
+                if inner.is_type(FslType::List) {
+                    matrix = std::mem::take(inner).as_list(data.clone()).await?;
+                } else {
+                    return std::mem::take(inner).as_raw(data.clone()).await;
+                }
+            }
+            None => {
+                return Err(FslError::OutOfBounds(ErrorContext::new(
+                    "matrix".into(),
+                    format!("index was out of bounds inside matrix"),
+                )));
+            }
+        };
+    }
+
+    return Ok(Value::List(matrix));
+}
+
 pub const INDEX_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
@@ -581,18 +609,24 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     if array.is_type(FslType::List) {
         let list = array.as_list(data.clone()).await?;
-        let i = arg_1.as_int(data.clone()).await?;
-        match list.get(i as usize) {
-            Some(value) => Ok(value.clone().as_raw(data).await?),
-            None => Err(FslError::OutOfBounds(ErrorContext::new(
-                INDEX.into(),
-                format!("index {} was outside the bounds of list: {:?}", i, list),
-            ))),
+
+        if arg_1.is_type(FslType::List) {
+            let mut accessor = VecDeque::from(arg_1.as_list(data.clone()).await?);
+            return Ok(index_matrix(data, list, &mut accessor).await?);
+        } else {
+            let i = arg_1.as_usize(data.clone()).await?;
+            match list.get(i) {
+                Some(value) => Ok(value.clone().as_raw(data).await?),
+                None => Err(FslError::OutOfBounds(ErrorContext::new(
+                    INDEX.into(),
+                    format!("index {} was outside the bounds of list: {:?}", i, list),
+                ))),
+            }
         }
     } else {
         let text = array.as_text(data.clone()).await?;
-        let i = arg_1.as_int(data).await?;
-        match text.chars().nth(i as usize) {
+        let i = arg_1.as_usize(data).await?;
+        match text.chars().nth(i) {
             Some(char) => Ok(char.into()),
             None => Err(FslError::OutOfBounds(ErrorContext::new(
                 INDEX.into(),
@@ -629,7 +663,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut values = command.take_args();
     let array = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
-    let i = arg_1.as_int(data.clone()).await? as usize;
+    let i = arg_1.as_usize(data.clone()).await?;
 
     let return_value = manipulate_array(
         array,
@@ -673,8 +707,8 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
-    let a = arg_1.as_int(data.clone()).await? as usize;
-    let b = arg_2.as_int(data.clone()).await? as usize;
+    let a = arg_1.as_usize(data.clone()).await?;
+    let b = arg_2.as_usize(data.clone()).await?;
 
     let return_value = manipulate_array(
         array,
@@ -732,7 +766,7 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let array = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
-    let i = arg_1.as_int(data.clone()).await? as usize;
+    let i = arg_1.as_usize(data.clone()).await?;
 
     let return_value = manipulate_array(
         array,
@@ -778,7 +812,7 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let array = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
-    let i = arg_1.as_int(data.clone()).await? as usize;
+    let i = arg_1.as_usize(data.clone()).await?;
 
     let return_value = manipulate_array(
         array,
@@ -918,8 +952,8 @@ pub async fn slice_replace(
     }
 
     let (from, to) = (
-        std::mem::take(&mut range[0]).as_int(data.clone()).await? as usize,
-        std::mem::take(&mut range[1]).as_int(data).await? as usize,
+        std::mem::take(&mut range[0]).as_usize(data.clone()).await?,
+        std::mem::take(&mut range[1]).as_usize(data).await?,
     );
 
     if from > input.len() || to > input.len() || from > to {
@@ -1839,6 +1873,24 @@ mod tests {
         test_interpreter(
             r#"search_replace("this text has not been replaced", "not", "").print()"#,
             "this text has  been replaced",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn matrix_index() {
+        test_interpreter(
+            r#"matrix.store([[1,2,3], [3,4,5], [6,7,8]]) matrix.index([1,1]).print()"#,
+            "4",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn matrix_index_nested() {
+        test_interpreter(
+            r#"matrix.store([1,[2,[3,[4,5]]]]) matrix.index([1,1,1,1]).print()"#,
+            "5",
         )
         .await;
     }

@@ -70,6 +70,7 @@ pub enum FslError {
     CustomError(ErrorContext),
     UnmatchedCurlyBraces(String),
     CannotStoreValueInVar(String),
+    NegativeIndex,
     BreakCalledOutsideLoop,
     ContinueCalledOutsideLoop,
     ProgramExited,
@@ -174,6 +175,7 @@ impl ToString for FslError {
                 format!("Continue cannot be called outside of a loop command (while, repeat)")
             }
             FslError::ProgramExited => format!("Program was exited"),
+            FslError::NegativeIndex => format!("Cannot use negative value as index"),
         }
     }
 }

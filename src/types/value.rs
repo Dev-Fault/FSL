@@ -122,6 +122,15 @@ impl Value {
         }
     }
 
+    pub async fn as_usize(self, data: Arc<InterpreterData>) -> Result<usize, FslError> {
+        let integer = self.as_int(data).await?;
+        if integer < 0 {
+            Err(FslError::NegativeIndex)
+        } else {
+            Ok(integer as usize)
+        }
+    }
+
     #[async_recursion]
     pub async fn as_float(self, data: Arc<InterpreterData>) -> Result<f64, FslError> {
         let to_type = FslType::Float;
