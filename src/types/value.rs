@@ -104,7 +104,7 @@ impl Value {
         match self {
             Value::Int(value) => Ok(value),
             Value::Float(value) => Ok(value as i64),
-            Value::Var(label) => data.vars.get_value(&label)?.as_int(data).await,
+            Value::Var(label) => data.vars.clone_value(&label)?.as_int(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -128,7 +128,7 @@ impl Value {
         match self {
             Value::Int(value) => Ok(value as f64),
             Value::Float(value) => Ok(value),
-            Value::Var(label) => data.vars.get_value(&label)?.as_float(data).await,
+            Value::Var(label) => data.vars.clone_value(&label)?.as_float(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -142,6 +142,30 @@ impl Value {
             },
             Value::Bool(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
             Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+        }
+    }
+
+    #[async_recursion]
+    pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, FslError> {
+        let to_type = FslType::Bool;
+        match self {
+            Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::Float(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::Text(value) => match value.parse::<bool>() {
+                Ok(value) => Ok(value),
+                Err(_) => Err(gen_failed_parse_error(FslType::Text, to_type)),
+            },
+            Value::Bool(value) => Ok(value),
+            Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::Var(label) => data.vars.clone_value(&label)?.as_bool(data).await,
+            Value::Command(command) => {
+                command
+                    .execute(data.clone())
+                    .await?
+                    .as_bool(data.clone())
+                    .await
+            }
             Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
         }
     }
@@ -167,7 +191,7 @@ impl Value {
                 output.push(']');
                 Ok(output)
             }
-            Value::Var(label) => data.vars.get_value(&label)?.as_text(data).await,
+            Value::Var(label) => data.vars.clone_value(&label)?.as_text(data).await,
             Value::Command(command) => {
                 command
                     .execute_clone(data.clone())
@@ -176,30 +200,6 @@ impl Value {
                     .await
             }
             Value::None => Err(gen_invalid_conversion_error(self.as_type(), FslType::Text)),
-        }
-    }
-
-    #[async_recursion]
-    pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, FslError> {
-        let to_type = FslType::Bool;
-        match self {
-            Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Float(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Text(value) => match value.parse::<bool>() {
-                Ok(value) => Ok(value),
-                Err(_) => Err(gen_failed_parse_error(FslType::Text, to_type)),
-            },
-            Value::Bool(value) => Ok(value),
-            Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Var(label) => data.vars.get_value(&label)?.as_bool(data).await,
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_bool(data.clone())
-                    .await
-            }
-            Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
         }
     }
 
@@ -223,7 +223,7 @@ impl Value {
                 }
                 Ok(values)
             }
-            Value::Var(label) => data.vars.get_value(&label)?.as_list(data).await,
+            Value::Var(label) => data.vars.clone_value(&label)?.as_list(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -271,7 +271,7 @@ impl Value {
 
     pub fn get_var_value(&self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
         if let Value::Var(label) = self {
-            match data.vars.get_value(label) {
+            match data.vars.clone_value(label) {
                 Ok(value) => match value {
                     Value::Var(_) => value.get_var_value(data),
                     _ => Ok(value),

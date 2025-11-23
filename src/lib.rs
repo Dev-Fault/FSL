@@ -231,13 +231,13 @@ impl VarMap {
         self.0.lock().unwrap().remove(label)
     }
 
-    pub fn get_value(&self, label: &str) -> Result<Value, FslError> {
+    pub fn clone_value(&self, label: &str) -> Result<Value, FslError> {
         let value = self.0.lock().unwrap().get(label).cloned();
 
         match value {
             Some(value) => {
                 if value.is_type(FslType::Var) {
-                    return self.get_value(&value.get_var_label()?);
+                    return self.clone_value(&value.get_var_label()?);
                 } else {
                     Ok(value)
                 }
