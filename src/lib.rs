@@ -464,9 +464,26 @@ impl FslInterpreter {
         match arg {
             parser::Arg::Number(number) => {
                 if number.contains('.') {
-                    Ok(Value::Float(number.parse::<f64>().unwrap()))
+                    match number.parse::<f64>() {
+                        Ok(value) => Ok(Value::Float(value)),
+                        Err(_) => Err(FslError::FailedValueParse(ErrorContext {
+                            context: number,
+                            addendum: "failed to convert to a number".into(),
+                        })),
+                    }
                 } else {
-                    Ok(Value::Int(number.parse::<i64>().unwrap()))
+                    if let Ok(value) = number.parse::<i64>() {
+                        Ok(Value::Int(value))
+                    } else {
+                        if let Ok(value) = number.parse::<f64>() {
+                            Ok(Value::Float(value))
+                        } else {
+                            Err(FslError::FailedValueParse(ErrorContext {
+                                context: number,
+                                addendum: "failed to convert to a number".into(),
+                            }))
+                        }
+                    }
                 }
             }
             parser::Arg::String(text) => Ok(Value::Text(text)),
@@ -725,32 +742,7 @@ impl Default for FslInterpreter {
 #[cfg(test)]
 mod interpreter {
     use crate::FslInterpreter;
-
-    async fn test_interpreter(code: &str, expected_output: &str) {
-        let result = FslInterpreter::new().interpret(code).await;
-
-        println!("DEBUG");
-        dbg!(&result);
-
-        let result = result.unwrap();
-        println!("PRETTY PRINT");
-        println!("{}", &result);
-
-        assert!(result == expected_output);
-    }
-
-    async fn test_interpreter_embedded(code: &str, expected_output: &str) {
-        let result = FslInterpreter::new().interpret_embedded_code(code).await;
-
-        println!("DEBUG");
-        dbg!(&result);
-
-        let result = result.unwrap();
-        println!("PRETTY PRINT");
-        println!("{}", &result);
-
-        assert!(result == expected_output);
-    }
+    use crate::commands::tests::{test_interpreter, test_interpreter_embedded};
 
     async fn test_interpreter_err(code: &str) {
         let result = FslInterpreter::new().interpret(code).await;
@@ -758,47 +750,40 @@ mod interpreter {
         assert!(result.is_err());
     }
 
+    async fn test_interpreter_not_err(code: &str) {
+        let result = FslInterpreter::new().interpret(code).await;
+        dbg!(&result);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_print_overflow() {
+        test_interpreter(
+            "print(1000000000000000000000000000000000000000000000
+            00000000000000000000000000000000000000000000000000000
+            00000000000000000000000000000000000000000000000000000
+            00000000000000000000000000000000000000000000000000000
+            00000000000000000000000000000000000000000000000000000
+            00000000000000000000000000000000000000000000000000000)",
+            "inf",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn handle_int_overflow() {
+        test_interpreter_not_err(
+            "print(random_range(
+            100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+            100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+            00000000000000000000000000000000000000000000000000000000000000000))",
+        )
+        .await;
+    }
+
     #[tokio::test]
     async fn hello_world() {
         test_interpreter("print(\"Hello, world!\")", "Hello, world!").await;
-    }
-
-    #[tokio::test]
-    async fn exit_command() {
-        test_interpreter("exit() print(\"Hello, world!\")", "").await;
-    }
-
-    #[tokio::test]
-    async fn exit_loop() {
-        test_interpreter(
-            "repeat(10, print(\"Hello, world!\"), exit())",
-            "Hello, world!",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn break_command() {
-        test_interpreter(
-            r#"
-            i.store(0)
-            repeat(5, if_then(i.eq(2), break()), i.inc(), print("-"))
-            "#,
-            r#"--"#,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn continue_command() {
-        test_interpreter(
-            r#"
-            i.store(0)
-            repeat(5, i.inc(), if_then(i.eq(2), continue()), print("-"))
-            "#,
-            r#"----"#,
-        )
-        .await;
     }
 
     #[tokio::test]

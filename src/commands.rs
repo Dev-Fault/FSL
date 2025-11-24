@@ -1321,10 +1321,10 @@ pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::{FslError, FslInterpreter};
 
-    async fn test_interpreter(code: &str, expected_output: &str) {
+    pub async fn test_interpreter(code: &str, expected_output: &str) {
         let result = FslInterpreter::new().interpret(code).await;
 
         println!("DEBUG");
@@ -1337,7 +1337,7 @@ mod tests {
         assert!(result == expected_output);
     }
 
-    async fn test_interpreter_embedded(code: &str, expected_output: &str) {
+    pub async fn test_interpreter_embedded(code: &str, expected_output: &str) {
         let result = FslInterpreter::new().interpret_embedded_code(code).await;
 
         println!("DEBUG");
@@ -1350,7 +1350,7 @@ mod tests {
         assert!(result == expected_output);
     }
 
-    async fn test_interpreter_err(code: &str) -> FslError {
+    pub async fn test_interpreter_err_type(code: &str) -> FslError {
         let result = FslInterpreter::new().interpret(code).await;
         dbg!(&result);
         assert!(result.is_err());
@@ -1435,13 +1435,13 @@ mod tests {
 
     #[tokio::test]
     async fn div_by_zero() {
-        let err = test_interpreter_err("print(div(1, 0))").await;
+        let err = test_interpreter_err_type("print(div(1, 0))").await;
         assert!(matches!(err, FslError::DivisionByZero(_)));
     }
 
     #[tokio::test]
     async fn mod_by_zero() {
-        let err = test_interpreter_err("print(mod(1, 0))").await;
+        let err = test_interpreter_err_type("print(mod(1, 0))").await;
         assert!(matches!(err, FslError::DivisionByZero(_)));
     }
 
@@ -1476,7 +1476,7 @@ mod tests {
 
     #[tokio::test]
     async fn free_var() {
-        let err = test_interpreter_err("a.store(1) print(a) a.free() print(a)").await;
+        let err = test_interpreter_err_type("a.store(1) print(a) a.free() print(a)").await;
         assert!(matches!(err, FslError::NonExistantVar(_)));
     }
 
@@ -1496,7 +1496,7 @@ mod tests {
 
     #[tokio::test]
     async fn values_in_scope() {
-        let err = test_interpreter_err(r#"(1)"#).await;
+        let err = test_interpreter_err_type(r#"(1)"#).await;
         assert!(matches!(err, FslError::WrongTypeOfArgs(_)));
     }
 
@@ -1551,7 +1551,7 @@ mod tests {
     #[tokio::test]
     async fn int_text_eq() {
         test_interpreter(r#"print(eq(1, "1"))"#, "true").await;
-        let err = test_interpreter_err(r#"print(eq(1, "a"))"#).await;
+        let err = test_interpreter_err_type(r#"print(eq(1, "a"))"#).await;
         assert!(matches!(err, FslError::FailedValueParse(_)));
     }
 
@@ -1780,7 +1780,7 @@ mod tests {
 
     #[tokio::test]
     async fn break_outside_command() {
-        let err = test_interpreter_err(r#"break()"#).await;
+        let err = test_interpreter_err_type(r#"break()"#).await;
         assert!(matches!(err, FslError::BreakCalledOutsideLoop));
     }
 
@@ -1804,7 +1804,7 @@ mod tests {
 
     #[tokio::test]
     async fn continue_outside_command() {
-        let err = test_interpreter_err(r#"continue()"#).await;
+        let err = test_interpreter_err_type(r#"continue()"#).await;
         assert!(matches!(err, FslError::ContinueCalledOutsideLoop));
     }
 
