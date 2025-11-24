@@ -576,7 +576,6 @@ impl FslInterpreter {
             self,
             [
                 (ADD, MATH_RULES, commands::add),
-                (ADD, MATH_RULES, commands::add),
                 (SUB, MATH_RULES, commands::sub),
                 (MUL, MATH_RULES, commands::mul),
                 (DIV, MATH_RULES, commands::div),
@@ -604,7 +603,6 @@ impl FslInterpreter {
                 (REMOVE, REMOVE_RULES, commands::remove),
                 (PUSH, PUSH_RULES, commands::push),
                 (POP, POP_RULES, commands::pop),
-                (REPLACE, REPLACE_RULES, commands::replace),
                 (REPLACE, REPLACE_RULES, commands::replace),
                 (SLICE_REPLACE, SLICE_REPLACE_RULES, commands::slice_replace),
                 (
