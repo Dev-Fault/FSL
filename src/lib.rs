@@ -359,6 +359,16 @@ pub struct FslInterpreter {
     pub data: Arc<InterpreterData>,
 }
 
+macro_rules! register_commands {
+    ($self:expr, [
+        $( ($label:expr, $rules:expr, $executor:path) ),* $(,)?
+    ]) => {
+        $(
+            $self.add_command($label, $rules, Self::construct_executor($executor));
+        )*
+    };
+}
+
 impl FslInterpreter {
     pub fn new() -> Self {
         let mut interpreter = Self {
@@ -562,230 +572,69 @@ impl FslInterpreter {
     }
 
     fn add_standard_commands(&mut self) {
-        self.add_command(ADD, MATH_RULES, Self::construct_executor(commands::add));
-
-        self.add_command(SUB, MATH_RULES, Self::construct_executor(commands::sub));
-
-        self.add_command(MUL, MATH_RULES, Self::construct_executor(commands::mul));
-
-        self.add_command(DIV, MATH_RULES, Self::construct_executor(commands::div));
-
-        self.add_command(
-            MODULUS,
-            MATH_RULES,
-            Self::construct_executor(commands::modulus),
-        );
-
-        self.add_command(
-            PRECISION,
-            &PRECISION_RULES,
-            Self::construct_executor(commands::precision),
-        );
-
-        self.add_command(
-            STORE,
-            &STORE_RULES,
-            Self::construct_executor(commands::store),
-        );
-
-        self.add_command(
-            CLONE,
-            &CLONE_RULES,
-            Self::construct_executor(commands::clone),
-        );
-
-        self.add_command(FREE, &FREE_RULES, Self::construct_executor(commands::free));
-
-        self.add_command(
-            PRINT,
-            PRINT_RULES,
-            Self::construct_executor(commands::print),
-        );
-
-        self.add_command(
-            SCOPE,
-            SCOPE_RULES,
-            Self::construct_executor(commands::scope),
-        );
-
-        self.add_command(EQ, EQ_RULES, Self::construct_executor(commands::eq));
-
-        self.add_command(GT, GT_RULES, Self::construct_executor(commands::gt));
-
-        self.add_command(LT, LT_RULES, Self::construct_executor(commands::lt));
-
-        self.add_command(NOT, NOT_RULES, Self::construct_executor(commands::not));
-
-        self.add_command(AND, AND_RULES, Self::construct_executor(commands::and));
-
-        self.add_command(OR, OR_RULES, Self::construct_executor(commands::or));
-
-        self.add_command(
-            IF_THEN,
-            IF_THEN_RULES,
-            Self::construct_executor(commands::if_then),
-        );
-
-        self.add_command(
-            IF_THEN_ELSE,
-            IF_THEN_ELSE_RULES,
-            Self::construct_executor(commands::if_then_else),
-        );
-
-        self.add_command(
-            WHILE_LOOP,
-            WHILE_RULES,
-            Self::construct_executor(commands::while_command),
-        );
-
-        self.add_command(
-            REPEAT,
-            REPEAT_RULES,
-            Self::construct_executor(commands::repeat),
-        );
-
-        self.add_command(
-            INDEX,
-            INDEX_RULES,
-            Self::construct_executor(commands::index),
-        );
-
-        self.add_command(
-            LENGTH,
-            &LENGTH_RULES,
-            Self::construct_executor(commands::length),
-        );
-
-        self.add_command(SWAP, &SWAP_RULES, Self::construct_executor(commands::swap));
-
-        self.add_command(
-            INSERT,
-            &INSERT_RULES,
-            Self::construct_executor(commands::insert),
-        );
-
-        self.add_command(
-            REMOVE,
-            &REMOVE_RULES,
-            Self::construct_executor(commands::remove),
-        );
-
-        self.add_command(PUSH, &PUSH_RULES, Self::construct_executor(commands::push));
-
-        self.add_command(POP, &POP_RULES, Self::construct_executor(commands::pop));
-
-        self.add_command(
-            REPLACE,
-            &REPLACE_RULES,
-            Self::construct_executor(commands::replace),
-        );
-
-        self.add_command(
-            REPLACE,
-            &REPLACE_RULES,
-            Self::construct_executor(commands::replace),
-        );
-
-        self.add_command(
-            SLICE_REPLACE,
-            &SLICE_REPLACE_RULES,
-            Self::construct_executor(commands::slice_replace),
-        );
-
-        self.add_command(
-            SEARCH_REPLACE,
-            &SEARCH_REPLACE_RULES,
-            Self::construct_executor(commands::search_replace),
-        );
-
-        self.add_command(
-            REVERSE,
-            &REVERSE_RULES,
-            Self::construct_executor(commands::reverse),
-        );
-
-        self.add_command(INC, &INC_RULES, Self::construct_executor(commands::inc));
-
-        self.add_command(DEC, &DEC_RULES, Self::construct_executor(commands::dec));
-
-        self.add_command(
-            CONTAINS,
-            &CONTAINS_RULES,
-            Self::construct_executor(commands::contains),
-        );
-
-        self.add_command(
-            STARTS_WITH,
-            &STARTS_WITH_RULES,
-            Self::construct_executor(commands::starts_with),
-        );
-
-        self.add_command(
-            ENDS_WITH,
-            ENDS_WITH_RULES,
-            Self::construct_executor(commands::ends_with),
-        );
-
-        self.add_command(
-            CONCAT,
-            &CONCAT_RULES,
-            Self::construct_executor(commands::concat),
-        );
-
-        self.add_command(
-            CAPITALIZE,
-            &CAPITALIZE_RULES,
-            Self::construct_executor(commands::capitalize),
-        );
-
-        self.add_command(
-            UPPERCASE,
-            &UPPERCASE_RULES,
-            Self::construct_executor(commands::uppercase),
-        );
-
-        self.add_command(
-            LOWERCASE,
-            &LOWERCASE_RULES,
-            Self::construct_executor(commands::lowercase),
-        );
-
-        self.add_command(
-            REMOVE_WHITESPACE,
-            &REMOVE_WHITESPACE_RULES,
-            Self::construct_executor(commands::remove_whitespace),
-        );
-
-        self.add_command(
-            SPLIT,
-            &SPLIT_RULES,
-            Self::construct_executor(commands::split),
-        );
-
-        self.add_command(
-            RANDOM_RANGE,
-            &RANDOM_RANGE_RULES,
-            Self::construct_executor(commands::random_range),
-        );
-
-        self.add_command(
-            RANDOM_ENTRY,
-            &RANDOM_ENTRY_RULES,
-            Self::construct_executor(commands::random_entry),
-        );
-
-        self.add_command(DEF, &DEF_RULES, Self::construct_executor(commands::def));
-
-        self.add_command(EXIT, &NO_ARGS, Self::construct_executor(commands::exit));
-        self.add_command(
-            BREAK,
-            &NO_ARGS,
-            Self::construct_executor(commands::break_command),
-        );
-        self.add_command(
-            CONTINUE,
-            &NO_ARGS,
-            Self::construct_executor(commands::continue_command),
+        register_commands!(
+            self,
+            [
+                (ADD, MATH_RULES, commands::add),
+                (ADD, MATH_RULES, commands::add),
+                (SUB, MATH_RULES, commands::sub),
+                (MUL, MATH_RULES, commands::mul),
+                (DIV, MATH_RULES, commands::div),
+                (MODULUS, MATH_RULES, commands::modulus),
+                (PRECISION, PRECISION_RULES, commands::precision),
+                (STORE, STORE_RULES, commands::store),
+                (CLONE, CLONE_RULES, commands::clone),
+                (FREE, FREE_RULES, commands::free),
+                (PRINT, PRINT_RULES, commands::print),
+                (SCOPE, SCOPE_RULES, commands::scope),
+                (EQ, EQ_RULES, commands::eq),
+                (GT, GT_RULES, commands::gt),
+                (LT, LT_RULES, commands::lt),
+                (NOT, NOT_RULES, commands::not),
+                (AND, AND_RULES, commands::and),
+                (OR, OR_RULES, commands::or),
+                (IF_THEN, IF_THEN_RULES, commands::if_then),
+                (IF_THEN_ELSE, IF_THEN_ELSE_RULES, commands::if_then_else),
+                (WHILE_LOOP, WHILE_RULES, commands::while_command),
+                (REPEAT, REPEAT_RULES, commands::repeat),
+                (INDEX, INDEX_RULES, commands::index),
+                (LENGTH, LENGTH_RULES, commands::length),
+                (SWAP, SWAP_RULES, commands::swap),
+                (INSERT, INSERT_RULES, commands::insert),
+                (REMOVE, REMOVE_RULES, commands::remove),
+                (PUSH, PUSH_RULES, commands::push),
+                (POP, POP_RULES, commands::pop),
+                (REPLACE, REPLACE_RULES, commands::replace),
+                (REPLACE, REPLACE_RULES, commands::replace),
+                (SLICE_REPLACE, SLICE_REPLACE_RULES, commands::slice_replace),
+                (
+                    SEARCH_REPLACE,
+                    SEARCH_REPLACE_RULES,
+                    commands::search_replace
+                ),
+                (REVERSE, REVERSE_RULES, commands::reverse),
+                (INC, INC_RULES, commands::inc),
+                (DEC, DEC_RULES, commands::dec),
+                (CONTAINS, CONTAINS_RULES, commands::contains),
+                (STARTS_WITH, STARTS_WITH_RULES, commands::starts_with),
+                (ENDS_WITH, ENDS_WITH_RULES, commands::ends_with),
+                (CONCAT, CONCAT_RULES, commands::concat),
+                (CAPITALIZE, CAPITALIZE_RULES, commands::capitalize),
+                (UPPERCASE, UPPERCASE_RULES, commands::uppercase),
+                (LOWERCASE, LOWERCASE_RULES, commands::lowercase),
+                (
+                    REMOVE_WHITESPACE,
+                    REMOVE_WHITESPACE_RULES,
+                    commands::remove_whitespace
+                ),
+                (SPLIT, SPLIT_RULES, commands::split),
+                (RANDOM_RANGE, RANDOM_RANGE_RULES, commands::random_range),
+                (RANDOM_ENTRY, RANDOM_ENTRY_RULES, commands::random_entry),
+                (DEF, DEF_RULES, commands::def),
+                (EXIT, NO_ARGS, commands::exit),
+                (BREAK, NO_ARGS, commands::break_command),
+                (CONTINUE, NO_ARGS, commands::continue_command),
+            ]
         );
     }
 }

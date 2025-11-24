@@ -216,7 +216,7 @@ pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Val
     Ok(Value::Int(remainder))
 }
 
-pub const PRECISION_RULES: [ArgRule; 2] = [
+pub const PRECISION_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
 ];
@@ -232,7 +232,7 @@ pub async fn precision(command: Command, data: Arc<InterpreterData>) -> Result<V
     Ok(Value::Text(formatted))
 }
 
-pub const STORE_RULES: [ArgRule; 2] = [
+pub const STORE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), VAR_VALUES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
 ];
@@ -278,7 +278,7 @@ pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value
 }
 
 pub const FREE: &str = "free";
-pub const FREE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub const FREE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let arg_0 = command.take_args().pop_front().unwrap();
     let label = arg_0.get_var_label()?;
@@ -636,7 +636,7 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
     }
 }
 
-pub const LENGTH_RULES: [ArgRule; 1] = [ArgRule::new(
+pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(
     ArgPos::Index(0),
     &[FslType::List, FslType::Text],
 )];
@@ -654,7 +654,7 @@ pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     }
 }
 
-pub const REMOVE_RULES: [ArgRule; 2] = [
+pub const REMOVE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
@@ -694,7 +694,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     Ok(return_value)
 }
 
-pub const SWAP_RULES: [ArgRule; 3] = [
+pub const SWAP_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
@@ -754,7 +754,7 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     Ok(return_value)
 }
 
-pub const REPLACE_RULES: [ArgRule; 3] = [
+pub const REPLACE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
     ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
@@ -968,7 +968,7 @@ pub async fn slice_replace(
     Ok(Value::Text(input))
 }
 
-pub const REVERSE_RULES: [ArgRule; 1] = [ArgRule::new(
+pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(
     ArgPos::Index(0),
     &[FslType::Text, FslType::List],
 )];
@@ -1020,7 +1020,7 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     Ok(new_value)
 }
 
-pub const CONTAINS_RULES: [ArgRule; 2] = [
+pub const CONTAINS_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
@@ -1047,7 +1047,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
     }
 }
 
-pub const STARTS_WITH_RULES: [ArgRule; 2] = [
+pub const STARTS_WITH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
@@ -1071,7 +1071,7 @@ pub async fn ends_with(command: Command, data: Arc<InterpreterData>) -> Result<V
     Ok(arg_0.ends_with(&arg_1).into())
 }
 
-pub const CONCAT_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
+pub const CONCAT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
 pub const CONCAT: &str = "concat";
 pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let values = command.take_args();
@@ -1085,7 +1085,7 @@ pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     Ok(cat_string.into())
 }
 
-pub const CAPITALIZE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const CAPITALIZE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const CAPITALIZE: &str = "capitalize";
 pub async fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -1097,7 +1097,7 @@ pub async fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<
     }
 }
 
-pub const UPPERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const UPPERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const UPPERCASE: &str = "uppercase";
 pub async fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -1105,7 +1105,7 @@ pub async fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<V
     Ok(text.to_uppercase().into())
 }
 
-pub const LOWERCASE_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const LOWERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const LOWERCASE: &str = "lowercase";
 pub async fn lowercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -1113,8 +1113,7 @@ pub async fn lowercase(command: Command, data: Arc<InterpreterData>) -> Result<V
     Ok(text.to_lowercase().into())
 }
 
-pub const REMOVE_WHITESPACE_RULES: [ArgRule; 1] =
-    [ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const REMOVE_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
 pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
 pub async fn remove_whitespace(
     command: Command,
@@ -1125,7 +1124,7 @@ pub async fn remove_whitespace(
     Ok(text.split_whitespace().collect::<String>().into())
 }
 
-pub const SPLIT_RULES: [ArgRule; 2] = [
+pub const SPLIT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
@@ -1141,7 +1140,7 @@ pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value
     Ok(Value::List(split))
 }
 
-pub const RANDOM_RANGE_RULES: [ArgRule; 2] = [
+pub const RANDOM_RANGE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
@@ -1174,7 +1173,7 @@ pub async fn random_range(command: Command, data: Arc<InterpreterData>) -> Resul
     }
 }
 
-pub const RANDOM_ENTRY_RULES: [ArgRule; 1] = [ArgRule::new(ArgPos::Index(0), &[FslType::List])];
+pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::List])];
 pub const RANDOM_ENTRY: &str = "random_entry";
 pub async fn random_entry(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
