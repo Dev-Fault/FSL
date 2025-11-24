@@ -73,6 +73,14 @@ pub struct Command {
 }
 
 impl Command {
+    pub fn mem_size(&self) -> Option<usize> {
+        let mut size = size_of::<Command>();
+        for arg in &self.args {
+            size = size.checked_add(arg.mem_size()?)?;
+        }
+        Some(size)
+    }
+
     pub fn new(command_spec: CommandSpec, executor: Executor) -> Self {
         Self {
             command_spec,

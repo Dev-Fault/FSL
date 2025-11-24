@@ -48,6 +48,25 @@ fn gen_failed_parse_error(from: FslType, to: FslType) -> FslError {
 }
 
 impl Value {
+    pub fn mem_size(&self) -> Option<usize> {
+        match &self {
+            Value::Int(_) => Some(size_of::<Value>()),
+            Value::Float(_) => Some(size_of::<Value>()),
+            Value::Bool(_) => Some(size_of::<Value>()),
+            Value::Text(str) => Some(size_of::<Value>().checked_add(str.capacity())?),
+            Value::List(list) => {
+                let mut size: usize = size_of::<Value>();
+                for element in list {
+                    size = size.checked_add(element.mem_size()?)?;
+                }
+                Some(size)
+            }
+            Value::Var(str) => Some(size_of::<Value>().checked_add(str.capacity())?),
+            Value::Command(command) => Some(size_of::<Value>().checked_add(command.mem_size()?)?),
+            Value::None => Some(size_of::<Value>()),
+        }
+    }
+
     pub fn eq(&self, other: &Value) -> Result<bool, FslError> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),

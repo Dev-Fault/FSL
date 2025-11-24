@@ -70,6 +70,7 @@ pub enum FslError {
     CustomError(ErrorContext),
     UnmatchedCurlyBraces(String),
     CannotStoreValueInVar(String),
+    MemoryLimitExceeded,
     NegativeIndex,
     BreakCalledOutsideLoop,
     ContinueCalledOutsideLoop,
@@ -168,6 +169,9 @@ impl ToString for FslError {
             FslError::UnmatchedCurlyBraces(error) => error.clone(),
             FslError::InvalidComparison(error) => error.clone(),
             FslError::CannotStoreValueInVar(error) => error.clone(),
+            FslError::MemoryLimitExceeded => {
+                format!("Interpreter exceeded the total available memory limit")
+            }
             FslError::BreakCalledOutsideLoop => {
                 format!("Break cannot be called outside of a loop command (while, repeat)")
             }
@@ -195,13 +199,57 @@ impl<'a> From<ParserError<'a>> for FslError {
 pub type CommandMap = HashMap<&'static str, Command>;
 pub type UserCommands = HashMap<String, UserCommand>;
 
+const MEGABYTE: usize = 1024 * 1024;
+pub const DEFAULT_MEMORY_LIMIT: usize = 100 * MEGABYTE;
+
 #[derive(Debug)]
-pub struct VarMap(Mutex<HashMap<String, Value>>);
+pub struct VarMap {
+    map: Mutex<HashMap<String, Value>>,
+    mem_limit: Option<usize>,
+    allocated_mem: AtomicUsize,
+}
 
 impl VarMap {
-    pub fn new() -> Self {
+    pub fn new(mem_limit: Option<usize>) -> Self {
         Self {
-            0: Mutex::new(HashMap::new()),
+            map: Mutex::new(HashMap::new()),
+            mem_limit: mem_limit,
+            allocated_mem: AtomicUsize::new(0),
+        }
+    }
+
+    /// Adds size of value to currently allocated memory size, does nothing if mem_limit not set
+    fn add_allocated_mem(&self, value_size: Option<usize>) -> Result<(), FslError> {
+        if self.mem_limit.is_none() {
+            return Ok(());
+        }
+
+        if let Some(size) = value_size {
+            if let Some(allocated_mem) =
+                self.allocated_mem.load(Ordering::Relaxed).checked_add(size)
+            {
+                self.allocated_mem.store(allocated_mem, Ordering::Relaxed);
+                if self.allocated_mem.load(Ordering::Relaxed) > self.mem_limit.unwrap() {
+                    return Err(FslError::MemoryLimitExceeded);
+                }
+            } else {
+                return Err(FslError::MemoryLimitExceeded);
+            }
+        } else {
+            return Err(FslError::MemoryLimitExceeded);
+        }
+
+        Ok(())
+    }
+
+    fn sub_allocated_mem(&self, value_size: Option<usize>) {
+        if let Some(size) = value_size {
+            let allocated_mem = self
+                .allocated_mem
+                .load(Ordering::Relaxed)
+                .saturating_sub(size);
+
+            self.allocated_mem.store(allocated_mem, Ordering::Relaxed);
         }
     }
 
@@ -220,21 +268,30 @@ impl VarMap {
                 )));
             }
             _ => {
-                self.0
-                    .lock()
-                    .unwrap()
-                    .insert(label.to_string(), value.clone());
+                if self.mem_limit.is_some() {
+                    self.add_allocated_mem(value.mem_size())?;
+                }
+                let lock = self.map.lock();
+                let mut map = lock.unwrap();
+                map.insert(label.to_string(), value.clone());
                 Ok(())
             }
         }
     }
 
     pub fn remove_value(&self, label: &str) -> Option<Value> {
-        self.0.lock().unwrap().remove(label)
+        let lock = self.map.lock();
+        let mut map = lock.unwrap();
+        let value = map.get(label)?;
+
+        if self.mem_limit.is_some() {
+            self.sub_allocated_mem(value.mem_size());
+        }
+        map.remove(label)
     }
 
     pub fn clone_value(&self, label: &str) -> Result<Value, FslError> {
-        let value = self.0.lock().unwrap().get(label).cloned();
+        let value = self.map.lock().unwrap().get(label).cloned();
 
         match value {
             Some(value) => {
@@ -267,7 +324,7 @@ impl InterpreterData {
     pub fn new() -> Self {
         InterpreterData {
             output: tokio::sync::Mutex::new(String::new()),
-            vars: VarMap::new(),
+            vars: VarMap::new(Some(DEFAULT_MEMORY_LIMIT)),
             user_commands: tokio::sync::Mutex::new(UserCommands::new()),
             total_loop_limit: Some(u16::MAX as usize),
             total_loops: AtomicUsize::new(0),
@@ -741,8 +798,11 @@ impl Default for FslInterpreter {
 
 #[cfg(test)]
 mod interpreter {
-    use crate::FslInterpreter;
-    use crate::commands::tests::{test_interpreter, test_interpreter_embedded};
+    use crate::commands::tests::{
+        test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
+    };
+    use crate::types::value::Value;
+    use crate::{FslError, FslInterpreter};
 
     async fn test_interpreter_err(code: &str) {
         let result = FslInterpreter::new().interpret(code).await;
@@ -779,6 +839,60 @@ mod interpreter {
             00000000000000000000000000000000000000000000000000000000000000000))",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn mem_size_of_int() {
+        let interpreter = FslInterpreter::new();
+        interpreter.interpret("n.store(1)").await.unwrap();
+        dbg!(
+            interpreter
+                .data
+                .vars
+                .allocated_mem
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        assert!(
+            interpreter
+                .data
+                .vars
+                .allocated_mem
+                .load(std::sync::atomic::Ordering::Relaxed)
+                == size_of::<Value>()
+        );
+    }
+
+    #[tokio::test]
+    async fn mem_size_of_list() {
+        let interpreter = FslInterpreter::new();
+        interpreter.interpret(r#"n.store([1,2,3])"#).await.unwrap();
+        dbg!(
+            interpreter
+                .data
+                .vars
+                .allocated_mem
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        assert!(
+            interpreter
+                .data
+                .vars
+                .allocated_mem
+                .load(std::sync::atomic::Ordering::Relaxed)
+                == size_of::<Value>() * 4
+        );
+    }
+
+    #[tokio::test]
+    async fn catch_memory_overflow() {
+        let err = test_interpreter_err_type(
+            r#"
+            big.store("123456789")
+            repeat(1000, big.store(concat(big, big)))
+            "#,
+        )
+        .await;
+        assert!(matches!(err, FslError::MemoryLimitExceeded))
     }
 
     #[tokio::test]
