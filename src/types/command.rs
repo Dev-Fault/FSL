@@ -24,6 +24,7 @@ pub enum CommandError {
     ContinueOutsideLoop,
     NonExistantCommand(String),
     ProgramExited,
+    Custom(String),
 }
 
 impl CommandError {
@@ -42,6 +43,7 @@ impl CommandError {
             CommandError::ContinueOutsideLoop => "continue used outside of loop".into(),
             CommandError::NonExistantCommand(error_text) => error_text,
             CommandError::ProgramExited => "".into(),
+            CommandError::Custom(error_text) => error_text,
         }
     }
 }

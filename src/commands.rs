@@ -296,7 +296,6 @@ pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
 pub const PRINT: &str = "print";
 pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    println!("TRYING TO PRINT");
     let values = command.take_args();
     let mut output = String::new();
 
