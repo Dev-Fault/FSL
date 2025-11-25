@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use async_recursion::async_recursion;
 
@@ -263,6 +263,13 @@ impl Value {
         }
     }
 
+    pub async fn as_list_mut(&mut self) -> Option<&mut Vec<Value>> {
+        match self {
+            Value::List(values) => Some(values),
+            _ => None,
+        }
+    }
+
     pub async fn as_raw(self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
         if self.is_type(FslType::Var) {
             Ok(self.get_var_value(data.clone())?)
@@ -311,6 +318,43 @@ impl Value {
                 "Should not be called on non {} types",
                 FslType::Var.as_str()
             );
+        }
+    }
+
+    pub async fn get_value_inside_list_mut<'a>(
+        data: Arc<InterpreterData>,
+        values: &'a mut Vec<Value>,
+        deep_index: &mut VecDeque<Value>,
+    ) -> Result<&'a mut Value, FslError> {
+        let mut inner = values as *mut Vec<Value>;
+        let mut final_value = None;
+        while let Some(index) = deep_index.pop_front() {
+            let index = index.as_usize(data.clone()).await?;
+            let current = unsafe { &mut *inner };
+            match current.get_mut(index) {
+                Some(value) => {
+                    if value.is_type(FslType::List) && deep_index.len() != 0 {
+                        inner = value.as_list_mut().await.unwrap() as *mut Vec<Value>;
+                    } else {
+                        final_value = Some(value);
+                    }
+                }
+                None => {
+                    return Err(FslError::OutOfBounds(ErrorContext::new(
+                        "".into(),
+                        "".into(),
+                    )));
+                }
+            }
+        }
+
+        if let Some(return_value) = final_value {
+            Ok(return_value)
+        } else {
+            Err(FslError::OutOfBounds(ErrorContext::new(
+                "".into(),
+                "".into(),
+            )))
         }
     }
 }

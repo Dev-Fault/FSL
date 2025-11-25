@@ -1176,9 +1176,8 @@ mod interpreter {
             if_then(
                 and(
                     text.index(i).eq("h"),
-                    if_then_else(i.add(1).lt(text.length()),
+                    if_then(i.add(1).lt(text.length()),
                         text.index(add(i, 1)).eq("e"),
-                        false
                     )
                 ),
                 count.store(count.add(1))

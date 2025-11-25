@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, VecDeque, vec_deque},
     sync::{Arc, atomic::Ordering},
 };
 
@@ -51,6 +51,18 @@ pub const NUMERIC_TYPES: &[FslType] = &[
     FslType::Var,
     FslType::Text,
 ];
+
+pub const INDEX_TYPES: &[FslType] = &[
+    FslType::List,
+    FslType::Int,
+    FslType::Command,
+    FslType::Var,
+    FslType::Text,
+];
+
+pub const ARRAY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
+
+pub const TEXT_TYPES: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
 
 pub const LOGIC_TYPES: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
 
@@ -234,7 +246,7 @@ pub async fn precision(command: Command, data: Arc<InterpreterData>) -> Result<V
 
 pub const STORE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), VAR_VALUES),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const STORE: &str = "store";
 pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
@@ -315,7 +327,7 @@ pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value
     Ok(Value::None)
 }
 
-pub const EQ_RULES: &'static [ArgRule; 2] = &[
+pub const EQ_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
@@ -369,7 +381,7 @@ pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, F
     }
 }
 
-pub const NOT_RULES: &[ArgRule; 1] = &[ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
+pub const NOT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
 pub const NOT: &str = "not";
 pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -596,8 +608,8 @@ async fn index_matrix(
 }
 
 pub const INDEX_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
+    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
 ];
 pub const INDEX: &str = "index";
 pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
@@ -636,10 +648,7 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
     }
 }
 
-pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(
-    ArgPos::Index(0),
-    &[FslType::List, FslType::Text],
-)];
+pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
 pub const LENGTH: &str = "length";
 pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -655,8 +664,8 @@ pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 }
 
 pub const REMOVE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
+    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
 ];
 pub const REMOVE: &str = "remove";
 pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
@@ -695,9 +704,9 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 }
 
 pub const SWAP_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
+    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
+    ArgRule::new(ArgPos::Index(2), INDEX_TYPES),
 ];
 pub const SWAP: &str = "swap";
 pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
@@ -755,8 +764,8 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 }
 
 pub const REPLACE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
+    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
+    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
     ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
 ];
 pub const REPLACE: &str = "replace";
@@ -801,8 +810,8 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     Ok(return_value)
 }
 pub const INSERT_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
+    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
     ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
 ];
 pub const INSERT: &str = "insert";
@@ -850,7 +859,7 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 }
 
 pub const PUSH_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const PUSH: &str = "push";
@@ -879,10 +888,7 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     Ok(return_result)
 }
 
-pub const POP_RULES: &[ArgRule] = &[ArgRule::new(
-    ArgPos::Index(0),
-    &[FslType::List, FslType::Text],
-)];
+pub const POP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
 pub const POP: &str = "pop";
 pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -910,7 +916,7 @@ pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const SEARCH_REPLACE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
     ArgRule::new(ArgPos::Index(2), &[FslType::Text]),
 ];
@@ -930,7 +936,7 @@ pub async fn search_replace(
 }
 
 pub const SLICE_REPLACE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::List]),
     ArgRule::new(ArgPos::Index(2), &[FslType::Text]),
 ];
@@ -968,10 +974,7 @@ pub async fn slice_replace(
     Ok(Value::Text(input))
 }
 
-pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(
-    ArgPos::Index(0),
-    &[FslType::Text, FslType::List],
-)];
+pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
 pub const REVERSE: &str = "reverse";
 pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -1021,7 +1024,7 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const CONTAINS_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::List, FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const CONTAINS: &str = "contains";
@@ -1048,7 +1051,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
 }
 
 pub const STARTS_WITH_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const STARTS_WITH: &str = "starts_with";
@@ -1060,7 +1063,7 @@ pub async fn starts_with(command: Command, data: Arc<InterpreterData>) -> Result
 }
 
 pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const ENDS_WITH: &str = "ends_with";
@@ -1085,7 +1088,7 @@ pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     Ok(cat_string.into())
 }
 
-pub const CAPITALIZE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const CAPITALIZE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
 pub const CAPITALIZE: &str = "capitalize";
 pub async fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -1097,7 +1100,7 @@ pub async fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<
     }
 }
 
-pub const UPPERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const UPPERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
 pub const UPPERCASE: &str = "uppercase";
 pub async fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -1105,7 +1108,7 @@ pub async fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<V
     Ok(text.to_uppercase().into())
 }
 
-pub const LOWERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const LOWERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
 pub const LOWERCASE: &str = "lowercase";
 pub async fn lowercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
     let mut values = command.take_args();
@@ -1113,7 +1116,7 @@ pub async fn lowercase(command: Command, data: Arc<InterpreterData>) -> Result<V
     Ok(text.to_lowercase().into())
 }
 
-pub const REMOVE_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Text])];
+pub const REMOVE_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
 pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
 pub async fn remove_whitespace(
     command: Command,
@@ -1125,7 +1128,7 @@ pub async fn remove_whitespace(
 }
 
 pub const SPLIT_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const SPLIT: &str = "split";
@@ -1156,6 +1159,11 @@ pub async fn random_range(command: Command, data: Arc<InterpreterData>) -> Resul
                 RANDOM_RANGE.into(),
                 "min must be greater than max".into(),
             )))
+        } else if !min.is_finite() || !max.is_finite() {
+            Err(FslError::InvalidRange(ErrorContext::new(
+                RANDOM_RANGE.into(),
+                "can only use random range on finite values".into(),
+            )))
         } else {
             Ok(rand::random_range(min..=max).into())
         }
@@ -1182,7 +1190,7 @@ pub async fn random_entry(command: Command, data: Arc<InterpreterData>) -> Resul
 }
 
 pub const DEF_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(0), &[FslType::Var]),
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Var, FslType::Command]),
 ];
 pub const DEF: &str = "def";
@@ -1666,6 +1674,16 @@ pub mod tests {
         test_interpreter(
             r#"nums.store([1, 2, 3]) nums.push(0).print()"#,
             "[1, 2, 3, 0]",
+        )
+        .await;
+        test_interpreter(r#"nums.store("123") nums.push(0).print()"#, "1230").await;
+    }
+
+    #[tokio::test]
+    async fn push_matrix() {
+        test_interpreter(
+            r#"nums.store([1, [2, [3, 4], 5], 6]) nums.index([1, 1]).push(0) nums.print()"#,
+            "[1, [2, [3, 4], 5], 6]",
         )
         .await;
         test_interpreter(r#"nums.store("123") nums.push(0).print()"#, "1230").await;

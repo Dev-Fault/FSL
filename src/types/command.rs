@@ -147,7 +147,7 @@ impl Command {
                     } else {
                         max_args
                     };
-                    let range = *i..*i;
+                    let range = *i..*i + 1;
                     match self.args.get(*i) {
                         Some(_) => {
                             self.validate_arg_range(arg_rule, &range)?;
@@ -209,7 +209,7 @@ impl Command {
                     self.validate_arg_range(arg_rule, &range)?;
                 }
                 ArgPos::OptionalIndex(i) => {
-                    let range = *i..*i;
+                    let range = *i..*i + 1;
                     if let Some(_) = self.args.get(*i) {
                         self.validate_arg_range(arg_rule, &range)?;
                     }
