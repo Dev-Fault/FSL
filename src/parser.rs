@@ -1,12 +1,12 @@
 use crate::lexer::{Keyword, Lexer, LexerError, Symbol, Token, TokenType, format_error_context};
 
 #[derive(Debug, Clone, PartialEq)]
-struct ErrorContext<'a> {
+pub struct ParserErrorContext<'a> {
     input: &'a str,
     token: Token,
 }
 
-impl<'a> ErrorContext<'a> {
+impl<'a> ParserErrorContext<'a> {
     pub fn new(input: &'a str, token: Token) -> Self {
         Self { input, token }
     }
@@ -15,9 +15,9 @@ impl<'a> ErrorContext<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParserError<'a> {
     LexerError(LexerError<'a>),
-    InvalidDotPlacement(ErrorContext<'a>),
-    ValueOutsideOfContext(ErrorContext<'a>),
-    ObjectsNotSupported(ErrorContext<'a>),
+    InvalidDotPlacement(ParserErrorContext<'a>),
+    ValueOutsideOfContext(ParserErrorContext<'a>),
+    ObjectsNotSupported(ParserErrorContext<'a>),
 }
 
 impl ToString for ParserError<'_> {
@@ -37,7 +37,7 @@ impl ToString for ParserError<'_> {
                     format_error_context(context.input, context.token.location)
                 )
             }
-            ParserError::ObjectsNotSupported(context) => {
+            ParserError::ObjectsNotSupported(_) => {
                 format!("Parser error: Objects are not currently supported in FSL")
             }
         }
@@ -162,7 +162,7 @@ impl Parser {
                     self.state_stack.push(ParserState::InsideList);
                 }
                 None => {
-                    return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
+                    return Err(ParserError::ValueOutsideOfContext(ParserErrorContext::new(
                         code, token,
                     )));
                 }
@@ -191,7 +191,7 @@ impl Parser {
                         expression.args.push(Arg::List(list));
                     }
                 } else {
-                    return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
+                    return Err(ParserError::ValueOutsideOfContext(ParserErrorContext::new(
                         code, token,
                     )));
                 }
@@ -200,18 +200,18 @@ impl Parser {
             Symbol::Dot => {
                 if let Some(arg) = self.current_arg.take() {
                     if let Some(dot_arg) = self.dot_arg.take() {
-                        if let Arg::Var(object) = dot_arg {
-                            if let Arg::Var(property) = arg {
-                                return Err(ParserError::ObjectsNotSupported(ErrorContext::new(
-                                    code, token,
-                                )));
+                        if let Arg::Var(_) = dot_arg {
+                            if let Arg::Var(_) = arg {
+                                return Err(ParserError::ObjectsNotSupported(
+                                    ParserErrorContext::new(code, token),
+                                ));
                             } else {
-                                return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
-                                    code, token,
-                                )));
+                                return Err(ParserError::InvalidDotPlacement(
+                                    ParserErrorContext::new(code, token),
+                                ));
                             }
                         } else {
-                            return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
+                            return Err(ParserError::InvalidDotPlacement(ParserErrorContext::new(
                                 code, token,
                             )));
                         }
@@ -222,7 +222,7 @@ impl Parser {
                     let dot_expression = self.output.pop().unwrap();
                     self.dot_arg = Some(Arg::Expression(dot_expression));
                 } else {
-                    return Err(ParserError::InvalidDotPlacement(ErrorContext::new(
+                    return Err(ParserError::InvalidDotPlacement(ParserErrorContext::new(
                         code, token,
                     )));
                 }
@@ -241,7 +241,7 @@ impl Parser {
                             }
                         }
                     } else {
-                        return Err(ParserError::ValueOutsideOfContext(ErrorContext::new(
+                        return Err(ParserError::ValueOutsideOfContext(ParserErrorContext::new(
                             code, token,
                         )));
                     }

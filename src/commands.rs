@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque, vec_deque},
+    collections::{HashMap, VecDeque},
     sync::{Arc, atomic::Ordering},
 };
 
@@ -1279,10 +1279,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const BREAK: &str = "break";
-pub async fn break_command(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, CommandError> {
+pub async fn break_command(_: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     if data.inside_loop.load(Ordering::Relaxed) {
         data.break_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1295,7 +1292,7 @@ pub async fn break_command(
 
 pub const CONTINUE: &str = "continue";
 pub async fn continue_command(
-    command: Command,
+    _: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, CommandError> {
     if data.inside_loop.load(Ordering::Relaxed) {
@@ -1308,7 +1305,7 @@ pub async fn continue_command(
 }
 
 pub const EXIT: &str = "exit";
-pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+pub async fn exit(_: Command, _: Arc<InterpreterData>) -> Result<Value, CommandError> {
     Err(CommandError::ProgramExited)
 }
 

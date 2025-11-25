@@ -23,10 +23,8 @@ static SORTED_SYMBOLS: OnceLock<Vec<&str>> = OnceLock::new();
 const KEYWORD_TRUE: &str = "true";
 const KEYWORD_FALSE: &str = "false";
 
-const KEYWORDS: &[&str] = &[KEYWORD_TRUE, KEYWORD_FALSE];
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct ErrorContext<'a> {
+pub struct LexerErrorContext<'a> {
     input: &'a str,
     location: usize,
 }
@@ -38,13 +36,13 @@ pub fn format_error_context(input: &str, location: usize) -> String {
     format!("Area near where error was detected:\n{}", context,)
 }
 
-impl<'a> ErrorContext<'a> {
+impl<'a> LexerErrorContext<'a> {
     pub fn new(input: &'a str, location: usize) -> Self {
         Self { input, location }
     }
 }
 
-impl ToString for ErrorContext<'_> {
+impl ToString for LexerErrorContext<'_> {
     fn to_string(&self) -> String {
         format_error_context(self.input, self.location)
     }
@@ -52,19 +50,19 @@ impl ToString for ErrorContext<'_> {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LexerError<'a> {
-    DotPreceededByInvalidToken(ErrorContext<'a>),
-    CommaPrecededByInvalidToken(ErrorContext<'a>),
-    ClosedParenPrecededByInvalidToken(ErrorContext<'a>),
-    ClosedBracketPrecededByInvalidToken(ErrorContext<'a>),
-    UnclosedOpenParenthesis(ErrorContext<'a>),
-    UnclosedOpenBracket(ErrorContext<'a>),
-    UnclosedString(ErrorContext<'a>),
-    UnmatchedClosingParen(ErrorContext<'a>),
-    UnmatchedClosingBracket(ErrorContext<'a>),
-    SymbolUsedOutsideOfContext(ErrorContext<'a>),
-    TrailingToken(ErrorContext<'a>),
-    InvalidEscapeSequence(ErrorContext<'a>),
-    InvalidNumber(ErrorContext<'a>),
+    DotPreceededByInvalidToken(LexerErrorContext<'a>),
+    CommaPrecededByInvalidToken(LexerErrorContext<'a>),
+    ClosedParenPrecededByInvalidToken(LexerErrorContext<'a>),
+    ClosedBracketPrecededByInvalidToken(LexerErrorContext<'a>),
+    UnclosedOpenParenthesis(LexerErrorContext<'a>),
+    UnclosedOpenBracket(LexerErrorContext<'a>),
+    UnclosedString(LexerErrorContext<'a>),
+    UnmatchedClosingParen(LexerErrorContext<'a>),
+    UnmatchedClosingBracket(LexerErrorContext<'a>),
+    SymbolUsedOutsideOfContext(LexerErrorContext<'a>),
+    TrailingToken(LexerErrorContext<'a>),
+    InvalidEscapeSequence(LexerErrorContext<'a>),
+    InvalidNumber(LexerErrorContext<'a>),
 }
 
 impl ToString for LexerError<'_> {
@@ -333,7 +331,7 @@ impl Lexer {
         let mut escaped = false;
 
         for (i, ch) in code.chars().enumerate() {
-            let err_context = ErrorContext::new(code, i);
+            let err_context = LexerErrorContext::new(code, i);
 
             if !self.inside_string && ch.is_whitespace() {
                 continue;
@@ -512,22 +510,22 @@ impl Lexer {
         }
 
         if self.inside_string {
-            return Err(LexerError::UnclosedString(ErrorContext::new(
+            return Err(LexerError::UnclosedString(LexerErrorContext::new(
                 code,
                 code.len(),
             )));
         } else if self.command_depth > 0 {
-            return Err(LexerError::UnclosedOpenParenthesis(ErrorContext::new(
+            return Err(LexerError::UnclosedOpenParenthesis(LexerErrorContext::new(
                 code,
                 code.len(),
             )));
         } else if self.list_depth > 0 {
-            return Err(LexerError::UnclosedOpenBracket(ErrorContext::new(
+            return Err(LexerError::UnclosedOpenBracket(LexerErrorContext::new(
                 code,
                 code.len(),
             )));
         } else if !buf.is_empty() {
-            return Err(LexerError::TrailingToken(ErrorContext::new(
+            return Err(LexerError::TrailingToken(LexerErrorContext::new(
                 code,
                 code.len(),
             )));
@@ -535,7 +533,7 @@ impl Lexer {
             .last_type()
             .is_some_and(|t| *t != TokenType::Symbol(Symbol::ClosedParen))
         {
-            return Err(LexerError::TrailingToken(ErrorContext::new(
+            return Err(LexerError::TrailingToken(LexerErrorContext::new(
                 code,
                 code.len(),
             )));
@@ -1340,7 +1338,7 @@ mod tests {
 
     #[test]
     fn err_on_out_of_place_dot() {
-        let lexer = Lexer::new();
+        let _ = Lexer::new();
 
         let result = Lexer::new().tokenize("print(.)");
 

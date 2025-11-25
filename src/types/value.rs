@@ -60,31 +60,24 @@ impl Default for Value {
     }
 }
 
-fn gen_invalid_conversion_error(from: FslType, to: FslType) -> ValueError {
-    ValueError::InvalidConversion(format!(
-        "cannot convert from type {} to type {}",
-        from.as_str(),
-        to.as_str(),
-    ))
-}
-
-fn gen_invalid_conversion_error_to_types(from: FslType, to: &[FslType]) -> ValueError {
-    ValueError::InvalidConversion(format!(
-        "cannot convert from type {} to type {:?}",
-        from.as_str(),
-        to,
-    ))
-}
-
-fn gen_failed_parse_error(from: FslType, to: FslType) -> ValueError {
-    ValueError::FailedParse(format!(
-        "failed to parse type {} to type {}",
-        from.as_str(),
-        to.as_str()
-    ))
-}
-
 impl Value {
+    pub fn as_type(&self) -> FslType {
+        match self {
+            Value::Int(_) => FslType::Int,
+            Value::Float(_) => FslType::Float,
+            Value::Text(_) => FslType::Text,
+            Value::Bool(_) => FslType::Bool,
+            Value::List(_) => FslType::List,
+            Value::Var(_) => FslType::Var,
+            Value::Command(_) => FslType::Command,
+            Value::None => FslType::None,
+        }
+    }
+
+    pub fn is_type(&self, fsl_type: FslType) -> bool {
+        return self.as_type() == fsl_type;
+    }
+
     pub fn mem_size(&self) -> Option<usize> {
         match &self {
             Value::Int(_) => Some(size_of::<Value>()),
@@ -137,23 +130,6 @@ impl Value {
         }
     }
 
-    pub fn as_type(&self) -> FslType {
-        match self {
-            Value::Int(_) => FslType::Int,
-            Value::Float(_) => FslType::Float,
-            Value::Text(_) => FslType::Text,
-            Value::Bool(_) => FslType::Bool,
-            Value::List(_) => FslType::List,
-            Value::Var(_) => FslType::Var,
-            Value::Command(_) => FslType::Command,
-            Value::None => FslType::None,
-        }
-    }
-
-    pub fn is_type(&self, fsl_type: FslType) -> bool {
-        return self.as_type() == fsl_type;
-    }
-
     #[async_recursion]
     pub async fn as_int(self, data: Arc<InterpreterData>) -> Result<i64, ValueError> {
         let to_type = FslType::Int;
@@ -170,11 +146,11 @@ impl Value {
             }
             Value::Text(value) => match value.parse::<i64>() {
                 Ok(value) => Ok(value),
-                Err(_) => Err(gen_failed_parse_error(FslType::Text, to_type)),
+                Err(_) => Err(FslType::Text.gen_parse_err(to_type)),
             },
-            Value::Bool(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
         }
     }
 
@@ -205,11 +181,11 @@ impl Value {
             }
             Value::Text(value) => match value.parse::<f64>() {
                 Ok(value) => Ok(value),
-                Err(_) => Err(gen_failed_parse_error(FslType::Text, to_type)),
+                Err(_) => Err(FslType::Text.gen_parse_err(to_type)),
             },
-            Value::Bool(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
         }
     }
 
@@ -217,14 +193,14 @@ impl Value {
     pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, ValueError> {
         let to_type = FslType::Bool;
         match self {
-            Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Float(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::Text(value) => match value.parse::<bool>() {
                 Ok(value) => Ok(value),
-                Err(_) => Err(gen_failed_parse_error(FslType::Text, to_type)),
+                Err(_) => Err(FslType::Text.gen_parse_err(to_type)),
             },
             Value::Bool(value) => Ok(value),
-            Value::List(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::Var(label) => data.vars.clone_value(&label)?.as_bool(data).await,
             Value::Command(command) => {
                 command
@@ -233,7 +209,7 @@ impl Value {
                     .as_bool(data.clone())
                     .await
             }
-            Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
         }
     }
 
@@ -266,7 +242,7 @@ impl Value {
                     .as_text(data.clone())
                     .await
             }
-            Value::None => Err(gen_invalid_conversion_error(self.as_type(), FslType::Text)),
+            Value::None => Err(self.gen_conversion_err_to_type(FslType::Text)),
         }
     }
 
@@ -274,10 +250,10 @@ impl Value {
     pub async fn as_list(self, data: Arc<InterpreterData>) -> Result<Vec<Value>, ValueError> {
         let to_type = FslType::List;
         match self {
-            Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Float(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Text(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
-            Value::Bool(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::List(mut values) => {
                 for value in values.iter_mut() {
                     if value.is_type(FslType::Command) {
@@ -298,7 +274,7 @@ impl Value {
                     .as_list(data.clone())
                     .await
             }
-            Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
         }
     }
 
@@ -321,7 +297,7 @@ impl Value {
         if valid_types.contains(&value.as_type()) {
             Ok(value)
         } else {
-            Err(gen_invalid_conversion_error_to_types(fsl_type, valid_types))
+            Err(fsl_type.gen_conversion_err_to_types(valid_types))
         }
     }
 
@@ -361,6 +337,32 @@ impl Value {
                 FslType::Var.as_str()
             );
         }
+    }
+
+    fn gen_conversion_err_to_type(&self, to: FslType) -> ValueError {
+        ValueError::InvalidConversion(format!(
+            "cannot convert from type {} to type {}",
+            self.as_type().as_str(),
+            to.as_str(),
+        ))
+    }
+
+    #[allow(dead_code)]
+    fn gen_conversion_err_to_types(&self, to: &[FslType]) -> ValueError {
+        ValueError::InvalidConversion(format!(
+            "cannot convert self type {} to type {:?}",
+            self.as_type().as_str(),
+            to,
+        ))
+    }
+
+    #[allow(dead_code)]
+    fn gen_parse_err(&self, to: FslType) -> ValueError {
+        ValueError::FailedParse(format!(
+            "failed to parse type {} to type {}",
+            self.as_type().as_str(),
+            to.as_str()
+        ))
     }
 }
 

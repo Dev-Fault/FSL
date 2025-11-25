@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, VecDeque},
-    num::{ParseFloatError, ParseIntError},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -26,6 +25,7 @@ mod lexer;
 mod parser;
 pub mod types;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FslError {
     error_type: InterpreterError,
