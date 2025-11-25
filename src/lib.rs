@@ -16,8 +16,8 @@ use crate::{
     parser::{Expression, Parser, ParserError},
     types::{
         FslType,
-        command::{ArgRule, Command, CommandSpec, Executor, UserCommand},
-        value::Value,
+        command::{ArgRule, Command, CommandError, CommandSpec, Executor, UserCommand},
+        value::{Value, ValueError},
     },
 };
 
@@ -27,170 +27,56 @@ mod parser;
 pub mod types;
 
 #[derive(Debug, Clone)]
-pub struct ErrorContext {
-    context: String,
-    addendum: String,
+pub struct FslError {
+    error_type: InterpreterError,
+    error_text: String,
 }
 
-impl ErrorContext {
-    pub fn new(context: String, addendum: String) -> Self {
-        Self { context, addendum }
+impl FslError {
+    pub fn new(error_type: InterpreterError, error_text: String) -> Self {
+        Self {
+            error_type,
+            error_text,
+        }
     }
-}
 
-impl ToString for ErrorContext {
-    fn to_string(&self) -> String {
-        let context = if !self.context.is_empty() {
-            format!("Error with: {}", self.context)
-        } else {
-            "".to_string()
-        };
-        format!("{}\n{}", context, self.addendum)
+    pub fn to_string(self) -> String {
+        self.error_text
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum FslError {
+pub enum InterpreterError {
     LexerError(String),
     ParserError(String),
-    LoopLimitExceeded(ErrorContext),
-    DivisionByZero(ErrorContext),
-    OutOfBounds(ErrorContext),
-    InvalidRange(ErrorContext),
-    NonExistantCommand(ErrorContext),
-    WrongNumberOfArgs(ErrorContext),
-    WrongOrderOfArgs(ErrorContext),
-    WrongTypeOfArgs(ErrorContext),
-    NonExistantVar(ErrorContext),
-    FailedValueParse(ErrorContext),
-    InvalidValueConversion(ErrorContext),
-    InvalidVarLabel(ErrorContext),
-    InvalidVarValue(ErrorContext),
-    InvalidComparison(String),
-    CustomError(ErrorContext),
-    UnmatchedCurlyBraces(String),
-    CannotStoreValueInVar(String),
-    MemoryLimitExceeded,
-    NegativeIndex,
-    BreakCalledOutsideLoop,
-    ContinueCalledOutsideLoop,
-    ProgramExited,
+    CommandError(CommandError),
+    UnmatchedCurlyBraces,
 }
 
-impl From<ParseIntError> for FslError {
-    fn from(value: ParseIntError) -> Self {
-        FslError::FailedValueParse(ErrorContext::new(
-            "int".into(),
-            "failed to convert text to int (whole number)".into(),
-        ))
-    }
-}
-
-impl From<ParseFloatError> for FslError {
-    fn from(value: ParseFloatError) -> Self {
-        FslError::FailedValueParse(ErrorContext::new(
-            "float".into(),
-            "failed to convert text to float (decimal)".into(),
-        ))
-    }
-}
-
-impl ToString for FslError {
-    fn to_string(&self) -> String {
+impl InterpreterError {
+    pub fn to_string(self) -> String {
         match self {
-            FslError::LexerError(error) => error.clone(),
-            FslError::ParserError(error) => error.clone(),
-            FslError::LoopLimitExceeded(error_context) => {
-                format!(
-                    "Error: Maximum loop limit exceeded\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::DivisionByZero(error_context) => {
-                format!("Error: Division by zero\n{}", error_context.to_string())
-            }
-            FslError::OutOfBounds(error_context) => {
-                format!("Error: Index out of bounds\n{}", error_context.to_string())
-            }
-            FslError::InvalidRange(error_context) => {
-                format!("Error: Invalid range\n{}", error_context.to_string())
-            }
-            FslError::NonExistantCommand(error_context) => {
-                format!("Error: Non existant command\n{}", error_context.to_string())
-            }
-            FslError::WrongNumberOfArgs(error_context) => {
-                format!(
-                    "Error: Incorrect number of arguments\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::WrongOrderOfArgs(error_context) => {
-                format!("Error: Wrong order of args\n{}", error_context.to_string())
-            }
-            FslError::WrongTypeOfArgs(error_context) => {
-                format!("Error: Wrong type of args\n{}", error_context.to_string())
-            }
-            FslError::NonExistantVar(error_context) => {
-                format!(
-                    "Error: Non existant variable\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::FailedValueParse(error_context) => {
-                format!(
-                    "Error: Failed to parse value\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::InvalidValueConversion(error_context) => {
-                format!(
-                    "Error: Failed to convert value\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::InvalidVarLabel(error_context) => {
-                format!(
-                    "Error: Invalid label for variable\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::InvalidVarValue(error_context) => {
-                format!(
-                    "Error: Invalid value for variable\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::CustomError(error_context) => {
-                format!(
-                    "Error: Custom command failed\n{}",
-                    error_context.to_string()
-                )
-            }
-            FslError::UnmatchedCurlyBraces(error) => error.clone(),
-            FslError::InvalidComparison(error) => error.clone(),
-            FslError::CannotStoreValueInVar(error) => error.clone(),
-            FslError::MemoryLimitExceeded => {
-                format!("Interpreter exceeded the total available memory limit")
-            }
-            FslError::BreakCalledOutsideLoop => {
-                format!("Break cannot be called outside of a loop command (while, repeat)")
-            }
-            FslError::ContinueCalledOutsideLoop => {
-                format!("Continue cannot be called outside of a loop command (while, repeat)")
-            }
-            FslError::ProgramExited => format!("Program was exited"),
-            FslError::NegativeIndex => format!("Cannot use negative value as index"),
+            InterpreterError::LexerError(error_text) => error_text,
+            InterpreterError::ParserError(error_text) => error_text,
+            InterpreterError::CommandError(command_error) => command_error.to_string(),
+            InterpreterError::UnmatchedCurlyBraces => "unmatched curly braces".into(),
         }
     }
 }
 
-impl<'a> From<LexerError<'a>> for FslError {
+impl From<CommandError> for InterpreterError {
+    fn from(value: CommandError) -> Self {
+        InterpreterError::CommandError(value)
+    }
+}
+
+impl<'a> From<LexerError<'a>> for InterpreterError {
     fn from(value: LexerError) -> Self {
         Self::LexerError(value.to_string())
     }
 }
 
-impl<'a> From<ParserError<'a>> for FslError {
+impl<'a> From<ParserError<'a>> for InterpreterError {
     fn from(value: ParserError<'a>) -> Self {
         Self::ParserError(value.to_string())
     }
@@ -219,7 +105,7 @@ impl VarMap {
     }
 
     /// Adds size of value to currently allocated memory size, does nothing if mem_limit not set
-    fn add_allocated_mem(&self, value_size: Option<usize>) -> Result<(), FslError> {
+    fn add_allocated_mem(&self, value_size: Option<usize>) -> Result<(), ValueError> {
         if self.mem_limit.is_none() {
             return Ok(());
         }
@@ -230,13 +116,13 @@ impl VarMap {
             {
                 self.allocated_mem.store(allocated_mem, Ordering::Relaxed);
                 if self.allocated_mem.load(Ordering::Relaxed) > self.mem_limit.unwrap() {
-                    return Err(FslError::MemoryLimitExceeded);
+                    return Err(ValueError::VarMemoryLimitReached);
                 }
             } else {
-                return Err(FslError::MemoryLimitExceeded);
+                return Err(ValueError::VarMemoryLimitReached);
             }
         } else {
-            return Err(FslError::MemoryLimitExceeded);
+            return Err(ValueError::VarMemoryLimitReached);
         }
 
         Ok(())
@@ -253,19 +139,17 @@ impl VarMap {
         }
     }
 
-    pub fn insert_value(&self, label: &str, value: Value) -> Result<(), FslError> {
+    pub fn insert_value(&self, label: &str, value: Value) -> Result<(), ValueError> {
         match value {
             Value::Var(_) => {
-                return Err(FslError::InvalidVarValue(ErrorContext::new(
-                    "".into(),
+                return Err(ValueError::InvalidVarValue(
                     "cannot store var in var".into(),
-                )));
+                ));
             }
             Value::Command(_) => {
-                return Err(FslError::InvalidVarValue(ErrorContext::new(
-                    "".into(),
+                return Err(ValueError::InvalidVarValue(
                     "cannot store command in var".into(),
-                )));
+                ));
             }
             _ => {
                 if self.mem_limit.is_some() {
@@ -290,7 +174,7 @@ impl VarMap {
         map.remove(label)
     }
 
-    pub fn clone_value(&self, label: &str) -> Result<Value, FslError> {
+    pub fn clone_value(&self, label: &str) -> Result<Value, ValueError> {
         let value = self.map.lock().unwrap().get(label).cloned();
 
         match value {
@@ -301,9 +185,27 @@ impl VarMap {
                     Ok(value)
                 }
             }
-            None => Err(FslError::NonExistantVar(ErrorContext::new(
-                label.to_string(),
-                format!("cannot get the value of a non existant var"),
+            None => Err(ValueError::NonExistantVar(format!(
+                "cannot get value of a non existant var"
+            ))),
+        }
+    }
+
+    pub fn get_type(&self, label: &str) -> Result<FslType, ValueError> {
+        let lock = self.map.lock();
+        let map = lock.unwrap();
+        let value = map.get(label);
+
+        match value {
+            Some(value) => {
+                if value.is_type(FslType::Var) {
+                    return self.get_type(&value.get_var_label()?);
+                } else {
+                    Ok(value.as_type())
+                }
+            }
+            None => Err(ValueError::NonExistantVar(format!(
+                "cannot get type of non existant var"
             ))),
         }
     }
@@ -334,17 +236,14 @@ impl InterpreterData {
         }
     }
 
-    pub async fn increment_loops(&self, loop_command: &'static str) -> Result<(), FslError> {
+    pub async fn increment_loops(&self) -> Result<(), CommandError> {
         match self.total_loop_limit {
             Some(limit) => {
                 let mut loops = self.total_loops.load(Ordering::Relaxed);
                 loops += 1;
                 self.total_loops.store(loops, Ordering::Relaxed);
                 if loops >= limit {
-                    Err(FslError::LoopLimitExceeded(ErrorContext::new(
-                        loop_command.into(),
-                        "".into(),
-                    )))
+                    Err(CommandError::LoopLimitReached)
                 } else {
                     Ok(())
                 }
@@ -383,6 +282,28 @@ impl FslInterpreter {
         self.data = Arc::new(InterpreterData::new());
     }
 
+    pub fn add_command(
+        &mut self,
+        label: &'static str,
+        rules: &'static [ArgRule],
+        executor: Executor,
+    ) {
+        self.commands.insert(
+            label,
+            Command::new(CommandSpec::new(label, rules), executor),
+        );
+    }
+
+    pub fn construct_executor<F, Fut>(closure: F) -> Executor
+    where
+        F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value, CommandError>> + Send + 'static,
+    {
+        Some(Arc::new(move |command: Command, vars| {
+            Box::pin(closure(command, vars))
+        }))
+    }
+
     pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, FslError> {
         self.evaluate_expressions(code).await
     }
@@ -400,8 +321,9 @@ impl FslInterpreter {
             } else if c == '}' {
                 code_depth -= 1;
                 if code_depth < 0 {
-                    return Err(FslError::UnmatchedCurlyBraces(
-                        "Unmatched curly braces".to_string(),
+                    return Err(FslError::new(
+                        InterpreterError::UnmatchedCurlyBraces,
+                        InterpreterError::UnmatchedCurlyBraces.to_string(),
                     ));
                 } else {
                     match code_stack.pop() {
@@ -429,34 +351,13 @@ impl FslInterpreter {
         }
 
         if code_depth != 0 {
-            return Err(FslError::UnmatchedCurlyBraces(
-                "Unmatched curly braces".to_string(),
+            return Err(FslError::new(
+                InterpreterError::UnmatchedCurlyBraces,
+                InterpreterError::UnmatchedCurlyBraces.to_string(),
             ));
         }
 
         Ok(output)
-    }
-
-    pub fn add_command(
-        &mut self,
-        label: &'static str,
-        rules: &'static [ArgRule],
-        executor: Executor,
-    ) {
-        self.commands.insert(
-            label,
-            Command::new(CommandSpec::new(label, rules), executor),
-        );
-    }
-
-    pub fn construct_executor<F, Fut>(closure: F) -> Executor
-    where
-        F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Value, FslError>> + Send + 'static,
-    {
-        Some(Arc::new(move |command: Command, vars| {
-            Box::pin(closure(command, vars))
-        }))
     }
 
     async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, FslError> {
@@ -464,26 +365,50 @@ impl FslInterpreter {
         match expressions {
             Ok(expressions) => {
                 for expression in expressions {
-                    let command = match self.parse_expression(expression).await? {
-                        Value::Command(command) => command,
-                        _ => unreachable!("parse expression should always return a command"),
+                    let command = match self.parse_expression(expression.clone()).await {
+                        Ok(value) => match value {
+                            Value::Command(command) => command,
+                            _ => unreachable!("parse expression should always return a command"),
+                        },
+                        Err(e) => {
+                            return Err(FslError::new(
+                                InterpreterError::CommandError(e.clone()),
+                                format!(
+                                    "{}\nError inside command: {}",
+                                    e.to_string(),
+                                    expression.name
+                                ),
+                            ));
+                        }
                     };
                     if let Err(e) = command.execute(self.data.clone()).await {
                         match e {
-                            FslError::ProgramExited => break,
-                            _ => return Err(e.into()),
+                            CommandError::ProgramExited => break,
+                            _ => {
+                                return Err(FslError::new(
+                                    InterpreterError::CommandError(e.clone()),
+                                    format!(
+                                        "{}\nError inside command: {}",
+                                        e.to_string(),
+                                        expression.name
+                                    ),
+                                ));
+                            }
                         }
                     }
                 }
             }
             Err(e) => {
-                return Err(e.into());
+                return Err(FslError::new(
+                    InterpreterError::ParserError(e.to_string()),
+                    e.to_string(),
+                ));
             }
         }
         Ok(self.data.output.lock().await.clone())
     }
 
-    async fn parse_expression(&self, expression: Expression) -> Result<Value, FslError> {
+    async fn parse_expression(&self, expression: Expression) -> Result<Value, CommandError> {
         if let Some(command) = self.commands.get(expression.name.as_str()) {
             let mut command = command.clone();
 
@@ -519,24 +444,23 @@ impl FslInterpreter {
 
             Ok(Value::Command(command))
         } else {
-            return Err(FslError::NonExistantCommand(ErrorContext::new(
-                expression.name,
-                "".into(),
+            return Err(CommandError::NonExistantCommand(format!(
+                "command with name {} does not exist",
+                expression.name
             )));
         }
     }
 
     #[async_recursion]
-    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, FslError> {
+    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, ValueError> {
         match arg {
             parser::Arg::Number(number) => {
                 if number.contains('.') {
                     match number.parse::<f64>() {
                         Ok(value) => Ok(Value::Float(value)),
-                        Err(_) => Err(FslError::FailedValueParse(ErrorContext {
-                            context: number,
-                            addendum: "failed to convert to a number".into(),
-                        })),
+                        Err(_) => Err(ValueError::FailedParse(
+                            "failed to convert to a number".into(),
+                        )),
                     }
                 } else {
                     if let Ok(value) = number.parse::<i64>() {
@@ -545,10 +469,9 @@ impl FslInterpreter {
                         if let Ok(value) = number.parse::<f64>() {
                             Ok(Value::Float(value))
                         } else {
-                            Err(FslError::FailedValueParse(ErrorContext {
-                                context: number,
-                                addendum: "failed to convert to a number".into(),
-                            }))
+                            Err(ValueError::FailedParse(
+                                "failed to convert to a number".into(),
+                            ))
                         }
                     }
                 }
@@ -649,7 +572,7 @@ mod interpreter {
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
     use crate::types::value::Value;
-    use crate::{FslError, FslInterpreter};
+    use crate::{FslInterpreter, InterpreterError};
 
     async fn test_interpreter_err(code: &str) {
         let result = FslInterpreter::new().interpret(code).await;
@@ -739,7 +662,7 @@ mod interpreter {
             "#,
         )
         .await;
-        assert!(matches!(err, FslError::MemoryLimitExceeded))
+        assert!(matches!(err, InterpreterError::CommandError(_)))
     }
 
     #[tokio::test]
@@ -1741,6 +1664,28 @@ mod interpreter {
         list.store([1, 2, 3])
         list.store(list.insert(99, 10))
         "#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn edit_matrix() {
+        test_interpreter(
+            r#"
+        matrix.store([
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9]
+        ])
+        row.store(1)
+        column.store(1)
+        matrix.replace(0, [3, 2, 1])
+        matrix.replace(row,
+            matrix.index(row).replace(column, 100)
+        )
+        matrix.print()
+        "#,
+            "[[3, 2, 1], [4, 100, 6], [7, 8, 9]]",
         )
         .await;
     }

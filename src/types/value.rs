@@ -1,11 +1,46 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    num::{ParseFloatError, ParseIntError},
+    sync::Arc,
+};
 
 use async_recursion::async_recursion;
 
 use crate::{
-    ErrorContext, FslError, InterpreterData,
-    types::{FslType, command::Command},
+    InterpreterData,
+    types::{
+        FslType,
+        command::{Command, CommandError},
+    },
 };
+
+#[derive(Debug, Clone)]
+pub enum ValueError {
+    InvalidComparison(String),
+    InvalidConversion(String),
+    FailedParse(String),
+    NonExistantVar(String),
+    InvalidVarName(String),
+    InvalidVarValue(String),
+    NegativeIndex(String),
+    VarMemoryLimitReached,
+    CommandExecutionFailed(String),
+}
+
+impl ValueError {
+    pub fn to_string(self) -> String {
+        match self {
+            ValueError::InvalidComparison(error_text) => error_text,
+            ValueError::InvalidConversion(error_text) => error_text,
+            ValueError::FailedParse(error_text) => error_text,
+            ValueError::NonExistantVar(error_text) => error_text,
+            ValueError::InvalidVarName(error_text) => error_text,
+            ValueError::NegativeIndex(error_text) => error_text,
+            ValueError::InvalidVarValue(error_text) => error_text,
+            ValueError::CommandExecutionFailed(error_text) => error_text,
+            ValueError::VarMemoryLimitReached => "interpreter var memory limit reached".into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -25,25 +60,27 @@ impl Default for Value {
     }
 }
 
-fn gen_invalid_conversion_error(from: FslType, to: FslType) -> FslError {
-    FslError::InvalidValueConversion(ErrorContext::new(
-        "".into(),
-        format!(
-            "Cannot convert from type {} to type {}",
-            from.as_str(),
-            to.as_str()
-        ),
+fn gen_invalid_conversion_error(from: FslType, to: FslType) -> ValueError {
+    ValueError::InvalidConversion(format!(
+        "cannot convert from type {} to type {}",
+        from.as_str(),
+        to.as_str(),
     ))
 }
 
-fn gen_failed_parse_error(from: FslType, to: FslType) -> FslError {
-    FslError::FailedValueParse(ErrorContext::new(
-        "".into(),
-        format!(
-            "Failed to parse type {} to type {}",
-            from.as_str(),
-            to.as_str()
-        ),
+fn gen_invalid_conversion_error_to_types(from: FslType, to: &[FslType]) -> ValueError {
+    ValueError::InvalidConversion(format!(
+        "cannot convert from type {} to type {:?}",
+        from.as_str(),
+        to,
+    ))
+}
+
+fn gen_failed_parse_error(from: FslType, to: FslType) -> ValueError {
+    ValueError::FailedParse(format!(
+        "failed to parse type {} to type {}",
+        from.as_str(),
+        to.as_str()
     ))
 }
 
@@ -67,7 +104,7 @@ impl Value {
         }
     }
 
-    pub fn eq(&self, other: &Value) -> Result<bool, FslError> {
+    pub fn eq(&self, other: &Value) -> Result<bool, ValueError> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
             (Value::Float(a), Value::Int(b)) => Ok(*a == *b as f64),
@@ -92,8 +129,8 @@ impl Value {
                 Ok(true)
             }
             (Value::None, Value::None) => Ok(true),
-            _ => Err(FslError::InvalidComparison(format!(
-                "Cannot compare {} with {}",
+            _ => Err(ValueError::InvalidComparison(format!(
+                "cannot compare {} with {}",
                 self.as_type().as_str(),
                 other.as_type().as_str()
             ))),
@@ -118,7 +155,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_int(self, data: Arc<InterpreterData>) -> Result<i64, FslError> {
+    pub async fn as_int(self, data: Arc<InterpreterData>) -> Result<i64, ValueError> {
         let to_type = FslType::Int;
         match self {
             Value::Int(value) => Ok(value),
@@ -141,17 +178,19 @@ impl Value {
         }
     }
 
-    pub async fn as_usize(self, data: Arc<InterpreterData>) -> Result<usize, FslError> {
+    pub async fn as_usize(self, data: Arc<InterpreterData>) -> Result<usize, ValueError> {
         let integer = self.as_int(data).await?;
         if integer < 0 {
-            Err(FslError::NegativeIndex)
+            Err(ValueError::NegativeIndex(format!(
+                "cannot use a negative value as an index"
+            )))
         } else {
             Ok(integer as usize)
         }
     }
 
     #[async_recursion]
-    pub async fn as_float(self, data: Arc<InterpreterData>) -> Result<f64, FslError> {
+    pub async fn as_float(self, data: Arc<InterpreterData>) -> Result<f64, ValueError> {
         let to_type = FslType::Float;
         match self {
             Value::Int(value) => Ok(value as f64),
@@ -175,7 +214,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, FslError> {
+    pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, ValueError> {
         let to_type = FslType::Bool;
         match self {
             Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
@@ -199,7 +238,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_text(self, data: Arc<InterpreterData>) -> Result<String, FslError> {
+    pub async fn as_text(self, data: Arc<InterpreterData>) -> Result<String, ValueError> {
         match self {
             Value::Int(value) => Ok(value.to_string()),
             Value::Float(value) => Ok(value.to_string()),
@@ -232,7 +271,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_list(self, data: Arc<InterpreterData>) -> Result<Vec<Value>, FslError> {
+    pub async fn as_list(self, data: Arc<InterpreterData>) -> Result<Vec<Value>, ValueError> {
         let to_type = FslType::List;
         match self {
             Value::Int(_) => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
@@ -259,52 +298,55 @@ impl Value {
                     .as_list(data.clone())
                     .await
             }
-            Value::None => todo!(),
+            Value::None => Err(gen_invalid_conversion_error(self.as_type(), to_type)),
         }
     }
 
-    pub async fn as_list_mut(&mut self) -> Option<&mut Vec<Value>> {
-        match self {
-            Value::List(values) => Some(values),
-            _ => None,
-        }
-    }
-
-    pub async fn as_raw(self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    pub async fn as_raw(
+        self,
+        data: Arc<InterpreterData>,
+        valid_types: &[FslType],
+    ) -> Result<Value, ValueError> {
+        let fsl_type = self.as_type();
+        let value;
         if self.is_type(FslType::Var) {
-            Ok(self.get_var_value(data.clone())?)
+            value = self.get_var_value(data.clone())?;
         } else if self.is_type(FslType::Command) {
-            Ok(self.as_command()?.execute(data.clone()).await?)
+            value = self.as_command()?.execute(data.clone()).await?;
         } else if self.is_type(FslType::List) {
-            Ok(Value::List(self.as_list(data.clone()).await?))
+            value = Value::List(self.as_list(data.clone()).await?);
         } else {
-            Ok(self)
+            value = self
+        }
+        if valid_types.contains(&value.as_type()) {
+            Ok(value)
+        } else {
+            Err(gen_invalid_conversion_error_to_types(fsl_type, valid_types))
         }
     }
 
-    pub fn as_command(self) -> Result<Command, FslError> {
+    pub fn as_command(self) -> Result<Command, ValueError> {
         if let Value::Command(command) = self {
             Ok(command)
         } else {
-            Err(FslError::InvalidValueConversion(ErrorContext::new(
-                "".into(),
-                "cannot convert command into another value".into(),
-            )))
+            Err(ValueError::InvalidConversion(
+                "failed to convert value into command".into(),
+            ))
         }
     }
 
-    pub fn get_var_label(&self) -> Result<&str, FslError> {
+    pub fn get_var_label(&self) -> Result<&str, ValueError> {
         if let Value::Var(label) = self {
             Ok(label)
         } else {
-            Err(FslError::InvalidVarLabel(ErrorContext::new(
-                "".into(),
-                format!("{} is not a valid var label", self.to_string()),
+            Err(ValueError::InvalidVarName(format!(
+                "{} is not a valid var name",
+                self.to_string()
             )))
         }
     }
 
-    pub fn get_var_value(&self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    pub fn get_var_value(&self, data: Arc<InterpreterData>) -> Result<Value, ValueError> {
         if let Value::Var(label) = self {
             match data.vars.clone_value(label) {
                 Ok(value) => match value {
@@ -315,46 +357,9 @@ impl Value {
             }
         } else {
             panic!(
-                "Should not be called on non {} types",
+                "should not be called on non {} types",
                 FslType::Var.as_str()
             );
-        }
-    }
-
-    pub async fn get_value_inside_list_mut<'a>(
-        data: Arc<InterpreterData>,
-        values: &'a mut Vec<Value>,
-        deep_index: &mut VecDeque<Value>,
-    ) -> Result<&'a mut Value, FslError> {
-        let mut inner = values as *mut Vec<Value>;
-        let mut final_value = None;
-        while let Some(index) = deep_index.pop_front() {
-            let index = index.as_usize(data.clone()).await?;
-            let current = unsafe { &mut *inner };
-            match current.get_mut(index) {
-                Some(value) => {
-                    if value.is_type(FslType::List) && deep_index.len() != 0 {
-                        inner = value.as_list_mut().await.unwrap() as *mut Vec<Value>;
-                    } else {
-                        final_value = Some(value);
-                    }
-                }
-                None => {
-                    return Err(FslError::OutOfBounds(ErrorContext::new(
-                        "".into(),
-                        "".into(),
-                    )));
-                }
-            }
-        }
-
-        if let Some(return_value) = final_value {
-            Ok(return_value)
-        } else {
-            Err(FslError::OutOfBounds(ErrorContext::new(
-                "".into(),
-                "".into(),
-            )))
         }
     }
 }
@@ -419,5 +424,23 @@ impl From<Vec<Value>> for Value {
 impl From<Command> for Value {
     fn from(value: Command) -> Self {
         Value::Command(value)
+    }
+}
+
+impl From<ParseIntError> for ValueError {
+    fn from(_: ParseIntError) -> Self {
+        ValueError::FailedParse("failed to convert text to int (whole number)".into())
+    }
+}
+
+impl From<ParseFloatError> for ValueError {
+    fn from(_: ParseFloatError) -> Self {
+        ValueError::FailedParse("failed to convert text to float (decimal)".into())
+    }
+}
+
+impl From<CommandError> for ValueError {
+    fn from(value: CommandError) -> Self {
+        ValueError::CommandExecutionFailed(value.to_string())
     }
 }

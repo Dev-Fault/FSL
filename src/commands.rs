@@ -6,10 +6,10 @@ use std::{
 use async_recursion::async_recursion;
 
 use crate::{
-    ErrorContext, FslError, InterpreterData,
+    InterpreterData,
     types::{
         FslType,
-        command::{ArgPos, ArgRule, Command, UserCommand},
+        command::{ArgPos, ArgRule, Command, CommandError, UserCommand},
         value::Value,
     },
 };
@@ -42,6 +42,14 @@ pub const VAR_VALUES: &[FslType] = &[
     FslType::Text,
     FslType::List,
     FslType::Var,
+];
+
+pub const LITERAL_VALUES: &[FslType] = &[
+    FslType::Int,
+    FslType::Float,
+    FslType::Bool,
+    FslType::Text,
+    FslType::List,
 ];
 
 pub const NUMERIC_TYPES: &[FslType] = &[
@@ -90,7 +98,7 @@ pub const MATH_RULES: &[ArgRule] = &[
 async fn contains_float(
     values: &VecDeque<Value>,
     data: Arc<InterpreterData>,
-) -> Result<bool, FslError> {
+) -> Result<bool, CommandError> {
     for value in values {
         match value {
             Value::Float(_) => return Ok(true),
@@ -103,14 +111,7 @@ async fn contains_float(
                 }
             }
             Value::Var(var) => {
-                if data
-                    .clone()
-                    .vars
-                    .clone_value(&var)?
-                    .as_raw(data.clone())
-                    .await?
-                    .is_type(FslType::Float)
-                {
+                if data.clone().vars.get_type(&var)? == FslType::Float {
                     return Ok(true);
                 }
             }
@@ -126,7 +127,7 @@ async fn contains_float(
 }
 
 pub const ADD: &str = "add";
-pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
     if contains_float(&values, data.clone()).await? {
         let mut sum: f64 = 0.0;
@@ -144,7 +145,7 @@ pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const SUB: &str = "sub";
-pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
         let mut diff = values.pop_front().unwrap().as_float(data.clone()).await?;
@@ -162,7 +163,7 @@ pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const MUL: &str = "mul";
-pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
         let mut product = values.pop_front().unwrap().as_float(data.clone()).await?;
@@ -180,17 +181,14 @@ pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const DIV: &str = "div";
-pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
         let mut quotient = values.pop_front().unwrap().as_float(data.clone()).await?;
         while let Some(value) = values.pop_front() {
             let value = value.as_float(data.clone()).await?;
             if value == 0.0 {
-                return Err(FslError::DivisionByZero(ErrorContext::new(
-                    DIV.into(),
-                    "".into(),
-                )));
+                return Err(CommandError::DivisionByZero);
             };
             quotient = quotient / value;
         }
@@ -200,10 +198,7 @@ pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         while let Some(value) = values.pop_front() {
             let value = value.as_int(data.clone()).await?;
             if value == 0 {
-                return Err(FslError::DivisionByZero(ErrorContext::new(
-                    DIV.into(),
-                    "".into(),
-                )));
+                return Err(CommandError::DivisionByZero);
             };
             quotient = quotient / value;
         }
@@ -212,16 +207,13 @@ pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const MODULUS: &str = "mod";
-pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let mut remainder = values.pop_front().unwrap().as_int(data.clone()).await?;
     while let Some(value) = values.pop_front() {
         let value = value.as_int(data.clone()).await?;
         if value == 0 {
-            return Err(FslError::DivisionByZero(ErrorContext::new(
-                MODULUS.into(),
-                "".into(),
-            )));
+            return Err(CommandError::DivisionByZero);
         };
         remainder = remainder % value;
     }
@@ -233,7 +225,10 @@ pub const PRECISION_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
 ];
 pub const PRECISION: &str = "precision";
-pub async fn precision(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn precision(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
@@ -249,7 +244,7 @@ pub const STORE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const STORE: &str = "store";
-pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
@@ -257,19 +252,17 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     match arg_1 {
         Value::Var(var) => {
-            let value = data.vars.clone_value(&var)?.as_raw(data.clone()).await?;
+            let value = data
+                .vars
+                .clone_value(&var)?
+                .as_raw(data.clone(), LITERAL_VALUES)
+                .await?;
             data.vars.insert_value(label, value)?;
         }
         Value::Command(command) => {
             data.clone()
                 .vars
                 .insert_value(label, command.execute(data.clone()).await?)?;
-        }
-        Value::None => {
-            return Err(FslError::CannotStoreValueInVar(format!(
-                "Cannot store {} in a var",
-                FslType::None.as_str()
-            )));
         }
         _ => {
             data.vars.insert_value(label, arg_1)?;
@@ -280,7 +273,7 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
 pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub const CLONE: &str = "clone";
-pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let value = command
         .take_args()
         .pop_front()
@@ -291,7 +284,7 @@ pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
 pub const FREE: &str = "free";
 pub const FREE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
-pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let arg_0 = command.take_args().pop_front().unwrap();
     let label = arg_0.get_var_label()?;
     match data.vars.remove_value(label) {
@@ -302,7 +295,8 @@ pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
 pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
 pub const PRINT: &str = "print";
-pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    println!("TRYING TO PRINT");
     let values = command.take_args();
     let mut output = String::new();
 
@@ -318,7 +312,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
 pub const SCOPE_RULES: &'static [ArgRule] =
     &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
 pub const SCOPE: &str = "";
-pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
     for value in values {
         value.as_command()?.execute(data.clone()).await?;
@@ -332,10 +326,18 @@ pub const EQ_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const EQ: &str = "eq";
-pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let a = values.pop_front().unwrap().as_raw(data.clone()).await?;
-    let b = values.pop_front().unwrap().as_raw(data.clone()).await?;
+    let a = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), ALL_VALUES)
+        .await?;
+    let b = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), ALL_VALUES)
+        .await?;
 
     Ok(Value::Bool(a.eq(&b)?))
 }
@@ -345,7 +347,7 @@ pub const GT_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const GT: &str = "gt";
-pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     if contains_float(&values, data.clone()).await? {
         let a = values.pop_front().unwrap().as_float(data.clone()).await?;
@@ -365,7 +367,7 @@ pub const LT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const LT: &str = "lt";
-pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     if contains_float(&values, data.clone()).await? {
@@ -383,7 +385,7 @@ pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, F
 
 pub const NOT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
 pub const NOT: &str = "not";
-pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let a = values.pop_front().unwrap().as_bool(data.clone()).await?;
     Ok((!a).into())
@@ -391,7 +393,7 @@ pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), LOGIC_TYPES)];
 pub const AND: &str = "and";
-pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let mut arg_0 = values.pop_front().unwrap().as_bool(data.clone()).await?;
     for value in values {
@@ -402,7 +404,7 @@ pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), LOGIC_TYPES)];
 pub const OR: &str = "or";
-pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let mut arg_0 = values.pop_front().unwrap().as_bool(data.clone()).await?;
     for value in values {
@@ -416,7 +418,7 @@ pub const IF_THEN_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
 ];
 pub const IF_THEN: &str = "if_then";
-pub async fn if_then(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn if_then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
@@ -435,7 +437,10 @@ pub const IF_THEN_ELSE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), &[FslType::Command]),
 ];
 pub const IF_THEN_ELSE: &str = "if_then_else";
-pub async fn if_then_else(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn if_then_else(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
@@ -458,7 +463,7 @@ pub const WHILE_LOOP: &str = "while";
 pub async fn while_command(
     command: Command,
     data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let while_condition = values.pop_front().unwrap();
 
@@ -480,7 +485,7 @@ pub async fn while_command(
                 break 'outer;
             }
         }
-        data.increment_loops(WHILE_LOOP).await?;
+        data.increment_loops().await?;
     }
 
     data.inside_loop.store(false, Ordering::Relaxed);
@@ -493,7 +498,7 @@ pub const REPEAT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const REPEAT: &str = "repeat";
-pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let repetitions = values.pop_front().unwrap().as_int(data.clone()).await?;
     let mut final_value = Value::None;
@@ -513,7 +518,7 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 break 'outer;
             }
         }
-        data.increment_loops(REPEAT).await?;
+        data.increment_loops().await?;
     }
 
     data.inside_loop.store(false, Ordering::Relaxed);
@@ -529,10 +534,10 @@ async fn manipulate_array<L, T>(
     data: Arc<InterpreterData>,
     list_manipulator: L,
     text_manipulator: T,
-) -> Result<Value, FslError>
+) -> Result<Value, CommandError>
 where
-    L: AsyncFnOnce(&mut Vec<Value>) -> Result<Option<Value>, FslError>,
-    T: AsyncFnOnce(&mut String) -> Result<Option<Value>, FslError>,
+    L: AsyncFnOnce(&mut Vec<Value>) -> Result<Option<Value>, CommandError>,
+    T: AsyncFnOnce(&mut String) -> Result<Option<Value>, CommandError>,
 {
     let var_label = if let Ok(label) = array.get_var_label() {
         Some(label.to_string())
@@ -540,7 +545,9 @@ where
         None
     };
 
-    let raw = array.as_raw(data.clone()).await?;
+    let raw = array
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
     if raw.is_type(FslType::List) {
         let mut list = raw.as_list(data.clone()).await?;
@@ -575,7 +582,7 @@ where
             Ok(text)
         }
     } else {
-        unreachable!("Command arg validation should have handled incorrect arg types")
+        unreachable!("command arg validation should have handled incorrect arg types")
     }
 }
 
@@ -583,8 +590,8 @@ async fn index_matrix(
     data: Arc<InterpreterData>,
     matrix: Vec<Value>,
     accessor: &mut VecDeque<Value>,
-) -> Result<Value, FslError> {
-    let mut matrix = matrix.clone();
+) -> Result<Value, CommandError> {
+    let mut matrix = matrix;
     while let Some(index) = accessor.pop_front() {
         let index = index.as_usize(data.clone()).await?;
         match matrix.get_mut(index) {
@@ -592,14 +599,13 @@ async fn index_matrix(
                 if inner.is_type(FslType::List) {
                     matrix = std::mem::take(inner).as_list(data.clone()).await?;
                 } else {
-                    return std::mem::take(inner).as_raw(data.clone()).await;
+                    return Ok(std::mem::take(inner)
+                        .as_raw(data.clone(), ALL_VALUES)
+                        .await?);
                 }
             }
             None => {
-                return Err(FslError::OutOfBounds(ErrorContext::new(
-                    "matrix".into(),
-                    format!("index was out of bounds inside matrix"),
-                )));
+                return Err(CommandError::IndexOutOfBounds);
             }
         };
     }
@@ -612,12 +618,12 @@ pub const INDEX_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
 ];
 pub const INDEX: &str = "index";
-pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
-    let array = arg_0.as_raw(data.clone()).await?;
+    let array = arg_0.as_raw(data.clone(), ARRAY_TYPES).await?;
 
     if array.is_type(FslType::List) {
         let list = array.as_list(data.clone()).await?;
@@ -628,11 +634,8 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
         } else {
             let i = arg_1.as_usize(data.clone()).await?;
             match list.get(i) {
-                Some(value) => Ok(value.clone().as_raw(data).await?),
-                None => Err(FslError::OutOfBounds(ErrorContext::new(
-                    INDEX.into(),
-                    format!("index {} was outside the bounds of list: {:?}", i, list),
-                ))),
+                Some(value) => Ok(value.clone().as_raw(data, ALL_VALUES).await?),
+                None => Err(CommandError::IndexOutOfBounds),
             }
         }
     } else {
@@ -640,19 +643,20 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
         let i = arg_1.as_usize(data).await?;
         match text.chars().nth(i) {
             Some(char) => Ok(char.into()),
-            None => Err(FslError::OutOfBounds(ErrorContext::new(
-                INDEX.into(),
-                format!("index {} was outside the bounds of text: {}", i, text),
-            ))),
+            None => Err(CommandError::IndexOutOfBounds),
         }
     }
 }
 
 pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
 pub const LENGTH: &str = "length";
-pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let array = values.pop_front().unwrap().as_raw(data.clone()).await?;
+    let array = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), ARRAY_TYPES)
+        .await?;
 
     if array.is_type(FslType::List) {
         let list = array.as_list(data).await?;
@@ -668,7 +672,7 @@ pub const REMOVE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
 ];
 pub const REMOVE: &str = "remove";
-pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let array = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
@@ -682,20 +686,14 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 list.remove(i);
                 Ok(None)
             }
-            None => Err(FslError::OutOfBounds(ErrorContext::new(
-                REMOVE.into(),
-                format!("index {} was outside the bounds of list: {:?}", i, list),
-            ))),
+            None => Err(CommandError::IndexOutOfBounds),
         },
         async |text| match text.chars().nth(i) {
             Some(_) => {
                 text.remove(i);
                 Ok(None)
             }
-            None => Err(FslError::OutOfBounds(ErrorContext::new(
-                REMOVE.into(),
-                format!("index {} was outside the bounds of text: {}", i, text),
-            ))),
+            None => Err(CommandError::IndexOutOfBounds),
         },
     )
     .await?;
@@ -709,7 +707,7 @@ pub const SWAP_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), INDEX_TYPES),
 ];
 pub const SWAP: &str = "swap";
-pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let array = values.pop_front().unwrap();
@@ -724,15 +722,9 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         data.clone(),
         async |list| {
             if list.get(a).is_none() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    SWAP.into(),
-                    format!("index {} was outside the bounds of list: {:?}", a, list),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else if list.get(b).is_none() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    SWAP.into(),
-                    format!("index {} was outside the bounds of list: {:?}", b, list),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else {
                 list.swap(a, b);
                 Ok(None)
@@ -740,15 +732,9 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         },
         async |text| {
             if text.chars().nth(a).is_none() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    SWAP.into(),
-                    format!("index {} was outside the bounds of text: {}", a, text),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else if text.chars().nth(b).is_none() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    SWAP.into(),
-                    format!("index {} was outside the bounds of text: {}", b, text),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else {
                 let mut swapped = text.chars().collect::<Vec<char>>();
                 swapped.swap(a, b);
@@ -769,7 +755,7 @@ pub const REPLACE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
 ];
 pub const REPLACE: &str = "replace";
-pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let array = values.pop_front().unwrap();
@@ -781,12 +767,9 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
         array,
         data.clone(),
         async |list| {
-            let replacement = arg_2.clone().as_raw(data.clone()).await?;
+            let replacement = arg_2.clone().as_raw(data.clone(), NON_NONE_VALUES).await?;
             if list.get(i).is_none() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    REPLACE.into(),
-                    format!("index {} was outside the bounds of list: {:?}", i, list),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else {
                 list[i] = replacement;
                 Ok(None)
@@ -795,10 +778,7 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
         async |text| {
             let replacement = arg_2.clone().as_text(data.clone()).await?;
             if text.chars().nth(i).is_none() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    REPLACE.into(),
-                    format!("index {} was outside the bounds of text: {}", i, text),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else {
                 text.replace_range(i..i + 1, &replacement);
                 Ok(None)
@@ -815,7 +795,7 @@ pub const INSERT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
 ];
 pub const INSERT: &str = "insert";
-pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let array = values.pop_front().unwrap();
@@ -827,13 +807,10 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         array,
         data.clone(),
         async |list| {
-            let to_insert = arg_2.clone().as_raw(data.clone()).await?;
+            let to_insert = arg_2.clone().as_raw(data.clone(), NON_NONE_VALUES).await?;
 
             if i > list.len() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    INSERT.into(),
-                    format!("index {} was outside the bounds of list: {:?}", i, list),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else {
                 list.insert(i, to_insert);
                 Ok(None)
@@ -843,10 +820,7 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             let to_insert = arg_2.clone().as_text(data.clone()).await?;
 
             if i > text.len() {
-                Err(FslError::OutOfBounds(ErrorContext::new(
-                    INSERT.into(),
-                    format!("index {} was outside the bounds of text: {}", i, text),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             } else {
                 text.insert_str(i, &to_insert);
                 Ok(None)
@@ -863,7 +837,7 @@ pub const PUSH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const PUSH: &str = "push";
-pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let array = values.pop_front().unwrap();
@@ -873,7 +847,7 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         array,
         data.clone(),
         async |list| {
-            let to_push = arg_1.clone().as_raw(data.clone()).await?;
+            let to_push = arg_1.clone().as_raw(data.clone(), NON_NONE_VALUES).await?;
             list.push(to_push);
             Ok(None)
         },
@@ -890,7 +864,7 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
 pub const POP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
 pub const POP: &str = "pop";
-pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let array = values.pop_front().unwrap();
@@ -924,7 +898,7 @@ pub const SEARCH_REPLACE: &str = "search_replace";
 pub async fn search_replace(
     command: Command,
     data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let input = values.pop_front().unwrap().as_text(data.clone()).await?;
     let from = values.pop_front().unwrap().as_text(data.clone()).await?;
@@ -944,17 +918,14 @@ pub const SLICE_REPLACE: &str = "slice_replace";
 pub async fn slice_replace(
     command: Command,
     data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let mut input = values.pop_front().unwrap().as_text(data.clone()).await?;
     let mut range = values.pop_front().unwrap().as_list(data.clone()).await?;
     let with = values.pop_front().unwrap().as_text(data.clone()).await?;
 
     if range.len() != 2 {
-        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
-            format!("{}", SLICE_REPLACE),
-            format!("list should contain two items, min and max values for range"),
-        )));
+        return Err(CommandError::IndexOutOfBounds);
     }
 
     let (from, to) = (
@@ -963,10 +934,7 @@ pub async fn slice_replace(
     );
 
     if from > input.len() || to > input.len() || from > to {
-        return Err(FslError::OutOfBounds(ErrorContext::new(
-            SLICE_REPLACE.into(),
-            format!("{} or {} was outside the bounds of text", from, to,),
-        )));
+        return Err(CommandError::IndexOutOfBounds);
     }
 
     input.replace_range(from..to, &with);
@@ -976,7 +944,7 @@ pub async fn slice_replace(
 
 pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
 pub const REVERSE: &str = "reverse";
-pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let array = values.pop_front().unwrap();
@@ -1003,7 +971,7 @@ pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Val
 
 pub const INC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub const INC: &str = "inc";
-pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
     let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n + 1);
@@ -1014,7 +982,7 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const DEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
 pub const DEC: &str = "dec";
-pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
     let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n - 1);
@@ -1028,25 +996,31 @@ pub const CONTAINS_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
 ];
 pub const CONTAINS: &str = "contains";
-pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let a = values.pop_front().unwrap().as_raw(data.clone()).await?;
-    let b = values.pop_front().unwrap().as_raw(data.clone()).await?;
-    if let Value::List(list) = a {
+    let array = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), NON_NONE_VALUES)
+        .await?;
+    let item = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), NON_NONE_VALUES)
+        .await?;
+    if let Value::List(list) = array {
         for value in list {
-            match value.as_raw(data.clone()).await?.eq(&b) {
-                Ok(is_eq) => {
-                    if is_eq {
-                        return Ok(Value::Bool(true));
-                    }
-                }
-                Err(_) => {}
+            let raw_value = value.as_raw(data.clone(), NON_NONE_VALUES).await?;
+            if let Ok(is_eq) = raw_value.eq(&item)
+                && is_eq
+            {
+                return Ok(Value::Bool(true));
             }
         }
         return Ok(Value::Bool(false));
     } else {
-        let text = a.as_text(data.clone()).await?;
-        return Ok(Value::Bool(text.contains(&b.as_text(data).await?)));
+        let text = array.as_text(data.clone()).await?;
+        return Ok(Value::Bool(text.contains(&item.as_text(data).await?)));
     }
 }
 
@@ -1055,7 +1029,10 @@ pub const STARTS_WITH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const STARTS_WITH: &str = "starts_with";
-pub async fn starts_with(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn starts_with(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap().as_text(data.clone()).await?;
     let arg_1 = values.pop_front().unwrap().as_text(data.clone()).await?;
@@ -1067,7 +1044,10 @@ pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const ENDS_WITH: &str = "ends_with";
-pub async fn ends_with(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn ends_with(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap().as_text(data.clone()).await?;
     let arg_1 = values.pop_front().unwrap().as_text(data.clone()).await?;
@@ -1076,7 +1056,7 @@ pub async fn ends_with(command: Command, data: Arc<InterpreterData>) -> Result<V
 
 pub const CONCAT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
 pub const CONCAT: &str = "concat";
-pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
     let mut cat_string = String::new();
@@ -1090,7 +1070,10 @@ pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 
 pub const CAPITALIZE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
 pub const CAPITALIZE: &str = "capitalize";
-pub async fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn capitalize(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let text = values.pop_front().unwrap().as_text(data).await?;
     if text.len() < 1 {
@@ -1102,7 +1085,10 @@ pub async fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<
 
 pub const UPPERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
 pub const UPPERCASE: &str = "uppercase";
-pub async fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn uppercase(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let text = values.pop_front().unwrap().as_text(data).await?;
     Ok(text.to_uppercase().into())
@@ -1110,7 +1096,10 @@ pub async fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<V
 
 pub const LOWERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
 pub const LOWERCASE: &str = "lowercase";
-pub async fn lowercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn lowercase(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let text = values.pop_front().unwrap().as_text(data).await?;
     Ok(text.to_lowercase().into())
@@ -1121,7 +1110,7 @@ pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
 pub async fn remove_whitespace(
     command: Command,
     data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let text = values.pop_front().unwrap().as_text(data).await?;
     Ok(text.split_whitespace().collect::<String>().into())
@@ -1132,7 +1121,7 @@ pub const SPLIT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const SPLIT: &str = "split";
-pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let text_to_split = values.pop_front().unwrap().as_text(data.clone()).await?;
     let pattern = values.pop_front().unwrap().as_text(data.clone()).await?;
@@ -1148,22 +1137,19 @@ pub const RANDOM_RANGE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const RANDOM_RANGE: &str = "random_range";
-pub async fn random_range(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn random_range(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     if contains_float(&values, data.clone()).await? {
         let min = values.pop_front().unwrap().as_float(data.clone()).await?;
         let max = values.pop_front().unwrap().as_float(data.clone()).await?;
         if min >= max {
-            Err(FslError::InvalidRange(ErrorContext::new(
-                RANDOM_RANGE.into(),
-                "min must be greater than max".into(),
-            )))
+            Err(CommandError::InvalidRange)
         } else if !min.is_finite() || !max.is_finite() {
-            Err(FslError::InvalidRange(ErrorContext::new(
-                RANDOM_RANGE.into(),
-                "can only use random range on finite values".into(),
-            )))
+            Err(CommandError::NonFiniteValue)
         } else {
             Ok(rand::random_range(min..=max).into())
         }
@@ -1171,10 +1157,7 @@ pub async fn random_range(command: Command, data: Arc<InterpreterData>) -> Resul
         let min = values.pop_front().unwrap().as_int(data.clone()).await?;
         let max = values.pop_front().unwrap().as_int(data.clone()).await?;
         if min >= max {
-            Err(FslError::InvalidRange(ErrorContext::new(
-                RANDOM_RANGE.into(),
-                "min must be greater than max".into(),
-            )))
+            Err(CommandError::InvalidRange)
         } else {
             Ok(rand::random_range(min..=max).into())
         }
@@ -1183,7 +1166,10 @@ pub async fn random_range(command: Command, data: Arc<InterpreterData>) -> Resul
 
 pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::List])];
 pub const RANDOM_ENTRY: &str = "random_entry";
-pub async fn random_entry(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn random_entry(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let list = values.pop_front().unwrap().as_list(data).await?;
     Ok(list[rand::random_range(0..list.len())].clone())
@@ -1194,7 +1180,7 @@ pub const DEF_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Var, FslType::Command]),
 ];
 pub const DEF: &str = "def";
-pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let label = values.pop_front().unwrap().get_var_label()?.to_string();
     let mut local_vars: VecDeque<String> = VecDeque::new();
@@ -1205,9 +1191,8 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for i in 0..values_len {
         if values[i].is_type(FslType::Var) {
             if encountered_command {
-                return Err(FslError::WrongOrderOfArgs(ErrorContext::new(
-                    DEF.into(),
-                    format!("argument labels to command must come before inner commands"),
+                return Err(CommandError::WrongArgOrder(format!(
+                    "variables in command definition must come before commands"
                 )));
             }
             let var_label = values[i].get_var_label()?.to_string();
@@ -1233,7 +1218,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 fn substitute_args(
     command: &mut Command,
     var_map: &HashMap<String, Value>,
-) -> Result<(), FslError> {
+) -> Result<(), CommandError> {
     for arg in command.get_args_mut() {
         if arg.is_type(FslType::Var)
             && let Some(value) = var_map.get(arg.get_var_label()?)
@@ -1251,7 +1236,7 @@ fn substitute_args(
 }
 
 pub const RUN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
-pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let command_label = values.pop_front().unwrap().get_var_label()?.to_string();
@@ -1263,13 +1248,10 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     drop(commands_lock);
 
     if values.len() != var_labels.len() {
-        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
-            command_label,
-            format!(
-                "expected {} args but got {}",
-                var_labels.len(),
-                values.len()
-            ),
+        return Err(CommandError::WrongArgCount(format!(
+            "expected {} args but got {}",
+            var_labels.len(),
+            values.len()
         )));
     }
 
@@ -1279,7 +1261,11 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for _ in 0..vars {
         let mut value = values.pop_front().unwrap();
         if value.is_type(FslType::Command) || value.is_type(FslType::List) {
-            value = values.pop_front().unwrap().as_raw(data.clone()).await?;
+            value = values
+                .pop_front()
+                .unwrap()
+                .as_raw(data.clone(), &[FslType::Command, FslType::List])
+                .await?;
         };
         var_map.insert(var_labels.pop_front().unwrap(), value);
     }
@@ -1297,12 +1283,12 @@ pub const BREAK: &str = "break";
 pub async fn break_command(
     command: Command,
     data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+) -> Result<Value, CommandError> {
     if data.inside_loop.load(Ordering::Relaxed) {
         data.break_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
     } else {
-        return Err(FslError::BreakCalledOutsideLoop);
+        return Err(CommandError::BreakOutsideLoop);
     }
 
     Ok(Value::None)
@@ -1312,24 +1298,24 @@ pub const CONTINUE: &str = "continue";
 pub async fn continue_command(
     command: Command,
     data: Arc<InterpreterData>,
-) -> Result<Value, FslError> {
+) -> Result<Value, CommandError> {
     if data.inside_loop.load(Ordering::Relaxed) {
         data.continue_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
     } else {
-        return Err(FslError::ContinueCalledOutsideLoop);
+        return Err(CommandError::ContinueOutsideLoop);
     }
     Ok(Value::None)
 }
 
 pub const EXIT: &str = "exit";
-pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value, FslError> {
-    return Err(FslError::ProgramExited);
+pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    Err(CommandError::ProgramExited)
 }
 
 #[cfg(test)]
 pub mod tests {
-    use crate::{FslError, FslInterpreter};
+    use crate::{CommandError, FslInterpreter, InterpreterError, types::value::ValueError};
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
         let result = FslInterpreter::new().interpret(code).await;
@@ -1357,11 +1343,11 @@ pub mod tests {
         assert!(result == expected_output);
     }
 
-    pub async fn test_interpreter_err_type(code: &str) -> FslError {
+    pub async fn test_interpreter_err_type(code: &str) -> crate::InterpreterError {
         let result = FslInterpreter::new().interpret(code).await;
         dbg!(&result);
         assert!(result.is_err());
-        result.err().unwrap()
+        result.err().unwrap().error_type
     }
 
     #[tokio::test]
@@ -1443,13 +1429,24 @@ pub mod tests {
     #[tokio::test]
     async fn div_by_zero() {
         let err = test_interpreter_err_type("print(div(1, 0))").await;
-        assert!(matches!(err, FslError::DivisionByZero(_)));
+        dbg!(&err);
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::ValueError(
+                ValueError::CommandExecutionFailed(_)
+            ))
+        ));
     }
 
     #[tokio::test]
     async fn mod_by_zero() {
         let err = test_interpreter_err_type("print(mod(1, 0))").await;
-        assert!(matches!(err, FslError::DivisionByZero(_)));
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::ValueError(
+                ValueError::CommandExecutionFailed(_)
+            ))
+        ));
     }
 
     #[tokio::test]
@@ -1484,7 +1481,10 @@ pub mod tests {
     #[tokio::test]
     async fn free_var() {
         let err = test_interpreter_err_type("a.store(1) print(a) a.free() print(a)").await;
-        assert!(matches!(err, FslError::NonExistantVar(_)));
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::ValueError(ValueError::NonExistantVar(_)))
+        ));
     }
 
     #[tokio::test]
@@ -1504,7 +1504,10 @@ pub mod tests {
     #[tokio::test]
     async fn values_in_scope() {
         let err = test_interpreter_err_type(r#"(1)"#).await;
-        assert!(matches!(err, FslError::WrongTypeOfArgs(_)));
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::WrongArgType(_))
+        ));
     }
 
     #[tokio::test]
@@ -1559,7 +1562,12 @@ pub mod tests {
     async fn int_text_eq() {
         test_interpreter(r#"print(eq(1, "1"))"#, "true").await;
         let err = test_interpreter_err_type(r#"print(eq(1, "a"))"#).await;
-        assert!(matches!(err, FslError::FailedValueParse(_)));
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::ValueError(
+                ValueError::CommandExecutionFailed(_)
+            ))
+        ));
     }
 
     #[tokio::test]
@@ -1798,7 +1806,10 @@ pub mod tests {
     #[tokio::test]
     async fn break_outside_command() {
         let err = test_interpreter_err_type(r#"break()"#).await;
-        assert!(matches!(err, FslError::BreakCalledOutsideLoop));
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::BreakOutsideLoop)
+        ));
     }
 
     #[tokio::test]
@@ -1822,7 +1833,10 @@ pub mod tests {
     #[tokio::test]
     async fn continue_outside_command() {
         let err = test_interpreter_err_type(r#"continue()"#).await;
-        assert!(matches!(err, FslError::ContinueCalledOutsideLoop));
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::ContinueOutsideLoop)
+        ));
     }
 
     #[tokio::test]
@@ -1925,10 +1939,10 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn matrix_index() {
+    async fn index_matrix() {
         test_interpreter(
-            r#"matrix.store([[1,2,3], [3,4,5], [6,7,8]]) matrix.index([1,1]).print()"#,
-            "4",
+            r#"matrix.store([[1,2,3], [3,4,5], [6,7,8]]) matrix.index([1,1]).print(" ") matrix.print()"#,
+            "4 [[1, 2, 3], [3, 4, 5], [6, 7, 8]]",
         )
         .await;
     }
@@ -1950,5 +1964,16 @@ pub mod tests {
     #[tokio::test]
     async fn reverse_text() {
         test_interpreter(r#"print("hello".reverse())"#, "olleh").await;
+    }
+
+    #[tokio::test]
+    async fn length_of_bool() {
+        let err = test_interpreter_err_type("var.store(true) length(var).print()").await;
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::ValueError(
+                ValueError::CommandExecutionFailed(_)
+            ))
+        ))
     }
 }

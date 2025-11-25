@@ -2,9 +2,55 @@ use core::fmt;
 use std::{collections::VecDeque, ops::Range, pin::Pin, sync::Arc};
 
 use crate::{
-    ErrorContext, FslError, InterpreterData,
-    types::{FslType, value::Value},
+    InterpreterData,
+    types::{
+        FslType,
+        value::{Value, ValueError},
+    },
 };
+
+#[derive(Debug, Clone)]
+pub enum CommandError {
+    WrongArgType(String),
+    WrongArgCount(String),
+    WrongArgOrder(String),
+    ValueError(ValueError),
+    DivisionByZero,
+    LoopLimitReached,
+    IndexOutOfBounds,
+    InvalidRange,
+    NonFiniteValue,
+    BreakOutsideLoop,
+    ContinueOutsideLoop,
+    NonExistantCommand(String),
+    ProgramExited,
+}
+
+impl CommandError {
+    pub fn to_string(self) -> String {
+        match self {
+            CommandError::WrongArgType(error_text) => error_text,
+            CommandError::WrongArgCount(error_text) => error_text,
+            CommandError::WrongArgOrder(error_text) => error_text,
+            CommandError::ValueError(value_error) => value_error.to_string(),
+            CommandError::DivisionByZero => "cannot divide by zero".into(),
+            CommandError::LoopLimitReached => "maximum loop limit reached".into(),
+            CommandError::IndexOutOfBounds => "index out of bounds".into(),
+            CommandError::InvalidRange => "invalid range (min should be less than max)".into(),
+            CommandError::NonFiniteValue => "cannot use non finite value".into(),
+            CommandError::BreakOutsideLoop => "break used outside of loop".into(),
+            CommandError::ContinueOutsideLoop => "continue used outside of loop".into(),
+            CommandError::NonExistantCommand(error_text) => error_text,
+            CommandError::ProgramExited => "".into(),
+        }
+    }
+}
+
+impl From<ValueError> for CommandError {
+    fn from(value: ValueError) -> Self {
+        CommandError::ValueError(value)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArgPos {
@@ -47,19 +93,19 @@ pub trait CommandFn: Send + Sync {
         &self,
         command: Command,
         interpreter: Arc<InterpreterData>,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, FslError>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Value, CommandError>> + Send + '_>>;
 }
 
 impl<F, Fut> CommandFn for F
 where
     F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync,
-    Fut: Future<Output = Result<Value, FslError>> + Send + 'static,
+    Fut: Future<Output = Result<Value, CommandError>> + Send + 'static,
 {
     fn execute(
         &self,
         command: Command,
         data: Arc<InterpreterData>,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, FslError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Value, CommandError>> + Send + '_>> {
         Box::pin(self(command, data))
     }
 }
@@ -117,27 +163,28 @@ impl Command {
         &mut self.args
     }
 
-    fn validate_arg_range(&self, arg_rule: &ArgRule, range: &Range<usize>) -> Result<(), FslError> {
+    fn validate_arg_range(
+        &self,
+        arg_rule: &ArgRule,
+        range: &Range<usize>,
+    ) -> Result<(), CommandError> {
         for i in range.start..range.end {
             let arg = &self.args[i];
             let fsl_type = arg.as_type();
             if !arg_rule.valid_types.contains(&fsl_type) {
-                return Err(FslError::WrongTypeOfArgs(ErrorContext::new(
+                return Err(CommandError::WrongArgType(format!(
+                    "Arg {} of command {} cannot be of type {}\nValid types are {:?}",
+                    i,
                     self.get_label().to_string(),
-                    format!(
-                        "Arg {} of command {} cannot be of type {}\nValid types are {:?}",
-                        i,
-                        self.get_label().to_string(),
-                        fsl_type.as_str(),
-                        arg_rule.valid_types
-                    ),
+                    fsl_type.as_str(),
+                    arg_rule.valid_types
                 )));
             }
         }
         Ok(())
     }
 
-    fn validate_args(&self) -> Result<(), FslError> {
+    fn validate_args(&self) -> Result<(), CommandError> {
         let mut max_args = 0;
         for arg_rule in self.command_spec.arg_rules {
             match &arg_rule.position {
@@ -153,14 +200,11 @@ impl Command {
                             self.validate_arg_range(arg_rule, &range)?;
                         }
                         None => {
-                            return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
-                                self.get_label().to_string(),
-                                format!(
-                                    "Arg {} of command {} must be present and be of type {:?}",
-                                    i,
-                                    self.get_label(),
-                                    arg_rule.valid_types
-                                ),
+                            return Err(CommandError::WrongArgCount(format!(
+                                "Arg {} of command {} must be present and be of type {:?}",
+                                i,
+                                self.get_label(),
+                                arg_rule.valid_types
                             )));
                         }
                     }
@@ -172,24 +216,18 @@ impl Command {
                         max_args
                     };
                     if self.args.len() < range.start {
-                        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
-                            self.get_label().to_string(),
-                            format!(
-                                "Command {} must have at least {} arguments and only {} were given",
-                                self.get_label(),
-                                range.start,
-                                self.args.len(),
-                            ),
+                        return Err(CommandError::WrongArgCount(format!(
+                            "Command {} must have at least {} arguments and only {} were given",
+                            self.get_label(),
+                            range.start,
+                            self.args.len(),
                         )));
                     } else if self.args.len() > range.end {
-                        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
-                            self.get_label().to_string(),
-                            format!(
-                                "Command {} must have no more than {} arguments and {} were given",
-                                self.get_label(),
-                                range.end,
-                                self.args.len(),
-                            ),
+                        return Err(CommandError::WrongArgCount(format!(
+                            "Command {} must have no more than {} arguments and {} were given",
+                            self.get_label(),
+                            range.end,
+                            self.args.len(),
                         )));
                     } else {
                         self.validate_arg_range(arg_rule, range)?;
@@ -197,9 +235,9 @@ impl Command {
                 }
                 ArgPos::None => {
                     if self.args.len() > 0 {
-                        return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
-                            self.get_label().to_string(),
-                            format!("Command {} does not take any arguments", self.get_label()),
+                        return Err(CommandError::WrongArgCount(format!(
+                            "Command {} does not take any arguments",
+                            self.get_label()
                         )));
                     }
                 }
@@ -218,28 +256,25 @@ impl Command {
         }
 
         if self.args.len() > max_args {
-            return Err(FslError::WrongNumberOfArgs(ErrorContext::new(
-                self.get_label().to_string(),
-                format!(
-                    "Command {} expected {} args but got {}",
-                    self.get_label(),
-                    max_args,
-                    self.args.len()
-                ),
+            return Err(CommandError::WrongArgCount(format!(
+                "Command {} expected {} args but got {}",
+                self.get_label(),
+                max_args,
+                self.args.len()
             )));
         }
         Ok(())
     }
 
     const EXECUTE_EXPECT: &str = "Command should always have executor before being consumed";
-    pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
         self.validate_args()?;
 
         let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
         Ok(executor.execute(self, data).await?)
     }
 
-    pub async fn execute_clone(&self, data: Arc<InterpreterData>) -> Result<Value, FslError> {
+    pub async fn execute_clone(&self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
         self.validate_args()?;
 
         Ok(self
