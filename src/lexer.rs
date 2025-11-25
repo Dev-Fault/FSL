@@ -7,6 +7,8 @@ const OPEN_BRACKET: &str = "[";
 const CLOSED_BRACKET: &str = "]";
 const DOT: &str = ".";
 const COMMA: &str = ",";
+const HASHTAG: &str = "#";
+const STAR: &str = r#"*"#;
 
 const SYMBOLS: &[&str] = &[
     QUOTE,
@@ -16,6 +18,8 @@ const SYMBOLS: &[&str] = &[
     CLOSED_BRACKET,
     DOT,
     COMMA,
+    HASHTAG,
+    STAR,
 ];
 
 static SORTED_SYMBOLS: OnceLock<Vec<&str>> = OnceLock::new();
@@ -172,6 +176,8 @@ pub enum Symbol {
     ClosedBracket,
     Dot,
     Comma,
+    Hashtag,
+    Star,
 }
 
 impl Symbol {
@@ -184,6 +190,8 @@ impl Symbol {
             Symbol::ClosedBracket => CLOSED_BRACKET,
             Symbol::Dot => DOT,
             Symbol::Comma => COMMA,
+            Symbol::Hashtag => HASHTAG,
+            Symbol::Star => STAR,
         }
     }
 }
@@ -197,6 +205,8 @@ fn symbol_from_str(value: &str) -> Option<Symbol> {
         CLOSED_BRACKET => Symbol::ClosedBracket,
         DOT => Symbol::Dot,
         COMMA => Symbol::Comma,
+        HASHTAG => Symbol::Hashtag,
+        STAR => Symbol::Star,
         _ => {
             return None;
         }
@@ -284,6 +294,8 @@ pub struct Lexer {
     command_depth: usize,
     list_depth: usize,
     inside_string: bool,
+    inside_single_line_comment: bool,
+    inside_multi_line_comment: bool,
 }
 
 fn get_keyword(input: &str) -> Option<Keyword> {
@@ -320,7 +332,17 @@ impl Lexer {
             command_depth: 0,
             list_depth: 0,
             inside_string: false,
+            inside_single_line_comment: false,
+            inside_multi_line_comment: false,
         }
+    }
+
+    pub fn inside_code(&self) -> bool {
+        !self.inside_string && !self.inside_comment()
+    }
+
+    pub fn inside_comment(&self) -> bool {
+        self.inside_single_line_comment || self.inside_multi_line_comment
     }
 
     /// Turns input into a vec of Tokens
@@ -332,6 +354,14 @@ impl Lexer {
 
         for (i, ch) in code.chars().enumerate() {
             let err_context = LexerErrorContext::new(code, i);
+
+            if ch == '\n' && self.inside_single_line_comment {
+                buf.clear();
+                self.inside_single_line_comment = false;
+            }
+            if self.inside_single_line_comment {
+                continue;
+            }
 
             if !self.inside_string && ch.is_whitespace() {
                 continue;
@@ -374,7 +404,7 @@ impl Lexer {
                 }
 
                 match symbol {
-                    Symbol::Quote => {
+                    Symbol::Quote if !self.inside_comment() => {
                         if self.inside_string {
                             tokens.push_back(Token::new(
                                 TokenType::String(std::mem::take(&mut buf)),
@@ -388,7 +418,7 @@ impl Lexer {
                         self.inside_string = !self.inside_string;
                         buf.clear();
                     }
-                    Symbol::OpenParen if !self.inside_string => {
+                    Symbol::OpenParen if self.inside_code() => {
                         if buf.is_empty() {
                             //return Err(LexerError::OpenParenNotPrecededByCommand(err_context));
                         }
@@ -398,7 +428,7 @@ impl Lexer {
                         tokens.push_back(Token::new(TokenType::Symbol(Symbol::OpenParen), i));
                         self.command_depth += 1;
                     }
-                    Symbol::ClosedParen if !self.inside_string => {
+                    Symbol::ClosedParen if self.inside_code() => {
                         const INVALID_PRECEDING_SYMBOLS: &[Symbol] =
                             &[Symbol::Dot, Symbol::OpenBracket];
 
@@ -417,12 +447,12 @@ impl Lexer {
                             self.command_depth -= 1;
                         }
                     }
-                    Symbol::OpenBracket if !self.inside_string => {
+                    Symbol::OpenBracket if self.inside_code() => {
                         tokens.push_back(Token::new(TokenType::Symbol(Symbol::OpenBracket), i));
                         self.list_depth += 1;
                         buf.clear();
                     }
-                    Symbol::ClosedBracket if !self.inside_string => {
+                    Symbol::ClosedBracket if self.inside_code() => {
                         const INVALID_PRECEDING_SYMBOLS: &[Symbol] =
                             &[Symbol::Dot, Symbol::OpenParen];
 
@@ -446,7 +476,7 @@ impl Lexer {
                             self.list_depth -= 1;
                         }
                     }
-                    Symbol::Dot if !self.inside_string => {
+                    Symbol::Dot if self.inside_code() => {
                         const VALID_PRECEDING_SYMBOLS: &[Symbol] =
                             &[Symbol::Quote, Symbol::ClosedParen, Symbol::ClosedBracket];
 
@@ -482,7 +512,7 @@ impl Lexer {
                             tokens.push_back(Token::new(TokenType::Symbol(Symbol::Dot), i));
                         }
                     }
-                    Symbol::Comma if !self.inside_string => {
+                    Symbol::Comma if self.inside_code() => {
                         const VALID_PRECEDING_SYMBOLS: &[Symbol] =
                             &[Symbol::Quote, Symbol::ClosedParen, Symbol::ClosedBracket];
 
@@ -496,10 +526,17 @@ impl Lexer {
 
                         tokens.push_back(Token::new(TokenType::Symbol(Symbol::Comma), i));
                     }
+                    Symbol::Hashtag if !self.inside_string && !self.inside_multi_line_comment => {
+                        self.inside_single_line_comment = true;
+                    }
+                    Symbol::Star if !self.inside_string && !self.inside_single_line_comment => {
+                        buf.clear();
+                        self.inside_multi_line_comment = !self.inside_multi_line_comment;
+                    }
                     _ => {
                         if self.inside_string {
                             buf.push_str(symbol.as_str());
-                        } else {
+                        } else if !self.inside_comment() {
                             return Err(LexerError::SymbolUsedOutsideOfContext(err_context));
                         }
                     }
@@ -524,7 +561,7 @@ impl Lexer {
                 code,
                 code.len(),
             )));
-        } else if !buf.is_empty() {
+        } else if !buf.is_empty() && !self.inside_comment() {
             return Err(LexerError::TrailingToken(LexerErrorContext::new(
                 code,
                 code.len(),
@@ -563,15 +600,15 @@ mod tests {
             			response.eq("scissors")
             		)
             	),
-            	say("Fuck off."),
+            	say("Only rock, paper, or scissors are acceptable values."),
             	(
             		sayselection),
             		if_then(selection.eq(response), print("Tie!"))
             		if_then(and(selection.eq("rock"), response.eq("scissors")), print("I win!"))
-            		if_then(and(selection.eq("rock"), response.eq("paper")), print("Goddamnit..."))
-            		if_then(and(selection.eq("paper"), response.eq("scissors")), print("Goddamnit..."))
+            		if_then(and(selection.eq("rock"), response.eq("paper")), print("Dang..."))
+            		if_then(and(selection.eq("paper"), response.eq("scissors")), print("Dang..."))
             		if_then(and(selection.eq("paper"), response.eq("rock")), print("I win!"))
-            		if_then(and(selection.eq("scissors"), response.eq("rock")), print("Goddamnit..."))
+            		if_then(and(selection.eq("scissors"), response.eq("rock")), print("Dang..."))
             		if_then(and(selection.eq("scissors"), response.eq("paper")), print("I win!"))
             	)
             )

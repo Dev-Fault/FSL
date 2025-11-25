@@ -247,6 +247,9 @@ impl Parser {
                     }
                 }
             }
+            _ => {
+                panic!("lexer should have handled non parseable tokens")
+            }
         }
         Ok(())
     }

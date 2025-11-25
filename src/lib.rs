@@ -671,6 +671,62 @@ mod interpreter {
     }
 
     #[tokio::test]
+    async fn single_line_comment() {
+        test_interpreter(
+            "
+            # This will print \"Hello, world!\"
+            print(\"Hello, world!\") # comments are completely ignored
+            ",
+            "Hello, world!",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn multi_line_comment() {
+        test_interpreter(
+            "
+            *
+            This will print \"Hello, world!\"
+            These comments are completely ignored by the interpreter
+            they are only here for utility
+            *
+            print(\"Hello, world!\") * comments are completely ignored *
+            ",
+            "Hello, world!",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn out_of_place_comment() {
+        test_interpreter_err(
+            "
+            print(# comment right here \"Hello, world!\") 
+            ",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn mixed_comments() {
+        test_interpreter(
+            "
+            *
+            This will print \"Hello, world!\"
+            These comments are completely ignored by the interpreter
+            # single lines inside multis should be ignored
+            they are only here for utility
+            *
+            # multis inside single * lines should be ignored
+            print(\"Hello, world!\") * comments are completely ignored *
+            ",
+            "Hello, world!",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn print_list() {
         test_interpreter(r#"print([1, 2, 3])"#, r#"[1, 2, 3]"#).await;
     }
@@ -841,11 +897,11 @@ mod interpreter {
     #[tokio::test]
     async fn matrix_manipulation() {
         test_interpreter(
-            r#"
-                matrix.store([[1, 2, 3], [#, #, #], [7, 8, 9]])
-                matrix.replace(1, matrix.index(1).replace(1, "X"))
+            "
+                matrix.store([[1, 2, 3], [\"#\", \"#\", \"#\"], [7, 8, 9]])
+                matrix.replace(1, matrix.index(1).replace(1, \"X\"))
                 print(matrix.index(1).index(1))
-            "#,
+            ",
             r#"X"#,
         )
         .await;
