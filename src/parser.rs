@@ -37,8 +37,12 @@ impl ToString for ParserError<'_> {
                     format_error_context(context.input, context.token.location)
                 )
             }
-            ParserError::ObjectsNotSupported(_) => {
-                format!("Parser error: Objects are not currently supported in FSL")
+            ParserError::ObjectsNotSupported(context) => {
+                format!(
+                    "Parser error: Objects are not currently supported in FSL\n{}\n{}",
+                    context.token.token_type.as_str(),
+                    format_error_context(context.input, context.token.location)
+                )
             }
         }
     }
