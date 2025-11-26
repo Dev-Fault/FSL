@@ -39,7 +39,7 @@ impl FslType {
 
     pub fn gen_conversion_err_to_types(&self, to: &[FslType]) -> ValueError {
         ValueError::InvalidConversion(format!(
-            "cannot convert self type {} to type {:?}",
+            "cannot convert type {} to type {:?}",
             self.as_str(),
             to,
         ))

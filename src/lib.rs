@@ -215,6 +215,7 @@ pub struct InterpreterData {
     pub output: tokio::sync::Mutex<String>,
     pub vars: VarMap,
     pub user_commands: tokio::sync::Mutex<UserCommands>,
+    call_stack: tokio::sync::Mutex<Vec<String>>,
     pub total_loop_limit: Option<usize>,
     pub total_loops: AtomicUsize,
     pub inside_loop: AtomicBool,
@@ -228,6 +229,7 @@ impl InterpreterData {
             output: tokio::sync::Mutex::new(String::new()),
             vars: VarMap::new(Some(DEFAULT_MEMORY_LIMIT)),
             user_commands: tokio::sync::Mutex::new(UserCommands::new()),
+            call_stack: tokio::sync::Mutex::new(Vec::new()),
             total_loop_limit: Some(u16::MAX as usize),
             total_loops: AtomicUsize::new(0),
             inside_loop: AtomicBool::new(false),
@@ -376,7 +378,7 @@ impl FslInterpreter {
                                 format!(
                                     "{}\nError inside command: {}",
                                     e.to_string(),
-                                    expression.name
+                                    self.call_stack_to_string().await
                                 ),
                             ));
                         }
@@ -390,7 +392,7 @@ impl FslInterpreter {
                                     format!(
                                         "{}\nError inside command: {}",
                                         e.to_string(),
-                                        expression.name
+                                        self.call_stack_to_string().await
                                     ),
                                 ));
                             }
@@ -406,6 +408,21 @@ impl FslInterpreter {
             }
         }
         Ok(self.data.output.lock().await.clone())
+    }
+
+    async fn call_stack_to_string(&self) -> String {
+        let call_stack = self.data.call_stack.lock().await;
+        let mut output = String::new();
+        for (i, call) in call_stack.iter().enumerate() {
+            let call = if call.is_empty() { "scope" } else { call };
+
+            if i < call_stack.len() - 1 {
+                output.push_str(&format!("{} > ", call));
+            } else {
+                output.push_str(&format!("{}", call));
+            }
+        }
+        output
     }
 
     async fn parse_expression(&self, expression: Expression) -> Result<Value, CommandError> {
@@ -429,7 +446,7 @@ impl FslInterpreter {
             .get(expression.name.as_str())
         {
             let mut command = Command::new(
-                CommandSpec::new("", RUN_RULES),
+                CommandSpec::new(&expression.name, RUN_RULES),
                 Self::construct_executor(commands::run),
             );
 

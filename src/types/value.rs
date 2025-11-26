@@ -236,8 +236,9 @@ impl Value {
             }
             Value::Var(label) => data.vars.clone_value(&label)?.as_text(data).await,
             Value::Command(command) => {
+                // TODO removed clone here, not sure if it will break anything
                 command
-                    .execute_clone(data.clone())
+                    .execute(data.clone())
                     .await?
                     .as_text(data.clone())
                     .await
@@ -350,7 +351,7 @@ impl Value {
     #[allow(dead_code)]
     fn gen_conversion_err_to_types(&self, to: &[FslType]) -> ValueError {
         ValueError::InvalidConversion(format!(
-            "cannot convert self type {} to type {:?}",
+            "cannot convert type {} to type {:?}",
             self.as_type().as_str(),
             to,
         ))

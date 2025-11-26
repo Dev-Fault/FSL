@@ -1260,11 +1260,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for _ in 0..vars {
         let mut value = values.pop_front().unwrap();
         if value.is_type(FslType::Command) || value.is_type(FslType::List) {
-            value = values
-                .pop_front()
-                .unwrap()
-                .as_raw(data.clone(), &[FslType::Command, FslType::List])
-                .await?;
+            value = value.as_raw(data.clone(), NON_NONE_VALUES).await?;
         };
         var_map.insert(var_labels.pop_front().unwrap(), value);
     }

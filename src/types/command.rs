@@ -78,15 +78,18 @@ impl ArgRule {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommandSpec {
-    label: &'static str,
+    label: String,
     arg_rules: &'static [ArgRule],
 }
 
 impl CommandSpec {
-    pub fn new(label: &'static str, arg_rules: &'static [ArgRule]) -> Self {
-        Self { label, arg_rules }
+    pub fn new(label: &str, arg_rules: &'static [ArgRule]) -> Self {
+        Self {
+            label: label.to_string(),
+            arg_rules,
+        }
     }
 }
 
@@ -137,8 +140,8 @@ impl Command {
         }
     }
 
-    pub fn get_label(&self) -> &'static str {
-        self.command_spec.label
+    pub fn get_label(&self) -> &str {
+        &self.command_spec.label
     }
 
     pub fn get_rules(&self) -> &'static [ArgRule] {
@@ -277,19 +280,17 @@ impl Command {
     pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
         self.validate_args()?;
 
+        let label = self.get_label().to_string();
+        data.clone().call_stack.lock().await.push(label.clone());
+
         let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
-        Ok(executor.execute(self, data).await?)
-    }
-
-    pub async fn execute_clone(&self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-        self.validate_args()?;
-
-        Ok(self
-            .executor
-            .clone()
-            .expect(Self::EXECUTE_EXPECT)
-            .execute(self.clone(), data)
-            .await?)
+        match executor.execute(self, data.clone()).await {
+            Ok(value) => {
+                data.call_stack.lock().await.pop();
+                Ok(value)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -310,7 +311,7 @@ impl fmt::Debug for Command {
 impl Clone for Command {
     fn clone(&self) -> Self {
         Self {
-            command_spec: self.command_spec,
+            command_spec: self.command_spec.clone(),
             args: self.args.clone(),
             executor: self.executor.clone(),
         }
