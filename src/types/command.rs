@@ -249,6 +249,11 @@ impl Command {
                     self.validate_arg_range(arg_rule, &range)?;
                 }
                 ArgPos::OptionalIndex(i) => {
+                    max_args = if max_args < (*i + 1) {
+                        *i + 1
+                    } else {
+                        max_args
+                    };
                     let range = *i..*i + 1;
                     if let Some(_) = self.args.get(*i) {
                         self.validate_arg_range(arg_rule, &range)?;
