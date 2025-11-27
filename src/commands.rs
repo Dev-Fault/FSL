@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, atomic::Ordering},
+    time::Duration,
 };
 
 use async_recursion::async_recursion;
@@ -1243,6 +1244,30 @@ pub async fn random_range(
     }
 }
 
+pub const SLEEP: &str = "sleep";
+pub const SLEEP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES)];
+pub async fn sleep(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let delay = values.pop_front().unwrap().as_float(data).await?;
+    const MAX_DELAY_SECS: f64 = 60.0;
+    if delay > MAX_DELAY_SECS {
+        Err(CommandError::Custom(
+            "sleep time cannot be greater than 60 seconds".into(),
+        ))
+    } else if !delay.is_finite() {
+        Err(CommandError::Custom(
+            "sleep time must be a finite number".into(),
+        ))
+    } else if delay.is_sign_negative() {
+        Err(CommandError::Custom(
+            "sleep time cannot be a negative number".into(),
+        ))
+    } else {
+        tokio::time::sleep(Duration::from_secs_f64(delay)).await;
+        Ok(Value::None)
+    }
+}
+
 pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::List])];
 pub const RANDOM_ENTRY: &str = "random_entry";
 pub async fn random_entry(
@@ -1387,6 +1412,8 @@ pub async fn exit(_: Command, _: Arc<InterpreterData>) -> Result<Value, CommandE
 
 #[cfg(test)]
 pub mod tests {
+    use std::time::{Duration, SystemTime};
+
     use crate::{CommandError, FslInterpreter, InterpreterError, types::value::ValueError};
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
@@ -2070,6 +2097,14 @@ pub mod tests {
         test_interpreter(r#"is_whitespace(" ").print()"#, "true").await;
         test_interpreter(r#"is_whitespace("").print()"#, "true").await;
         test_interpreter(r#"is_whitespace(" h e y ").print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn sleep() {
+        let time = SystemTime::now();
+        test_interpreter(r#"sleep(2.1)"#, "").await;
+        let time = time.elapsed().unwrap();
+        assert!(time >= Duration::from_secs_f32(2.0));
     }
 
     #[tokio::test]
