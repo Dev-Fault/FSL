@@ -71,6 +71,8 @@ pub const INDEX_TYPES: &[FslType] = &[
 
 pub const ARRAY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
 
+pub const LIST_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
+
 pub const TEXT_TYPES: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
 
 pub const LOGIC_TYPES: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
@@ -1268,7 +1270,7 @@ pub async fn sleep(command: Command, data: Arc<InterpreterData>) -> Result<Value
     }
 }
 
-pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::List])];
+pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LIST_TYPES)];
 pub const RANDOM_ENTRY: &str = "random_entry";
 pub async fn random_entry(
     command: Command,
