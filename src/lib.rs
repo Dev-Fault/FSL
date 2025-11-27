@@ -560,6 +560,11 @@ impl FslInterpreter {
                 (CAPITALIZE, CAPITALIZE_RULES, commands::capitalize),
                 (UPPERCASE, UPPERCASE_RULES, commands::uppercase),
                 (LOWERCASE, LOWERCASE_RULES, commands::lowercase),
+                (IS_NUMBER, IS_NUMBER_RULES, commands::is_number),
+                (IS_NONE, IS_NONE_RULES, commands::is_none),
+                (IS_ALPHA, IS_ALPHA_RULES, commands::is_alpha),
+                (IS_ALPHA_EN, IS_ALPHA_EN_RULES, commands::is_alpha_en),
+                (IS_WHITESPACE, IS_WHITESPACE_RULES, commands::is_whitespace),
                 (
                     REMOVE_WHITESPACE,
                     REMOVE_WHITESPACE_RULES,

@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-pub const ALL_VALUES: &[FslType] = &[
+pub const ALL_TYPES: &[FslType] = &[
     FslType::Int,
     FslType::Float,
     FslType::Bool,
@@ -330,12 +330,12 @@ pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
     let a = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), ALL_VALUES)
+        .as_raw(data.clone(), ALL_TYPES)
         .await?;
     let b = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), ALL_VALUES)
+        .as_raw(data.clone(), ALL_TYPES)
         .await?;
 
     Ok(Value::Bool(a.eq(&b)?))
@@ -599,7 +599,7 @@ async fn index_matrix(
                     matrix = std::mem::take(inner).as_list(data.clone()).await?;
                 } else {
                     return Ok(std::mem::take(inner)
-                        .as_raw(data.clone(), ALL_VALUES)
+                        .as_raw(data.clone(), ALL_TYPES)
                         .await?);
                 }
             }
@@ -633,7 +633,7 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
         } else {
             let i = arg_1.as_usize(data.clone()).await?;
             match list.get(i) {
-                Some(value) => Ok(value.clone().as_raw(data, ALL_VALUES).await?),
+                Some(value) => Ok(value.clone().as_raw(data, ALL_TYPES).await?),
                 None => Err(CommandError::IndexOutOfBounds),
             }
         }
@@ -1102,6 +1102,86 @@ pub async fn lowercase(
     let mut values = command.take_args();
     let text = values.pop_front().unwrap().as_text(data).await?;
     Ok(text.to_lowercase().into())
+}
+
+pub const IS_NUMBER_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const IS_NUMBER: &str = "is_number";
+pub async fn is_number(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let value = values.pop_front().unwrap();
+    let is_int = value.clone().as_int(data.clone()).await.is_ok();
+    let is_float = value.as_float(data.clone()).await.is_ok();
+    Ok(Value::Bool(is_int || is_float))
+}
+
+pub const IS_NONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const IS_NONE: &str = "is_none";
+pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let value = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), ALL_TYPES)
+        .await?;
+    Ok(Value::Bool(value.is_type(FslType::None)))
+}
+
+pub const IS_ALPHA_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const IS_ALPHA: &str = "is_alpha";
+pub async fn is_alpha(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let value = values.pop_front().unwrap();
+    if let Ok(text) = value.as_text(data).await {
+        let is_alpha = text.chars().all(char::is_alphabetic);
+
+        Ok(Value::Bool(is_alpha))
+    } else {
+        Ok(Value::Bool(false))
+    }
+}
+
+pub const IS_ALPHA_EN_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const IS_ALPHA_EN: &str = "is_alpha_en";
+pub async fn is_alpha_en(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let value = values.pop_front().unwrap();
+    if let Ok(text) = value.as_text(data).await {
+        const ALPHA: &[char] = &[
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q',
+            'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+        ];
+
+        let is_alpha = text
+            .chars()
+            .all(|c| ALPHA.contains(&c.to_ascii_lowercase()));
+
+        Ok(Value::Bool(is_alpha))
+    } else {
+        Ok(Value::Bool(false))
+    }
+}
+
+pub const IS_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const IS_WHITESPACE: &str = "is_whitespace";
+pub async fn is_whitespace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let value = values.pop_front().unwrap();
+    if let Ok(text) = value.as_text(data).await {
+        let is_whitespace = text.chars().all(char::is_whitespace);
+
+        Ok(Value::Bool(is_whitespace))
+    } else {
+        Ok(Value::Bool(false))
+    }
 }
 
 pub const REMOVE_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
@@ -1956,6 +2036,40 @@ pub mod tests {
     #[tokio::test]
     async fn reverse_text() {
         test_interpreter(r#"print("hello".reverse())"#, "olleh").await;
+    }
+
+    #[tokio::test]
+    async fn is_number() {
+        test_interpreter(r#"is_number(1).print()"#, "true").await;
+        test_interpreter(r#"is_number(1.012).print()"#, "true").await;
+        test_interpreter(r#"is_number(false).print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn is_none() {
+        test_interpreter(r#"is_none(print()).print()"#, "true").await;
+        test_interpreter(r#"is_none("").print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn is_alpha() {
+        test_interpreter(r#"is_alpha("apple").print()"#, "true").await;
+        test_interpreter(r#"is_alpha("a1pple").print()"#, "false").await;
+        test_interpreter(r#"is_alpha("café").print()"#, "true").await;
+    }
+
+    #[tokio::test]
+    async fn is_alpha_en() {
+        test_interpreter(r#"is_alpha_en("apple").print()"#, "true").await;
+        test_interpreter(r#"is_alpha_en("a1pple").print()"#, "false").await;
+        test_interpreter(r#"is_alpha_en("café").print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn is_whitespace() {
+        test_interpreter(r#"is_whitespace(" ").print()"#, "true").await;
+        test_interpreter(r#"is_whitespace("").print()"#, "true").await;
+        test_interpreter(r#"is_whitespace(" h e y ").print()"#, "false").await;
     }
 
     #[tokio::test]
