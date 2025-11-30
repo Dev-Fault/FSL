@@ -61,6 +61,9 @@ pub const NUMERIC_TYPES: &[FslType] = &[
     FslType::Text,
 ];
 
+pub const WHOLE_NUMBER_TYPES: &[FslType] =
+    &[FslType::Int, FslType::Command, FslType::Var, FslType::Text];
+
 pub const INDEX_TYPES: &[FslType] = &[
     FslType::List,
     FslType::Int,
