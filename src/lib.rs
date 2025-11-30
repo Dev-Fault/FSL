@@ -211,6 +211,7 @@ impl VarMap {
     }
 }
 
+#[derive(Debug)]
 pub struct InterpreterData {
     pub output: tokio::sync::Mutex<String>,
     pub vars: VarMap,
@@ -255,6 +256,7 @@ impl InterpreterData {
     }
 }
 
+#[derive(Debug)]
 pub struct FslInterpreter {
     pub commands: CommandMap,
     pub data: Arc<InterpreterData>,
@@ -284,6 +286,7 @@ impl FslInterpreter {
         self.data = Arc::new(InterpreterData::new());
     }
 
+    /// Adds a command to the interpreters command map, over-writing the command if it was already in the map
     pub fn add_command(
         &mut self,
         label: &'static str,
