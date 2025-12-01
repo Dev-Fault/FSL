@@ -474,7 +474,7 @@ pub async fn while_command(
 
     let mut final_value = Value::None;
 
-    data.inside_loop.store(true, Ordering::Relaxed);
+    data.loop_depth.fetch_add(1, Ordering::Relaxed);
 
     'outer: while while_condition.clone().as_bool(data.clone()).await? {
         for command in &values {
@@ -493,7 +493,7 @@ pub async fn while_command(
         data.increment_loops().await?;
     }
 
-    data.inside_loop.store(false, Ordering::Relaxed);
+    data.loop_depth.fetch_sub(1, Ordering::Relaxed);
 
     Ok(final_value)
 }
@@ -508,7 +508,7 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let repetitions = values.pop_front().unwrap().as_int(data.clone()).await?;
     let mut final_value = Value::None;
 
-    data.inside_loop.store(true, Ordering::Relaxed);
+    data.loop_depth.fetch_add(1, Ordering::Relaxed);
 
     'outer: for _ in 0..repetitions {
         for command in &values {
@@ -526,7 +526,7 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         data.increment_loops().await?;
     }
 
-    data.inside_loop.store(false, Ordering::Relaxed);
+    data.loop_depth.fetch_sub(1, Ordering::Relaxed);
 
     Ok(final_value)
 }
@@ -1386,9 +1386,8 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const BREAK: &str = "break";
 pub async fn break_command(_: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    if data.inside_loop.load(Ordering::Relaxed) {
-        data.break_flag
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+    if data.loop_depth.load(Ordering::Relaxed) > 0 {
+        data.break_flag.store(true, Ordering::Relaxed);
     } else {
         return Err(CommandError::BreakOutsideLoop);
     }
@@ -1401,9 +1400,8 @@ pub async fn continue_command(
     _: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, CommandError> {
-    if data.inside_loop.load(Ordering::Relaxed) {
-        data.continue_flag
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+    if data.loop_depth.load(Ordering::Relaxed) > 0 {
+        data.continue_flag.store(true, Ordering::Relaxed);
     } else {
         return Err(CommandError::ContinueOutsideLoop);
     }
@@ -2121,5 +2119,18 @@ pub mod tests {
                 ValueError::CommandExecutionFailed(_)
             ))
         ))
+    }
+
+    #[tokio::test]
+    async fn custom_command_with_loop_then_break_in_loop() {
+        test_interpreter(
+            r#"
+                test.def(repeat(2, add(1,2)))
+                while(true, test(), break())
+                print("done")
+            "#,
+            "done",
+        )
+        .await;
     }
 }

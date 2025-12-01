@@ -219,7 +219,7 @@ pub struct InterpreterData {
     call_stack: tokio::sync::Mutex<Vec<String>>,
     pub total_loop_limit: Option<usize>,
     pub total_loops: AtomicUsize,
-    pub inside_loop: AtomicBool,
+    pub loop_depth: AtomicUsize,
     pub break_flag: AtomicBool,
     pub continue_flag: AtomicBool,
 }
@@ -233,7 +233,7 @@ impl InterpreterData {
             call_stack: tokio::sync::Mutex::new(Vec::new()),
             total_loop_limit: Some(u16::MAX as usize),
             total_loops: AtomicUsize::new(0),
-            inside_loop: AtomicBool::new(false),
+            loop_depth: AtomicUsize::new(0),
             break_flag: AtomicBool::new(false),
             continue_flag: AtomicBool::new(false),
         }
