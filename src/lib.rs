@@ -577,6 +577,7 @@ impl FslInterpreter {
                 (RANDOM_RANGE, RANDOM_RANGE_RULES, commands::random_range),
                 (SLEEP, SLEEP_RULES, commands::sleep),
                 (RANDOM_ENTRY, RANDOM_ENTRY_RULES, commands::random_entry),
+                (SHUFFLE, SHUFFLE_RULES, commands::shuffle),
                 (DEF, DEF_RULES, commands::def),
                 (EXIT, NO_ARGS, commands::exit),
                 (BREAK, NO_ARGS, commands::break_command),

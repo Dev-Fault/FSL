@@ -5,6 +5,7 @@ use std::{
 };
 
 use async_recursion::async_recursion;
+use rand::seq::SliceRandom;
 
 use crate::{
     InterpreterData,
@@ -1284,6 +1285,15 @@ pub async fn random_entry(
     Ok(list[rand::random_range(0..list.len())].clone())
 }
 
+pub const SHUFFLE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LIST_TYPES)];
+pub const SHUFFLE: &str = "shuffle";
+pub async fn shuffle(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let mut list = values.pop_front().unwrap().as_list(data).await?;
+    list.shuffle(&mut rand::rng());
+    Ok(Value::List(list))
+}
+
 pub const DEF_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::Var]),
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Var, FslType::Command]),
@@ -1430,6 +1440,17 @@ pub mod tests {
         println!("{}", &result);
 
         assert!(result == expected_output);
+    }
+
+    pub async fn observe_interpreter(code: &str) {
+        let result = FslInterpreter::new().interpret(code).await;
+
+        println!("DEBUG");
+        dbg!(&result);
+
+        let result = result.unwrap();
+        println!("PRETTY PRINT");
+        println!("{}", &result);
     }
 
     pub async fn test_interpreter_embedded(code: &str, expected_output: &str) {
@@ -1892,6 +1913,11 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn shuffle() {
+        observe_interpreter(r#"list.store([1, 2, 3, 4]) print(list, "\n", shuffle(list))"#).await;
+    }
+
+    #[tokio::test]
     async fn r#break() {
         test_interpreter(r#"while(true, print("1"), break())"#, r#"1"#).await;
     }
@@ -2105,9 +2131,9 @@ pub mod tests {
     #[tokio::test]
     async fn sleep() {
         let time = SystemTime::now();
-        test_interpreter(r#"sleep(2.1)"#, "").await;
+        test_interpreter(r#"sleep(0.2)"#, "").await;
         let time = time.elapsed().unwrap();
-        assert!(time >= Duration::from_secs_f32(2.0));
+        assert!(time >= Duration::from_secs_f32(0.2));
     }
 
     #[tokio::test]
