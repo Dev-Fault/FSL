@@ -1211,11 +1211,14 @@ pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let mut values = command.take_args();
     let text_to_split = values.pop_front().unwrap().as_text(data.clone()).await?;
     let pattern = values.pop_front().unwrap().as_text(data.clone()).await?;
-    let split = text_to_split
-        .split(&pattern)
-        .map(|s| Value::Text(s.to_string()))
-        .collect::<Vec<Value>>();
-    Ok(Value::List(split))
+    let mut list: Vec<Value> = Vec::new();
+
+    for split in text_to_split.split(&pattern) {
+        if !split.is_empty() {
+            list.push(Value::Text(split.to_string()));
+        }
+    }
+    Ok(Value::List(list))
 }
 
 pub const RANDOM_RANGE_RULES: &[ArgRule] = &[
