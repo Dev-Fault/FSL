@@ -827,6 +827,30 @@ mod tests {
     }
 
     #[test]
+    fn tokenize_multiple_new_line_symbols() {
+        let lexer = Lexer::new();
+        let tokens = lexer
+            .tokenize(r#"print("hello\nmy\nwonderful\nfriend")"#)
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
+
+        let mut text_output = String::new();
+
+        println!("");
+        for token in tokens {
+            if let TokenType::String(ref text) = token {
+                text_output = format!("{}", text);
+            }
+            println!("{:?}", token);
+        }
+
+        println!("{}", text_output);
+        assert!(text_output == "hello\nmy\nwonderful\nfriend");
+    }
+
+    #[test]
     fn tokenize_tab_symbol() {
         let lexer = Lexer::new();
         let tokens = lexer
