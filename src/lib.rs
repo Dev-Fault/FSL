@@ -563,6 +563,7 @@ impl FslInterpreter {
                 (CAPITALIZE, CAPITALIZE_RULES, commands::capitalize),
                 (UPPERCASE, UPPERCASE_RULES, commands::uppercase),
                 (LOWERCASE, LOWERCASE_RULES, commands::lowercase),
+                (TRIM, TRIM_RULES, commands::trim),
                 (IS_NUMBER, IS_NUMBER_RULES, commands::is_number),
                 (IS_NONE, IS_NONE_RULES, commands::is_none),
                 (IS_ALPHA, IS_ALPHA_RULES, commands::is_alpha),

@@ -1111,6 +1111,19 @@ pub async fn lowercase(
     Ok(text.to_lowercase().into())
 }
 
+pub const TRIM_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(1), TEXT_TYPES),
+];
+pub const TRIM: &str = "trim";
+pub async fn trim(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let text = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let pattern = values.pop_front().unwrap().as_text(data).await?;
+    let chars: Vec<char> = pattern.chars().collect();
+    Ok(text.trim_matches(chars.as_slice()).into())
+}
+
 pub const IS_NUMBER_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
 pub const IS_NUMBER: &str = "is_number";
 pub async fn is_number(
@@ -1885,6 +1898,11 @@ pub mod tests {
     #[tokio::test]
     async fn lowercase() {
         test_interpreter(r#"lowercase("HEY").print()"#, "hey").await;
+    }
+
+    #[tokio::test]
+    async fn trim() {
+        test_interpreter(r#"trim("\"hey\".", ".\"").print()"#, "hey").await;
     }
 
     #[tokio::test]
