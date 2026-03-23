@@ -368,14 +368,33 @@ pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
     }
 }
 
-pub const LT_RULES: &'static [ArgRule] = &[
+pub const GTOE_RULES: &[ArgRule; 2] = &[
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
+pub const GTOE: &str = "gtoe";
+pub async fn gtoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    if contains_float(&values, data.clone()).await? {
+        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+
+        Ok(Value::Bool(a >= b))
+    } else {
+        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+
+        Ok(Value::Bool(a >= b))
+    }
+}
+
+pub const LT_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
 ];
 pub const LT: &str = "lt";
 pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-
     if contains_float(&values, data.clone()).await? {
         let a = values.pop_front().unwrap().as_float(data.clone()).await?;
         let b = values.pop_front().unwrap().as_float(data.clone()).await?;
@@ -386,6 +405,27 @@ pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
         let b = values.pop_front().unwrap().as_int(data.clone()).await?;
 
         Ok(Value::Bool(a < b))
+    }
+}
+
+pub const LTOE_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+];
+pub const LTOE: &str = "ltoe";
+pub async fn ltoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+
+    if contains_float(&values, data.clone()).await? {
+        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+
+        Ok(Value::Bool(a <= b))
+    } else {
+        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+
+        Ok(Value::Bool(a <= b))
     }
 }
 
@@ -1658,9 +1698,17 @@ pub mod tests {
         test_interpreter(r#"print(lt(2, 1))"#, "false").await;
         test_interpreter(r#"print(lt(2, 2))"#, "false").await;
 
+        test_interpreter(r#"print(ltoe(1, 2))"#, "true").await;
+        test_interpreter(r#"print(ltoe(2, 1))"#, "false").await;
+        test_interpreter(r#"print(ltoe(2, 2))"#, "true").await;
+
         test_interpreter(r#"print(gt(1, 2))"#, "false").await;
         test_interpreter(r#"print(gt(2, 1))"#, "true").await;
         test_interpreter(r#"print(gt(2, 2))"#, "false").await;
+
+        test_interpreter(r#"print(gtoe(1, 2))"#, "false").await;
+        test_interpreter(r#"print(gtoe(2, 1))"#, "true").await;
+        test_interpreter(r#"print(gtoe(2, 2))"#, "true").await;
     }
 
     #[tokio::test]
@@ -1672,9 +1720,17 @@ pub mod tests {
         test_interpreter(r#"print(lt(2.1, 1.02))"#, "false").await;
         test_interpreter(r#"print(lt(2.0, 2.0))"#, "false").await;
 
+        test_interpreter(r#"print(ltoe(1.1, 1.2))"#, "true").await;
+        test_interpreter(r#"print(ltoe(2.1, 1.02))"#, "false").await;
+        test_interpreter(r#"print(ltoe(2.0, 2.0))"#, "true").await;
+
         test_interpreter(r#"print(gt(1.4, 2.2))"#, "false").await;
         test_interpreter(r#"print(gt(2.2, 1.2))"#, "true").await;
         test_interpreter(r#"print(gt(2.0, 2.0))"#, "false").await;
+
+        test_interpreter(r#"print(gtoe(1.4, 2.2))"#, "false").await;
+        test_interpreter(r#"print(gtoe(2.2, 1.2))"#, "true").await;
+        test_interpreter(r#"print(gtoe(2.0, 2.0))"#, "true").await;
     }
 
     #[tokio::test]
