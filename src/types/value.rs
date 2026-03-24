@@ -214,7 +214,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_var(self, data: Arc<InterpreterData>) -> Result<String, ValueError> {
+    pub async fn as_var_label(self, data: Arc<InterpreterData>) -> Result<String, ValueError> {
         let to_type = FslType::Var;
         match self {
             Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
@@ -227,7 +227,7 @@ impl Value {
                 command
                     .execute(data.clone())
                     .await?
-                    .as_var(data.clone())
+                    .as_var_label(data.clone())
                     .await
             }
             Value::None => Err(self.gen_conversion_err_to_type(to_type)),
@@ -299,6 +299,7 @@ impl Value {
         }
     }
 
+    #[async_recursion]
     pub async fn as_raw(
         self,
         data: Arc<InterpreterData>,
@@ -309,7 +310,8 @@ impl Value {
         if self.is_type(FslType::Var) {
             value = self.get_var_value(data.clone())?;
         } else if self.is_type(FslType::Command) {
-            value = self.as_command()?.execute(data.clone()).await?;
+            let result = self.as_command()?.execute(data.clone()).await?;
+            value = result.as_raw(data.clone(), valid_types).await?;
         } else if self.is_type(FslType::List) {
             value = Value::List(self.as_list(data.clone()).await?);
         } else {

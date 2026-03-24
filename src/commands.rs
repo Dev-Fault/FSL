@@ -254,7 +254,11 @@ pub const STORE_RULES: &[ArgRule] = &[
 pub const STORE: &str = "store";
 pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap().as_var(data.clone()).await?;
+    let arg_0 = values
+        .pop_front()
+        .unwrap()
+        .as_var_label(data.clone())
+        .await?;
     let arg_1 = values.pop_front().unwrap();
     let label = &arg_0;
 
@@ -283,15 +287,11 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
     Ok(data.vars.clone_value(label)?)
 }
 
-pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
 pub const CLONE: &str = "clone";
 pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let value = command
-        .take_args()
-        .pop_front()
-        .unwrap()
-        .get_var_value(data)?;
-    Ok(value.clone())
+    let value = command.take_args().pop_front().unwrap();
+    Ok(value.clone().as_raw(data, ALL_TYPES).await?)
 }
 
 pub const FREE: &str = "free";
