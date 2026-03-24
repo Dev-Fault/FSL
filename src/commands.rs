@@ -44,6 +44,7 @@ pub const VAR_VALUES: &[FslType] = &[
     FslType::Text,
     FslType::List,
     FslType::Var,
+    FslType::Command,
 ];
 
 pub const LITERAL_VALUES: &[FslType] = &[
@@ -253,9 +254,9 @@ pub const STORE_RULES: &[ArgRule] = &[
 pub const STORE: &str = "store";
 pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
+    let arg_0 = values.pop_front().unwrap().as_var(data.clone()).await?;
     let arg_1 = values.pop_front().unwrap();
-    let label = arg_0.get_var_label()?;
+    let label = &arg_0;
 
     match arg_1 {
         Value::Var(var) => {
@@ -649,9 +650,7 @@ async fn index_matrix(
                 if inner.is_type(FslType::List) {
                     matrix = std::mem::take(inner).as_list(data.clone()).await?;
                 } else {
-                    return Ok(std::mem::take(inner)
-                        .as_raw(data.clone(), ALL_TYPES)
-                        .await?);
+                    return Ok(std::mem::take(inner));
                 }
             }
             None => {
@@ -684,7 +683,7 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
         } else {
             let i = arg_1.as_usize(data.clone()).await?;
             match list.get(i) {
-                Some(value) => Ok(value.clone().as_raw(data, ALL_TYPES).await?),
+                Some(value) => Ok(value.clone()),
                 None => Err(CommandError::IndexOutOfBounds),
             }
         }
@@ -2237,6 +2236,21 @@ pub mod tests {
                 print("done")
             "#,
             "done",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn store_in_result_of_command() {
+        test_interpreter(
+            r#"
+                character_name.store("jake")
+                character.store([character_name])
+                character.index(0).store("joseph")
+                character.index(0).print("\n")
+                character_name.print()
+            "#,
+            "joseph\njoseph",
         )
         .await;
     }

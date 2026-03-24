@@ -214,6 +214,27 @@ impl Value {
     }
 
     #[async_recursion]
+    pub async fn as_var(self, data: Arc<InterpreterData>) -> Result<String, ValueError> {
+        let to_type = FslType::Var;
+        match self {
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Var(label) => Ok(label),
+            Value::Command(command) => {
+                command
+                    .execute(data.clone())
+                    .await?
+                    .as_var(data.clone())
+                    .await
+            }
+            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+        }
+    }
+
+    #[async_recursion]
     pub async fn as_text(self, data: Arc<InterpreterData>) -> Result<String, ValueError> {
         match self {
             Value::Int(value) => Ok(value.to_string()),
@@ -236,7 +257,6 @@ impl Value {
             }
             Value::Var(label) => data.vars.clone_value(&label)?.as_text(data).await,
             Value::Command(command) => {
-                // TODO removed clone here, not sure if it will break anything
                 command
                     .execute(data.clone())
                     .await?
