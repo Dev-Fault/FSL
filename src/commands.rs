@@ -271,6 +271,10 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
                 .vars
                 .insert_value(label, command.execute(data.clone()).await?)?;
         }
+        Value::List(_) => {
+            let value = arg_1.as_list(data.clone()).await?;
+            data.vars.insert_value(label, Value::List(value))?;
+        }
         _ => {
             data.vars.insert_value(label, arg_1)?;
         }
@@ -286,6 +290,7 @@ pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value
         .pop_front()
         .unwrap()
         .get_var_value(data)?;
+    dbg!(value.clone());
     Ok(value.clone())
 }
 
