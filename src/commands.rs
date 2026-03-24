@@ -290,7 +290,6 @@ pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value
         .pop_front()
         .unwrap()
         .get_var_value(data)?;
-    dbg!(value.clone());
     Ok(value.clone())
 }
 
