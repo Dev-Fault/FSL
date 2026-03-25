@@ -186,7 +186,8 @@ impl VarMap {
                 }
             }
             None => Err(ValueError::NonExistantVar(format!(
-                "cannot get value of a non existant var"
+                "cannot get value of a non existant var: \"{}\"",
+                label
             ))),
         }
     }
@@ -1772,6 +1773,29 @@ mod interpreter {
         matrix.print()
         "#,
             "[[3, 2, 1], [4, 100, 6], [7, 8, 9]]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn parameter_var_in_function_in_list() {
+        test_interpreter(
+            r#"
+            C_MODS.store(0)
+            P_MOD.store(0)
+            P_DUR.store(1)
+            attacker_mods.store([])
+            attacker.store([attacker_mods])
+            potion.store([1, 1])
+            add_potion_modifier.def(potion,
+			    mods.store(attacker.index(C_MODS).clone())
+			    mods.push([potion.index(P_MOD).clone(), potion.index(P_DUR).clone()])
+			    attacker.index(C_MODS).store(mods.clone())
+            )
+            add_potion_modifier([50, 3])
+			print("potion: [1, 1]\n", concat("mods: ", mods, "\nattacker_mods: ", attacker.index(C_MODS)))
+            "#,
+            "potion: [1, 1]\nmods: [[50, 3]]\nattacker_mods: [[50, 3]]",
         )
         .await;
     }

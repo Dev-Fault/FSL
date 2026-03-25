@@ -254,37 +254,20 @@ pub const STORE_RULES: &[ArgRule] = &[
 pub const STORE: &str = "store";
 pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let arg_0 = values
+    let var = values
         .pop_front()
         .unwrap()
         .as_var_label(data.clone())
         .await?;
-    let arg_1 = values.pop_front().unwrap();
-    let label = &arg_0;
+    let value_to_store = values.pop_front().unwrap();
+    let var_label = &var;
 
-    match arg_1 {
-        Value::Var(var) => {
-            let value = data
-                .vars
-                .clone_value(&var)?
-                .as_raw(data.clone(), LITERAL_VALUES)
-                .await?;
-            data.vars.insert_value(label, value)?;
-        }
-        Value::Command(command) => {
-            data.clone()
-                .vars
-                .insert_value(label, command.execute(data.clone()).await?)?;
-        }
-        Value::List(_) => {
-            let value = arg_1.as_list(data.clone()).await?;
-            data.vars.insert_value(label, Value::List(value))?;
-        }
-        _ => {
-            data.vars.insert_value(label, arg_1)?;
-        }
-    }
-    Ok(data.vars.clone_value(label)?)
+    data.vars.insert_value(
+        var_label,
+        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
+    )?;
+
+    Ok(data.vars.clone_value(var_label)?)
 }
 
 pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
@@ -1393,6 +1376,25 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     Ok(Value::None)
 }
 
+fn substitute_args_list(
+    values: &mut Vec<Value>,
+    var_map: &HashMap<String, Value>,
+) -> Result<(), CommandError> {
+    for value in values {
+        match value {
+            Value::List(values) => substitute_args_list(values, var_map)?,
+            Value::Var(label) => {
+                if let Some(var_value) = var_map.get(label) {
+                    *value = var_value.clone();
+                }
+            }
+            Value::Command(command) => substitute_args(command, var_map)?,
+            _ => continue,
+        }
+    }
+    Ok(())
+}
+
 fn substitute_args(
     command: &mut Command,
     var_map: &HashMap<String, Value>,
@@ -1406,6 +1408,8 @@ fn substitute_args(
             let mut inner_command = std::mem::take(arg).as_command()?;
             substitute_args(&mut inner_command, var_map)?;
             *arg = Value::Command(inner_command);
+        } else if let Value::List(values) = arg {
+            substitute_args_list(values, var_map)?;
         } else {
         }
     }
