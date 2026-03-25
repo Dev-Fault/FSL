@@ -1400,17 +1400,19 @@ fn substitute_args(
     var_map: &HashMap<String, Value>,
 ) -> Result<(), CommandError> {
     for arg in command.get_args_mut() {
-        if arg.is_type(FslType::Var)
-            && let Some(value) = var_map.get(arg.get_var_label()?)
-        {
-            *arg = value.clone();
-        } else if arg.is_type(FslType::Command) {
-            let mut inner_command = std::mem::take(arg).as_command()?;
-            substitute_args(&mut inner_command, var_map)?;
-            *arg = Value::Command(inner_command);
-        } else if let Value::List(values) = arg {
-            substitute_args_list(values, var_map)?;
-        } else {
+        match arg {
+            Value::List(values) => substitute_args_list(values, var_map)?,
+            Value::Var(label) => {
+                if let Some(var_value) = var_map.get(label) {
+                    *arg = var_value.clone()
+                }
+            }
+            Value::Command(_) => {
+                let mut inner_command = std::mem::take(arg).as_command()?;
+                substitute_args(&mut inner_command, var_map)?;
+                *arg = Value::Command(inner_command);
+            }
+            _ => continue,
         }
     }
 
