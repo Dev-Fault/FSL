@@ -88,9 +88,31 @@ pub type UserCommands = HashMap<String, UserCommand>;
 const MEGABYTE: usize = 1024 * 1024;
 pub const DEFAULT_MEMORY_LIMIT: usize = 100 * MEGABYTE;
 
+#[derive(Debug, Clone)]
+struct VarEntry {
+    value: Value,
+    constant: bool,
+}
+
+impl VarEntry {
+    fn new_mut(value: Value) -> VarEntry {
+        VarEntry {
+            value: value,
+            constant: false,
+        }
+    }
+
+    fn new_const(value: Value) -> VarEntry {
+        VarEntry {
+            value: value,
+            constant: true,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct VarMap {
-    map: Mutex<HashMap<String, Value>>,
+    map: Mutex<HashMap<String, VarEntry>>,
     mem_limit: Option<usize>,
     allocated_mem: AtomicUsize,
 }
@@ -139,7 +161,7 @@ impl VarMap {
         }
     }
 
-    pub fn insert_value(&self, label: &str, value: Value) -> Result<(), ValueError> {
+    pub fn insert_mut_value(&self, label: &str, value: Value) -> Result<(), ValueError> {
         match value {
             Value::Var(_) => {
                 return Err(ValueError::InvalidVarValue(
@@ -157,32 +179,83 @@ impl VarMap {
                 }
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
-                map.insert(label.to_string(), value.clone());
+                if let Some(prev_entry) = map.get(label) {
+                    if prev_entry.constant {
+                        return Err(ValueError::AttemptToOverwriteConstant(format!(
+                            "Cannot overwrite constant var {}",
+                            label
+                        )));
+                    }
+                }
+                map.insert(label.to_string(), VarEntry::new_mut(value.clone()));
                 Ok(())
             }
         }
     }
 
-    pub fn remove_value(&self, label: &str) -> Option<Value> {
+    pub fn insert_const_value(&self, label: &str, value: Value) -> Result<(), ValueError> {
+        match value {
+            Value::Var(_) => {
+                return Err(ValueError::InvalidVarValue(
+                    "cannot store var in var".into(),
+                ));
+            }
+            Value::Command(_) => {
+                return Err(ValueError::InvalidVarValue(
+                    "cannot store command in var".into(),
+                ));
+            }
+            _ => {
+                if self.mem_limit.is_some() {
+                    self.add_allocated_mem(value.mem_size())?;
+                }
+                let lock = self.map.lock();
+                let mut map = lock.unwrap();
+                if let Some(prev_entry) = map.get(label) {
+                    if prev_entry.constant {
+                        return Err(ValueError::AttemptToOverwriteConstant(format!(
+                            "Cannot overwrite constant var {}",
+                            label
+                        )));
+                    }
+                }
+                map.insert(label.to_string(), VarEntry::new_const(value));
+                Ok(())
+            }
+        }
+    }
+
+    pub fn remove_value(&self, label: &str) -> Result<Option<Value>, ValueError> {
         let lock = self.map.lock();
         let mut map = lock.unwrap();
-        let value = map.get(label)?;
+        let var_entry = match map.get(label) {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
 
         if self.mem_limit.is_some() {
-            self.sub_allocated_mem(value.mem_size());
+            self.sub_allocated_mem(var_entry.value.mem_size());
         }
-        map.remove(label)
+        if let Some(prev_entry) = map.get(label) {
+            if prev_entry.constant {
+                return Err(ValueError::AttemptToFreeConstant(format!(
+                    "Cannot free constant var {}",
+                    label
+                )));
+            }
+        }
+        Ok(map.remove(label).map(|entry| entry.value))
     }
 
     pub fn clone_value(&self, label: &str) -> Result<Value, ValueError> {
-        let value = self.map.lock().unwrap().get(label).cloned();
+        let var_entry = self.map.lock().unwrap().get(label).cloned();
 
-        match value {
-            Some(value) => {
-                if value.is_type(FslType::Var) {
-                    return self.clone_value(&value.get_var_label()?);
+        match var_entry {
+            Some(var_entry) => {
+                if var_entry.value.is_type(FslType::Var) {
+                    return self.clone_value(&var_entry.value.get_var_label()?);
                 } else {
-                    Ok(value)
+                    Ok(var_entry.value)
                 }
             }
             None => Err(ValueError::NonExistantVar(format!(
@@ -195,10 +268,11 @@ impl VarMap {
     pub fn get_type(&self, label: &str) -> Result<FslType, ValueError> {
         let lock = self.map.lock();
         let map = lock.unwrap();
-        let value = map.get(label);
+        let var_entry = map.get(label);
 
-        match value {
-            Some(value) => {
+        match var_entry {
+            Some(var_entry) => {
+                let value = &var_entry.value;
                 if value.is_type(FslType::Var) {
                     return self.get_type(&value.get_var_label()?);
                 } else {
@@ -529,6 +603,7 @@ impl FslInterpreter {
                 (MODULUS, MATH_RULES, commands::modulus),
                 (PRECISION, PRECISION_RULES, commands::precision),
                 (STORE, STORE_RULES, commands::store),
+                (CONST, CONST_RULES, commands::r#const),
                 (CLONE, CLONE_RULES, commands::clone),
                 (FREE, FREE_RULES, commands::free),
                 (PRINT, PRINT_RULES, commands::print),

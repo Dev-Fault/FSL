@@ -24,6 +24,8 @@ pub enum ValueError {
     NegativeIndex(String),
     VarMemoryLimitReached,
     CommandExecutionFailed(String),
+    AttemptToOverwriteConstant(String),
+    AttemptToFreeConstant(String),
 }
 
 impl ValueError {
@@ -38,6 +40,8 @@ impl ValueError {
             ValueError::InvalidVarValue(error_text) => error_text,
             ValueError::CommandExecutionFailed(error_text) => error_text,
             ValueError::VarMemoryLimitReached => "interpreter var memory limit reached".into(),
+            ValueError::AttemptToOverwriteConstant(error_text) => error_text,
+            ValueError::AttemptToFreeConstant(error_text) => error_text,
         }
     }
 }

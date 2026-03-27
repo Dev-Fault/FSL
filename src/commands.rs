@@ -263,7 +263,30 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let value_to_store = values.pop_front().unwrap();
     let var_label = &var;
 
-    data.vars.insert_value(
+    data.vars.insert_mut_value(
+        var_label,
+        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
+    )?;
+
+    Ok(data.vars.clone_value(var_label)?)
+}
+
+pub const CONST_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
+pub const CONST: &str = "const";
+pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let var = values
+        .pop_front()
+        .unwrap()
+        .as_var_label(data.clone())
+        .await?;
+    let value_to_store = values.pop_front().unwrap();
+    let var_label = &var;
+
+    data.vars.insert_const_value(
         var_label,
         value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
     )?;
@@ -283,7 +306,7 @@ pub const FREE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::V
 pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let arg_0 = command.take_args().pop_front().unwrap();
     let label = arg_0.get_var_label()?;
-    match data.vars.remove_value(label) {
+    match data.vars.remove_value(label)? {
         Some(value) => Ok(value),
         None => Ok(Value::None),
     }
@@ -592,7 +615,7 @@ where
         let list = Value::List(list);
 
         if let Some(label) = var_label {
-            data.vars.insert_value(&label, list.clone())?;
+            data.vars.insert_mut_value(&label, list.clone())?;
         }
 
         if let Some(return_value) = return_value {
@@ -608,7 +631,7 @@ where
         let text = Value::Text(text);
 
         if let Some(label) = var_label {
-            data.vars.insert_value(&label, text.clone())?;
+            data.vars.insert_mut_value(&label, text.clone())?;
         }
 
         if let Some(return_value) = return_value {
@@ -1009,7 +1032,7 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n + 1);
     data.vars
-        .insert_value(&values[0].get_var_label()?, new_value.clone())?;
+        .insert_mut_value(&values[0].get_var_label()?, new_value.clone())?;
     Ok(new_value)
 }
 
@@ -1020,7 +1043,7 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n - 1);
     data.vars
-        .insert_value(&values[0].get_var_label()?, new_value.clone())?;
+        .insert_mut_value(&values[0].get_var_label()?, new_value.clone())?;
     Ok(new_value)
 }
 
@@ -2397,6 +2420,87 @@ pub mod tests {
                 print(value.add(1))
             "#,
             "11",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn const_stores_value() {
+        test_interpreter(
+            r#"
+                const(MY_CONST, 42)
+                print(MY_CONST)
+            "#,
+            "42",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn const_cannot_be_overwritten() {
+        let err = test_interpreter_err_type(
+            r#"
+                const(MY_CONST, 42)
+                MY_CONST.store(100)
+            "#,
+        )
+        .await;
+        assert!(matches!(err, InterpreterError::CommandError(_)))
+    }
+
+    #[tokio::test]
+    async fn const_cannot_be_freed() {
+        let err = test_interpreter_err_type(
+            r#"
+                const(MY_CONST, 42)
+                MY_CONST.free()
+            "#,
+        )
+        .await;
+        assert!(matches!(err, InterpreterError::CommandError(_)))
+    }
+
+    #[tokio::test]
+    async fn const_accessible_inside_function() {
+        test_interpreter(
+            r#"
+                const(MY_CONST, 42)
+                function.def(
+                    print(MY_CONST)
+                )
+                function()
+            "#,
+            "42",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn const_cannot_be_overwritten_inside_function() {
+        let err = test_interpreter_err_type(
+            r#"
+                const(MY_CONST, 42)
+                function.def(
+                    MY_CONST.store(100)
+                )
+                function()
+            "#,
+        )
+        .await;
+        assert!(matches!(err, InterpreterError::CommandError(_)))
+    }
+
+    #[tokio::test]
+    async fn const_value_is_not_mutable_via_index() {
+        test_interpreter(
+            r#"
+                THREE.const(3)
+                list.store([1, 2, three])
+                list.index(2).store(99)
+                print(list.index(2), "\n")
+                print(THREE)
+            "#,
+            "99\n3",
         )
         .await;
     }
