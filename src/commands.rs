@@ -131,6 +131,7 @@ async fn contains_float(
             }
         }
     }
+    dbg!(&values);
     Ok(false)
 }
 
@@ -1454,6 +1455,10 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for mut command in commands {
         substitute_args(&mut command, &var_map)?;
         final_value = command.execute(data.clone()).await?;
+        if data.return_flag.load(Ordering::Relaxed) {
+            data.return_flag.store(false, Ordering::Relaxed);
+            return Ok(final_value);
+        }
     }
 
     Ok(final_value)
@@ -1481,6 +1486,19 @@ pub async fn continue_command(
         return Err(CommandError::ContinueOutsideLoop);
     }
     Ok(Value::None)
+}
+
+pub const RETURN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::OptionalIndex(0), ALL_TYPES)];
+pub const RETURN: &str = "return";
+pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let return_value = command.take_args().pop_front();
+
+    data.return_flag.store(true, Ordering::Relaxed);
+
+    match return_value {
+        Some(value) => Ok(value),
+        None => Ok(Value::None),
+    }
 }
 
 pub const EXIT: &str = "exit";
@@ -2257,6 +2275,128 @@ pub mod tests {
                 character_name.print()
             "#,
             "joseph\njoseph",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_statement() {
+        test_interpreter(
+            r#"
+                function.def(
+                    print(1)
+                    return()
+                    print(2)
+                )
+                function()
+            "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_statement_nested() {
+        test_interpreter(
+            r#"
+                function.def(
+                    repeat(2,
+                        repeat(2,
+                            repeat(2,
+                                repeat(2,
+                                    print("4")
+                                    return()
+                                )
+                                print("3")
+                            )
+                            print("2")
+                        )
+                        print("1")
+                    )
+                )
+                function()
+            "#,
+            "4",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_outside_command() {
+        test_interpreter(
+            r#"
+                print(1)
+                return(5)
+                print(2)
+            "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_value() {
+        test_interpreter(
+            r#"
+                function.def(
+                    return(42)
+                    print("never")
+                )
+                result.store(function())
+                print(result)
+            "#,
+            "42",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_if_then() {
+        test_interpreter(
+            r#"
+                function.def(
+                    if_then(true,
+                        return(1)
+                    )
+                    print("never")
+                )
+                print(function())
+            "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_nested_functions() {
+        test_interpreter(
+            r#"
+                inner.def(
+                    return()
+                    print("never")
+                )
+                outer.def(
+                    inner()
+                    print("outer continues")
+                )
+                outer()
+            "#,
+            "outer continues",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_in_expression() {
+        test_interpreter(
+            r#"
+                get_value.def(
+                    return(10)
+                )
+                value.store(get_value())
+                print(value.add(1))
+            "#,
+            "11",
         )
         .await;
     }

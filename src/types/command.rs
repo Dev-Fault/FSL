@@ -1,5 +1,13 @@
 use core::fmt;
-use std::{collections::VecDeque, ops::Range, pin::Pin, sync::Arc};
+use std::{
+    collections::VecDeque,
+    ops::Range,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{self, Ordering},
+    },
+};
 
 use crate::{
     InterpreterData,
@@ -283,13 +291,17 @@ impl Command {
         let label = self.get_label().to_string();
         data.clone().call_stack.lock().await.push(label.clone());
 
-        let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
-        match executor.execute(self, data.clone()).await {
-            Ok(value) => {
-                data.call_stack.lock().await.pop();
-                Ok(value)
+        if data.return_flag.load(Ordering::Relaxed) == false {
+            let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
+            match executor.execute(self, data.clone()).await {
+                Ok(value) => {
+                    data.call_stack.lock().await.pop();
+                    Ok(value)
+                }
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
+        } else {
+            Ok(Value::None)
         }
     }
 }

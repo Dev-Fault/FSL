@@ -206,7 +206,8 @@ impl VarMap {
                 }
             }
             None => Err(ValueError::NonExistantVar(format!(
-                "cannot get type of non existant var"
+                "cannot get type of non existant var {}",
+                label
             ))),
         }
     }
@@ -223,6 +224,7 @@ pub struct InterpreterData {
     pub loop_depth: AtomicUsize,
     pub break_flag: AtomicBool,
     pub continue_flag: AtomicBool,
+    pub return_flag: AtomicBool,
 }
 
 impl InterpreterData {
@@ -237,6 +239,7 @@ impl InterpreterData {
             loop_depth: AtomicUsize::new(0),
             break_flag: AtomicBool::new(false),
             continue_flag: AtomicBool::new(false),
+            return_flag: AtomicBool::new(false),
         }
     }
 
@@ -586,6 +589,7 @@ impl FslInterpreter {
                 (EXIT, NO_ARGS, commands::exit),
                 (BREAK, NO_ARGS, commands::break_command),
                 (CONTINUE, NO_ARGS, commands::continue_command),
+                (RETURN, RETURN_RULES, commands::r#return),
             ]
         );
     }
