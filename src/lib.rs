@@ -86,7 +86,7 @@ pub type CommandMap = HashMap<&'static str, Command>;
 pub type UserCommands = HashMap<String, UserCommand>;
 
 const MEGABYTE: usize = 1024 * 1024;
-pub const DEFAULT_MEMORY_LIMIT: usize = 100 * MEGABYTE;
+pub const DEFAULT_MEMORY_LIMIT: usize = 5 * MEGABYTE;
 
 #[derive(Debug, Clone)]
 struct VarEntry {
@@ -113,51 +113,12 @@ impl VarEntry {
 #[derive(Debug)]
 pub struct VarMap {
     map: Mutex<HashMap<String, VarEntry>>,
-    mem_limit: Option<usize>,
-    allocated_mem: AtomicUsize,
 }
 
 impl VarMap {
-    pub fn new(mem_limit: Option<usize>) -> Self {
+    pub fn new() -> Self {
         Self {
             map: Mutex::new(HashMap::new()),
-            mem_limit: mem_limit,
-            allocated_mem: AtomicUsize::new(0),
-        }
-    }
-
-    /// Adds size of value to currently allocated memory size, does nothing if mem_limit not set
-    fn add_allocated_mem(&self, value_size: Option<usize>) -> Result<(), ValueError> {
-        if self.mem_limit.is_none() {
-            return Ok(());
-        }
-
-        if let Some(size) = value_size {
-            if let Some(allocated_mem) =
-                self.allocated_mem.load(Ordering::Relaxed).checked_add(size)
-            {
-                self.allocated_mem.store(allocated_mem, Ordering::Relaxed);
-                if self.allocated_mem.load(Ordering::Relaxed) > self.mem_limit.unwrap() {
-                    return Err(ValueError::VarMemoryLimitReached);
-                }
-            } else {
-                return Err(ValueError::VarMemoryLimitReached);
-            }
-        } else {
-            return Err(ValueError::VarMemoryLimitReached);
-        }
-
-        Ok(())
-    }
-
-    fn sub_allocated_mem(&self, value_size: Option<usize>) {
-        if let Some(size) = value_size {
-            let allocated_mem = self
-                .allocated_mem
-                .load(Ordering::Relaxed)
-                .saturating_sub(size);
-
-            self.allocated_mem.store(allocated_mem, Ordering::Relaxed);
         }
     }
 
@@ -174,9 +135,6 @@ impl VarMap {
                 ));
             }
             _ => {
-                if self.mem_limit.is_some() {
-                    self.add_allocated_mem(value.mem_size())?;
-                }
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
                 if let Some(prev_entry) = map.get(label) {
@@ -206,9 +164,6 @@ impl VarMap {
                 ));
             }
             _ => {
-                if self.mem_limit.is_some() {
-                    self.add_allocated_mem(value.mem_size())?;
-                }
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
                 if let Some(prev_entry) = map.get(label) {
@@ -228,14 +183,7 @@ impl VarMap {
     pub fn remove_value(&self, label: &str) -> Result<Option<Value>, ValueError> {
         let lock = self.map.lock();
         let mut map = lock.unwrap();
-        let var_entry = match map.get(label) {
-            Some(entry) => entry,
-            None => return Ok(None),
-        };
 
-        if self.mem_limit.is_some() {
-            self.sub_allocated_mem(var_entry.value.mem_size());
-        }
         if let Some(prev_entry) = map.get(label) {
             if prev_entry.constant {
                 return Err(ValueError::AttemptToFreeConstant(format!(
@@ -265,6 +213,19 @@ impl VarMap {
         }
     }
 
+    pub fn has_entry(&self, label: &str) -> bool {
+        let var_map = self.map.lock().unwrap();
+        var_map.contains_key(label)
+    }
+
+    pub fn get_var_size(&self, label: &str) -> usize {
+        let var_map = self.map.lock().unwrap();
+        var_map
+            .get(label)
+            .and_then(|entry| entry.value.mem_size())
+            .unwrap_or(0)
+    }
+
     pub fn get_type(&self, label: &str) -> Result<FslType, ValueError> {
         let lock = self.map.lock();
         let map = lock.unwrap();
@@ -287,10 +248,171 @@ impl VarMap {
     }
 }
 
+const VAR_STACK_EXPECT: &str = "Var stack should always at least have global scope var map";
+
+#[derive(Debug)]
+pub struct VarStack {
+    stack: Mutex<Vec<VarMap>>,
+    mem_limit: Option<usize>,
+    allocated_mem: AtomicUsize,
+}
+
+impl VarStack {
+    pub fn new_unbounded() -> VarStack {
+        VarStack {
+            stack: Mutex::new(vec![(VarMap::new())]),
+            mem_limit: None,
+            allocated_mem: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn new_bounded(byte_limit: usize) -> VarStack {
+        VarStack {
+            stack: Mutex::new(vec![(VarMap::new())]),
+            mem_limit: Some(byte_limit),
+            allocated_mem: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn push(&self) {
+        let mut stack = self.stack.lock().unwrap();
+        stack.push(VarMap::new());
+    }
+
+    pub fn pop(&self) {
+        let mut stack = self.stack.lock().unwrap();
+        stack.pop();
+    }
+
+    pub fn allocate_mem(&self, size: Option<usize>) -> Result<(), ValueError> {
+        let mem = self.allocated_mem.load(Ordering::Relaxed);
+        match size {
+            Some(size) => match mem.checked_add(size) {
+                Some(new_mem) => {
+                    if let Some(mem_limit) = self.mem_limit
+                        && new_mem > mem_limit
+                    {
+                        return Err(ValueError::VarMemoryLimitReached);
+                    }
+                    self.allocated_mem.store(new_mem, Ordering::Relaxed);
+                }
+                None => return Err(ValueError::VarMemoryLimitReached),
+            },
+            None => {
+                return Err(ValueError::VarMemoryLimitReached);
+            }
+        };
+        Ok(())
+    }
+
+    pub fn deallocate_mem(&self, size: usize) {
+        let mem = self.allocated_mem.load(Ordering::Relaxed);
+        self.allocated_mem
+            .store(mem.saturating_sub(size), Ordering::Relaxed);
+    }
+
+    /// Inserts a variable in the current scope, overwrites it if it already exists
+    pub fn insert_mut_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+        let stack = self.stack.lock().unwrap();
+        let var_map = stack
+            .last()
+            .expect("Var stack should always at least have global scope var map");
+        self.deallocate_mem(var_map.get_var_size(label));
+        let value_size = value.mem_size();
+        var_map.insert_mut_value(label, value)?;
+        self.allocate_mem(value_size)?;
+        Ok(())
+    }
+
+    /// Updates var in current scope will throw error if no scopes contain var
+    pub fn update_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+        let stack = self.stack.lock().unwrap();
+        let value_size = value.mem_size();
+        for var_map in stack.iter().rev() {
+            if var_map.has_entry(label) {
+                self.deallocate_mem(var_map.get_var_size(label));
+                var_map.insert_mut_value(label, value)?;
+                self.allocate_mem(value_size)?;
+                return Ok(());
+            }
+        }
+        Err(ValueError::NonExistantVar(format!(
+            "cannot update value of non existant var {}",
+            label
+        )))
+    }
+
+    /// Updates or creates a var preffering outer scope
+    pub fn update_or_create_mut_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+        let stack = self.stack.lock().unwrap();
+        let value_size = value.mem_size();
+        for var_map in stack.iter() {
+            if var_map.has_entry(label) {
+                self.deallocate_mem(var_map.get_var_size(label));
+                var_map.insert_mut_value(label, value)?;
+                self.allocate_mem(value_size)?;
+                return Ok(());
+            }
+        }
+        let var_map = stack.last().expect(VAR_STACK_EXPECT);
+        self.deallocate_mem(var_map.get_var_size(label));
+        var_map.insert_mut_value(label, value)?;
+        self.allocate_mem(value_size)?;
+        Ok(())
+    }
+
+    /// Inserts a constant var, will error if constant already exists
+    pub fn insert_const_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+        let stack = self.stack.lock().unwrap();
+        let value_size = value.mem_size();
+        let var_map = stack.last().expect(VAR_STACK_EXPECT);
+        self.allocate_mem(value_size)?;
+        var_map.insert_const_value(label, value)
+    }
+
+    /// Removes a var from the most local scope, throws error if var is constant
+    pub fn remove_var(&self, label: &str) -> Result<Option<Value>, ValueError> {
+        let stack = self.stack.lock().unwrap();
+        let var_map = stack.last().expect(VAR_STACK_EXPECT);
+        let value_size = var_map.get_var_size(label);
+        let return_value = var_map.remove_value(label)?;
+        self.deallocate_mem(value_size);
+        Ok(return_value)
+    }
+
+    /// Gets value of var in most local scope, throws error if it doesn't exist
+    pub fn get_var_value(&self, label: &str) -> Result<Value, ValueError> {
+        let stack = self.stack.lock().unwrap();
+        for var_map in stack.iter().rev() {
+            if var_map.has_entry(label) {
+                return var_map.clone_value(label);
+            }
+        }
+        Err(ValueError::NonExistantVar(format!(
+            "cannot get value of non existant var {}",
+            label
+        )))
+    }
+
+    /// Gets type of var in most local scope, throws error if it doesn't exist
+    pub fn get_var_type(&self, label: &str) -> Result<FslType, ValueError> {
+        let stack = self.stack.lock().unwrap();
+        for var_map in stack.iter().rev() {
+            if var_map.has_entry(label) {
+                return var_map.get_type(label);
+            }
+        }
+        Err(ValueError::NonExistantVar(format!(
+            "cannot get value of non existant var {}",
+            label
+        )))
+    }
+}
+
 #[derive(Debug)]
 pub struct InterpreterData {
     pub output: tokio::sync::Mutex<String>,
-    pub vars: VarMap,
+    pub vars: VarStack,
     pub user_commands: tokio::sync::Mutex<UserCommands>,
     call_stack: tokio::sync::Mutex<Vec<String>>,
     pub total_loop_limit: Option<usize>,
@@ -305,7 +427,7 @@ impl InterpreterData {
     pub fn new() -> Self {
         InterpreterData {
             output: tokio::sync::Mutex::new(String::new()),
-            vars: VarMap::new(Some(DEFAULT_MEMORY_LIMIT)),
+            vars: VarStack::new_bounded(DEFAULT_MEMORY_LIMIT),
             user_commands: tokio::sync::Mutex::new(UserCommands::new()),
             call_stack: tokio::sync::Mutex::new(Vec::new()),
             total_loop_limit: Some(u16::MAX as usize),
@@ -518,7 +640,7 @@ impl FslInterpreter {
 
             command.set_args(args);
 
-            Ok(Value::Command(command))
+            Ok(Value::Command(Box::new(command)))
         } else if let Some(user_command) = self
             .data
             .user_commands
@@ -540,7 +662,7 @@ impl FslInterpreter {
 
             command.set_args(args);
 
-            Ok(Value::Command(command))
+            Ok(Value::Command(Box::new(command)))
         } else {
             return Err(CommandError::NonExistantCommand(format!(
                 "command with name {} does not exist",
@@ -604,6 +726,8 @@ impl FslInterpreter {
                 (PRECISION, PRECISION_RULES, commands::precision),
                 (STORE, STORE_RULES, commands::store),
                 (CONST, CONST_RULES, commands::r#const),
+                (LOCAL, LOCAL_RULES, commands::local),
+                (UPDATE, UPDATE_RULES, commands::update),
                 (CLONE, CLONE_RULES, commands::clone),
                 (FREE, FREE_RULES, commands::free),
                 (PRINT, PRINT_RULES, commands::print),
@@ -747,6 +871,11 @@ mod interpreter {
         let interpreter = FslInterpreter::new();
         interpreter.interpret(r#"n.store([1,2,3])"#).await.unwrap();
         dbg!(
+            "Size of value: {} \nSize of Vec<Value>: {}",
+            size_of::<Value>(),
+            size_of::<Vec<Value>>()
+        );
+        dbg!(
             interpreter
                 .data
                 .vars
@@ -759,7 +888,7 @@ mod interpreter {
                 .vars
                 .allocated_mem
                 .load(std::sync::atomic::Ordering::Relaxed)
-                == size_of::<Value>() * 4
+                == (4 * size_of::<Value>()) + size_of::<Vec<Value>>()
         );
     }
 
@@ -1866,6 +1995,7 @@ mod interpreter {
             attacker_mods.store([])
             attacker.store([attacker_mods])
             potion.store([1, 1])
+            mods.store([])
             add_potion_modifier.def(potion,
 			    mods.store(attacker.index(C_MODS).clone())
 			    mods.push([potion.index(P_MOD).clone(), potion.index(P_DUR).clone()])
@@ -1875,6 +2005,36 @@ mod interpreter {
 			print("potion: [1, 1]\n", concat("mods: ", mods, "\nattacker_mods: ", attacker.index(C_MODS)))
             "#,
             "potion: [1, 1]\nmods: [[50, 3]]\nattacker_mods: [[50, 3]]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn index_global_in_local_scope() {
+        test_interpreter(
+            r#"
+	            MIN.store(0)
+	            MAX.store(1)
+	            HEALTH_POTION_RANGES.store([
+		            [-100, 25],
+		            [-25, 50],
+		            [10, 100]
+	            ])
+
+	            get_potion_mod.def(
+	                repeat(2,
+	                    if_then(true,
+			                potion_modifier.store(
+			                    HEALTH_POTION_RANGES.index(0).index(MIN)
+			                )
+	                    )
+	                )
+			        potion_modifier.free()
+	            )
+
+	            get_potion_mod().print()
+            "#,
+            "-100",
         )
         .await;
     }

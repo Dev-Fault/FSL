@@ -119,7 +119,7 @@ async fn contains_float(
                 }
             }
             Value::Var(var) => {
-                if data.clone().vars.get_type(&var)? == FslType::Float {
+                if data.clone().vars.get_var_type(&var)? == FslType::Float {
                     return Ok(true);
                 }
             }
@@ -131,7 +131,6 @@ async fn contains_float(
             }
         }
     }
-    dbg!(&values);
     Ok(false)
 }
 
@@ -263,12 +262,58 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let value_to_store = values.pop_front().unwrap();
     let var_label = &var;
 
-    data.vars.insert_mut_value(
+    data.vars.update_or_create_mut_var(
         var_label,
         value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
     )?;
 
-    Ok(data.vars.clone_value(var_label)?)
+    Ok(data.vars.get_var_value(var_label)?)
+}
+
+pub const LOCAL_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
+pub const LOCAL: &str = "local";
+pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let var = values
+        .pop_front()
+        .unwrap()
+        .as_var_label(data.clone())
+        .await?;
+    let value_to_store = values.pop_front().unwrap();
+    let var_label = &var;
+
+    data.vars.insert_mut_var(
+        var_label,
+        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
+    )?;
+
+    Ok(data.vars.get_var_value(var_label)?)
+}
+
+pub const UPDATE_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
+pub const UPDATE: &str = "update";
+pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let var = values
+        .pop_front()
+        .unwrap()
+        .as_var_label(data.clone())
+        .await?;
+    let value_to_store = values.pop_front().unwrap();
+    let var_label = &var;
+
+    data.vars.update_var(
+        var_label,
+        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
+    )?;
+
+    Ok(data.vars.get_var_value(var_label)?)
 }
 
 pub const CONST_RULES: &[ArgRule] = &[
@@ -286,12 +331,12 @@ pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let value_to_store = values.pop_front().unwrap();
     let var_label = &var;
 
-    data.vars.insert_const_value(
+    data.vars.insert_const_var(
         var_label,
         value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
     )?;
 
-    Ok(data.vars.clone_value(var_label)?)
+    Ok(data.vars.get_var_value(var_label)?)
 }
 
 pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
@@ -306,7 +351,7 @@ pub const FREE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::V
 pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let arg_0 = command.take_args().pop_front().unwrap();
     let label = arg_0.get_var_label()?;
-    match data.vars.remove_value(label)? {
+    match data.vars.remove_var(label)? {
         Some(value) => Ok(value),
         None => Ok(Value::None),
     }
@@ -615,7 +660,7 @@ where
         let list = Value::List(list);
 
         if let Some(label) = var_label {
-            data.vars.insert_mut_value(&label, list.clone())?;
+            data.vars.update_var(&label, list.clone())?;
         }
 
         if let Some(return_value) = return_value {
@@ -631,7 +676,7 @@ where
         let text = Value::Text(text);
 
         if let Some(label) = var_label {
-            data.vars.insert_mut_value(&label, text.clone())?;
+            data.vars.update_var(&label, text.clone())?;
         }
 
         if let Some(return_value) = return_value {
@@ -1032,7 +1077,7 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n + 1);
     data.vars
-        .insert_mut_value(&values[0].get_var_label()?, new_value.clone())?;
+        .update_var(&values[0].get_var_label()?, new_value.clone())?;
     Ok(new_value)
 }
 
@@ -1043,7 +1088,7 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let n = values[0].clone().as_int(data.clone()).await?;
     let new_value = Value::Int(n - 1);
     data.vars
-        .insert_mut_value(&values[0].get_var_label()?, new_value.clone())?;
+        .update_var(&values[0].get_var_label()?, new_value.clone())?;
     Ok(new_value)
 }
 
@@ -1434,7 +1479,7 @@ fn substitute_args(
             Value::Command(_) => {
                 let mut inner_command = std::mem::take(arg).as_command()?;
                 substitute_args(&mut inner_command, var_map)?;
-                *arg = Value::Command(inner_command);
+                *arg = Value::Command(Box::new(inner_command));
             }
             _ => continue,
         }
@@ -1475,6 +1520,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     }
 
     let mut final_value = Value::None;
+    data.vars.push();
     for mut command in commands {
         substitute_args(&mut command, &var_map)?;
         final_value = command.execute(data.clone()).await?;
@@ -1483,6 +1529,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
             return Ok(final_value);
         }
     }
+    data.vars.pop();
 
     Ok(final_value)
 }
@@ -2501,6 +2548,182 @@ pub mod tests {
                 print(THREE)
             "#,
             "99\n3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn local_vars() {
+        test_interpreter(
+            r#"
+            i.store(0)
+            repeat(5,
+                i.inc()
+            )
+
+            global.def(
+                repeat(5,
+                    i.inc()
+                )
+            )
+
+            local_example.def(
+                i.local(0)
+                repeat(5,
+                    i.inc()
+                )
+            )
+
+            global()
+            local_example()
+            i.print()
+            "#,
+            "10",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn local_global() {
+        test_interpreter(
+            r#"
+            i.local(0)
+
+            test.def(
+                i.inc()
+            )
+
+            test()
+            i.print()
+            "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn local_global_local() {
+        test_interpreter(
+            r#"
+            i.local(0)
+
+            test.def(
+                i.local(10)
+                i.inc()
+            )
+
+            test()
+            i.print()
+            "#,
+            "0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn store_after_local() {
+        test_interpreter(
+            r#"
+            i.store(0)
+
+            test.def(
+                i.local(10)
+                i.store(12)
+                i.inc()
+                i.print("\n")
+            )
+
+            test()
+            i.print()
+            "#,
+            "11\n12",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn local_const() {
+        test_interpreter(
+            r#"
+            TEST.const(1)
+
+            test.def(
+                TEST.const(2)
+                TEST.print("\n")
+            )
+
+            test()
+            TEST.print()
+            "#,
+            "2\n1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn store_global_if_outer_var_exists() {
+        test_interpreter(
+            r#"
+            i.store(0)
+            repeat(5,
+                i.inc()
+            )
+
+            global.def(
+                repeat(5,
+                    i.inc()
+                )
+            )
+
+            local_test.def(
+                i.store(0)
+                repeat(5,
+                    i.inc()
+                )
+            )
+
+            global()
+            local_test()
+            i.print()
+            "#,
+            "5",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn store_local_if_no_outer_var_exists() {
+        let err = test_interpreter_err_type(
+            r#"
+            test.def(
+                i.store(0)
+                repeat(5,
+                    i.inc()
+                )
+            )
+            test()
+            i.print()
+            "#,
+        )
+        .await;
+        assert!(matches!(err, InterpreterError::CommandError(_)))
+    }
+
+    #[tokio::test]
+    async fn update_local() {
+        test_interpreter(
+            r#"
+                i.store(10)
+                test_local.def(
+                    i.local(0)
+                    i.update(i.add(1))
+                    i.print("\n")
+                )
+                i.update(11)
+                test_local()
+                i.print()
+            "#,
+            "1\n11",
         )
         .await;
     }

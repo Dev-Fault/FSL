@@ -54,7 +54,7 @@ pub enum Value {
     Text(String),
     List(Vec<Value>),
     Var(String),
-    Command(Command),
+    Command(Box<Command>),
     None,
 }
 
@@ -89,7 +89,7 @@ impl Value {
             Value::Bool(_) => Some(size_of::<Value>()),
             Value::Text(str) => Some(size_of::<Value>().checked_add(str.capacity())?),
             Value::List(list) => {
-                let mut size: usize = size_of::<Value>();
+                let mut size: usize = size_of::<Value>().checked_add(size_of::<Vec<Value>>())?;
                 for element in list {
                     size = size.checked_add(element.mem_size()?)?;
                 }
@@ -140,7 +140,7 @@ impl Value {
         match self {
             Value::Int(value) => Ok(value),
             Value::Float(value) => Ok(value as i64),
-            Value::Var(label) => data.vars.clone_value(&label)?.as_int(data).await,
+            Value::Var(label) => data.vars.get_var_value(&label)?.as_int(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -175,7 +175,7 @@ impl Value {
         match self {
             Value::Int(value) => Ok(value as f64),
             Value::Float(value) => Ok(value),
-            Value::Var(label) => data.vars.clone_value(&label)?.as_float(data).await,
+            Value::Var(label) => data.vars.get_var_value(&label)?.as_float(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -205,7 +205,7 @@ impl Value {
             },
             Value::Bool(value) => Ok(value),
             Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Var(label) => data.vars.clone_value(&label)?.as_bool(data).await,
+            Value::Var(label) => data.vars.get_var_value(&label)?.as_bool(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -259,7 +259,7 @@ impl Value {
                 output.push(']');
                 Ok(output)
             }
-            Value::Var(label) => data.vars.clone_value(&label)?.as_text(data).await,
+            Value::Var(label) => data.vars.get_var_value(&label)?.as_text(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -291,7 +291,7 @@ impl Value {
                 }
                 Ok(values)
             }
-            Value::Var(label) => data.vars.clone_value(&label)?.as_list(data).await,
+            Value::Var(label) => data.vars.get_var_value(&label)?.as_list(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
@@ -330,7 +330,7 @@ impl Value {
 
     pub fn as_command(self) -> Result<Command, ValueError> {
         if let Value::Command(command) = self {
-            Ok(command)
+            Ok(*command)
         } else {
             Err(ValueError::InvalidConversion(
                 "failed to convert value into command".into(),
@@ -351,7 +351,7 @@ impl Value {
 
     pub fn get_var_value(&self, data: Arc<InterpreterData>) -> Result<Value, ValueError> {
         if let Value::Var(label) = self {
-            match data.vars.clone_value(label) {
+            match data.vars.get_var_value(label) {
                 Ok(value) => match value {
                     Value::Var(_) => value.get_var_value(data),
                     _ => Ok(value),
@@ -452,7 +452,7 @@ impl From<Vec<Value>> for Value {
 
 impl From<Command> for Value {
     fn from(value: Command) -> Self {
-        Value::Command(value)
+        Value::Command(Box::new(value))
     }
 }
 
