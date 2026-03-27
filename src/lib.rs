@@ -226,6 +226,14 @@ impl VarMap {
             .unwrap_or(0)
     }
 
+    pub fn total_mem_size(&self) -> usize {
+        let var_map = self.map.lock().unwrap();
+        var_map
+            .values()
+            .map(|entry| entry.value.mem_size().unwrap_or(0))
+            .sum()
+    }
+
     pub fn get_type(&self, label: &str) -> Result<FslType, ValueError> {
         let lock = self.map.lock();
         let map = lock.unwrap();
@@ -281,7 +289,9 @@ impl VarStack {
 
     pub fn pop(&self) {
         let mut stack = self.stack.lock().unwrap();
-        stack.pop();
+        if let Some(var_map) = stack.pop() {
+            self.deallocate_mem(var_map.total_mem_size());
+        }
     }
 
     pub fn allocate_mem(&self, size: Option<usize>) -> Result<(), ValueError> {
@@ -889,6 +899,43 @@ mod interpreter {
                 .allocated_mem
                 .load(std::sync::atomic::Ordering::Relaxed)
                 == (4 * size_of::<Value>()) + size_of::<Vec<Value>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn deallocation_of_var_stacks() {
+        let interpreter = FslInterpreter::new();
+        interpreter
+            .interpret(
+                r#"
+                    allocate_more.def(
+                        string_three.local("hello world")
+                        string_four.local("hello world")
+                    )
+                    allocate.def(
+                        string_one.local("hello world")
+                        string_two.local("hello world")
+                        allocate_more()
+                    )
+                    allocate()
+                "#,
+            )
+            .await
+            .unwrap();
+        dbg!(
+            interpreter
+                .data
+                .vars
+                .allocated_mem
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        assert!(
+            interpreter
+                .data
+                .vars
+                .allocated_mem
+                .load(std::sync::atomic::Ordering::Relaxed)
+                == 0
         );
     }
 
