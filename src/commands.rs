@@ -1592,13 +1592,42 @@ fn substitute_args_list(
     for value in values {
         match value {
             Value::List(values) => substitute_args_list(values, var_map)?,
+            Value::Map(map) => substitute_args_map(map, var_map)?,
             Value::Var(label) => {
                 if let Some(var_value) = var_map.get(label) {
                     *value = var_value.clone();
                 }
             }
             Value::Command(command) => substitute_args(command, var_map)?,
-            _ => continue,
+            Value::Int(_) => {}
+            Value::Float(_) => {}
+            Value::Bool(_) => {}
+            Value::Text(_) => {}
+            Value::None => {}
+        }
+    }
+    Ok(())
+}
+
+fn substitute_args_map(
+    map: &mut HashMap<String, Value>,
+    var_map: &HashMap<String, Value>,
+) -> Result<(), CommandError> {
+    for (key, value) in map {
+        match value {
+            Value::Map(map) => substitute_args_map(map, var_map)?,
+            Value::List(values) => substitute_args_list(values, var_map)?,
+            Value::Var(label) => {
+                if let Some(var_value) = var_map.get(label) {
+                    *value = var_value.clone();
+                }
+            }
+            Value::Command(command) => substitute_args(command, var_map)?,
+            Value::Int(_) => {}
+            Value::Float(_) => {}
+            Value::Bool(_) => {}
+            Value::Text(_) => {}
+            Value::None => {}
         }
     }
     Ok(())
@@ -1621,7 +1650,12 @@ fn substitute_args(
                 substitute_args(&mut inner_command, var_map)?;
                 *arg = Value::Command(Box::new(inner_command));
             }
-            _ => continue,
+            Value::Map(map) => substitute_args_map(map, var_map)?,
+            Value::Int(_) => {}
+            Value::Float(_) => {}
+            Value::Bool(_) => {}
+            Value::Text(_) => {}
+            Value::None => {}
         }
     }
 
@@ -2900,6 +2934,26 @@ pub mod tests {
 	            player.get("name").print()
             "#,
             "blah\nblah\njake",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn substitute_map_args() {
+        test_interpreter(
+            r#"
+                create_player.def(name,
+	                player.store([
+	                    name: name,
+	                    health: 100,
+	                    dodge: 0,
+	                    strength: 0
+	                ]).return()
+	            )
+	            player.store(create_player("jake"))
+	            player.name.get().print()
+            "#,
+            "jake",
         )
         .await;
     }
