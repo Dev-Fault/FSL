@@ -12,7 +12,7 @@ use crate::{
     types::{
         FslType,
         command::{ArgPos, ArgRule, Command, CommandError, UserCommand},
-        value::Value,
+        value::{Value, ValueError},
     },
 };
 
@@ -22,6 +22,7 @@ pub const ALL_TYPES: &[FslType] = &[
     FslType::Bool,
     FslType::Text,
     FslType::List,
+    FslType::Map,
     FslType::Var,
     FslType::Command,
     FslType::None,
@@ -33,6 +34,7 @@ pub const NON_NONE_VALUES: &[FslType] = &[
     FslType::Bool,
     FslType::Text,
     FslType::List,
+    FslType::Map,
     FslType::Var,
     FslType::Command,
 ];
@@ -43,6 +45,7 @@ pub const VAR_VALUES: &[FslType] = &[
     FslType::Bool,
     FslType::Text,
     FslType::List,
+    FslType::Map,
     FslType::Var,
     FslType::Command,
 ];
@@ -74,9 +77,19 @@ pub const INDEX_TYPES: &[FslType] = &[
     FslType::Text,
 ];
 
-pub const ARRAY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
+pub const KEY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
+
+pub const ARRAY_TYPES: &[FslType] = &[
+    FslType::List,
+    FslType::Map,
+    FslType::Command,
+    FslType::Var,
+    FslType::Text,
+];
 
 pub const LIST_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
+
+pub const MAP_TYPES: &[FslType] = &[FslType::Map, FslType::Command, FslType::Var];
 
 pub const TEXT_TYPES: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
 
@@ -746,6 +759,133 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
             Some(char) => Ok(char.into()),
             None => Err(CommandError::IndexOutOfBounds),
         }
+    }
+}
+
+#[async_recursion]
+async fn get_nested(
+    map: &HashMap<String, Value>,
+    keys: &[Value],
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
+    match keys {
+        [] => Err(CommandError::ValueError(ValueError::NotAMap(
+            "".to_string(),
+        ))),
+        [key] => {
+            let key = key.clone().as_text(data.clone()).await?;
+            let return_value = map.get(&key).cloned();
+            Ok(return_value.unwrap_or(Value::None))
+        }
+        [key, rest @ ..] => {
+            let key = key.clone().as_text(data.clone()).await?;
+            match map.get(&key) {
+                Some(Value::Map(inner_map)) => get_nested(inner_map, rest, data).await,
+                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                    "Can't use key \"{}\" to access a value that is not a map",
+                    key
+                )))),
+                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
+                    format!("non existant key \"{}\" in map", key),
+                ))),
+            }
+        }
+    }
+}
+
+pub const GET_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), MAP_TYPES),
+    ArgRule::new(ArgPos::Index(1), KEY_TYPES),
+];
+pub const GET: &str = "get";
+pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+
+    let accesor = arg_1
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
+
+    let keys = if accesor.is_type(FslType::List) {
+        accesor.as_list(data.clone()).await?
+    } else {
+        vec![accesor]
+    };
+
+    let map = arg_0.as_map(data.clone()).await?;
+
+    get_nested(&map, &keys, data).await
+}
+
+#[async_recursion]
+async fn set_nested(
+    map: &mut HashMap<String, Value>,
+    keys: &[Value],
+    value: Value,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
+    match keys {
+        [] => Err(CommandError::ValueError(ValueError::NotAMap(
+            "".to_string(),
+        ))),
+        [key] => {
+            let key = key.clone().as_text(data.clone()).await?;
+            let return_value = map.insert(key, value);
+            Ok(return_value.unwrap_or(Value::None))
+        }
+        [key, rest @ ..] => {
+            let key = key.clone().as_text(data.clone()).await?;
+            match map.get_mut(&key) {
+                Some(Value::Map(inner_map)) => set_nested(inner_map, rest, value, data).await,
+                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                    "Can't use key \"{}\" to access a value that is not a map",
+                    key
+                )))),
+                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
+                    format!("non existant key \"{}\" in map", key),
+                ))),
+            }
+        }
+    }
+}
+
+pub const SET_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), MAP_TYPES),
+    ArgRule::new(ArgPos::Index(1), KEY_TYPES),
+    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
+];
+pub const SET: &str = "set";
+pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+    let arg_2 = values.pop_front().unwrap();
+
+    let accesor = arg_1
+        .as_raw(data.clone(), &[FslType::Text, FslType::List])
+        .await?;
+    let keys = if accesor.is_type(FslType::List) {
+        accesor.as_list(data.clone()).await?
+    } else {
+        vec![accesor]
+    };
+
+    let replacement_value = arg_2;
+
+    if arg_0.is_type(FslType::Var) {
+        let var_label = &arg_0.clone().as_var_label(data.clone()).await?;
+        let mut map = arg_0.as_map(data.clone()).await?;
+
+        let return_value = set_nested(&mut map, &keys, replacement_value, data.clone()).await?;
+
+        data.vars.update_var(var_label, Value::Map(map))?;
+        Ok(return_value)
+    } else {
+        let mut map = arg_0.as_map(data.clone()).await?;
+
+        let return_value = set_nested(&mut map, &keys, replacement_value, data.clone()).await?;
+        Ok(return_value)
     }
 }
 
@@ -2724,6 +2864,42 @@ pub mod tests {
                 i.print()
             "#,
             "1\n11",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn store_map() {
+        test_interpreter(
+            r#"
+	            player.store([
+	                name: "blah",
+	                health: 100,
+	                dodge: 0,
+	                strength: 0
+	            ])
+	            player.get("name").print()
+            "#,
+            "blah",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn update_map() {
+        test_interpreter(
+            r#"
+	            player.store([
+	                name: "blah",
+	                health: 100,
+	                dodge: 0,
+	                strength: 0
+	            ])
+	            player.get("name").print("\n")
+	            player.set("name", "jake").print("\n")
+	            player.get("name").print()
+            "#,
+            "blah\nblah\njake",
         )
         .await;
     }

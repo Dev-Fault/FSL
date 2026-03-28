@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::lexer::{Keyword, Lexer, LexerError, Symbol, Token, TokenType, format_error_context};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,6 +19,10 @@ pub enum ParserError<'a> {
     LexerError(LexerError<'a>),
     InvalidDotPlacement(ParserErrorContext<'a>),
     ValueOutsideOfContext(ParserErrorContext<'a>),
+    KeyOutsideOfContext(ParserErrorContext<'a>),
+    InvalidKey(ParserErrorContext<'a>),
+    KeyMustBeProceededByAValue(ParserErrorContext<'a>),
+    MixedListAndMap(ParserErrorContext<'a>),
     ObjectsNotSupported(ParserErrorContext<'a>),
 }
 
@@ -40,6 +46,34 @@ impl ToString for ParserError<'_> {
             ParserError::ObjectsNotSupported(context) => {
                 format!(
                     "Parser error: Objects are not currently supported in FSL\n{}\n{}",
+                    context.token.token_type.as_str(),
+                    format_error_context(context.input, context.token.location)
+                )
+            }
+            ParserError::KeyOutsideOfContext(context) => {
+                format!(
+                    "Syntax error: Out of place key\nKey: {}\n{}",
+                    context.token.token_type.as_str(),
+                    format_error_context(context.input, context.token.location)
+                )
+            }
+            ParserError::InvalidKey(context) => {
+                format!(
+                    "Syntax error: Invalid key (must be a valid identifier)\nKey: {}\n{}",
+                    context.token.token_type.as_str(),
+                    format_error_context(context.input, context.token.location)
+                )
+            }
+            ParserError::KeyMustBeProceededByAValue(context) => {
+                format!(
+                    "Syntax error: Key must be proceeded by a value\nKey: {}\n{}",
+                    context.token.token_type.as_str(),
+                    format_error_context(context.input, context.token.location)
+                )
+            }
+            ParserError::MixedListAndMap(context) => {
+                format!(
+                    "Syntax error: all entries inside a map must have a key\n{}\n{}",
                     context.token.token_type.as_str(),
                     format_error_context(context.input, context.token.location)
                 )
@@ -73,6 +107,8 @@ pub enum Arg {
     Keyword(Keyword),
     Var(String),
     List(Vec<Arg>),
+    KeyValue(String, Option<Box<Arg>>),
+    Map(HashMap<String, Arg>),
     Expression(Expression),
 }
 
@@ -88,6 +124,7 @@ pub struct Parser {
     current_command_name: Option<String>,
     current_arg: Option<Arg>,
     dot_arg: Option<Arg>,
+    path: Option<Vec<Arg>>,
     output: Vec<Expression>,
     state_stack: Vec<ParserState>,
 }
@@ -100,8 +137,22 @@ impl Parser {
             list_stack: vec![],
             current_arg: None,
             dot_arg: None,
+            path: None,
             output: vec![],
             state_stack: vec![],
+        }
+    }
+
+    fn push_list_item(list: &mut Vec<Arg>, value: Arg) {
+        if let Some(last_item) = list.last_mut() {
+            match last_item {
+                Arg::KeyValue(_, place_holder) => *place_holder = Some(Box::new(value)),
+                _ => {
+                    list.push(value);
+                }
+            }
+        } else {
+            list.push(value);
         }
     }
 
@@ -118,6 +169,9 @@ impl Parser {
                     let mut expression = Expression::new(name);
                     if let Some(arg) = self.dot_arg.take() {
                         expression.args.push(arg);
+                    }
+                    if let Some(path) = self.path.take() {
+                        expression.args.push(Arg::List(path));
                     }
 
                     self.expression_stack.push(expression);
@@ -148,7 +202,8 @@ impl Parser {
                                     }
                                     ParserState::InsideList => {
                                         let list = self.list_stack.last_mut().unwrap();
-                                        list.push(Arg::Expression(expression));
+                                        let expression = Arg::Expression(expression);
+                                        Self::push_list_item(list, expression);
                                     }
                                 }
                             } else {
@@ -176,23 +231,50 @@ impl Parser {
 
                 if let Some(mut list) = self.list_stack.pop() {
                     if let Some(arg) = self.current_arg.take() {
-                        list.push(arg);
+                        Self::push_list_item(&mut list, arg);
                     }
+
+                    let has_key_value = list.iter().any(|arg| matches!(arg, Arg::KeyValue(_, _)));
+                    let all_key_value = list.iter().all(|arg| matches!(arg, Arg::KeyValue(_, _)));
+
+                    let collection = if has_key_value && !all_key_value {
+                        return Err(ParserError::MixedListAndMap(ParserErrorContext::new(
+                            code, token,
+                        )));
+                    } else if has_key_value && all_key_value {
+                        let map: Result<HashMap<String, Arg>, ParserError> = list
+                            .into_iter()
+                            .map(|arg| match arg {
+                                Arg::KeyValue(key, value) => match value {
+                                    Some(value) => Ok((key, *value)),
+                                    None => {
+                                        return Err(ParserError::KeyMustBeProceededByAValue(
+                                            ParserErrorContext::new(code, token.clone()),
+                                        ));
+                                    }
+                                },
+                                _ => unreachable!(),
+                            })
+                            .collect();
+                        Arg::Map(map?)
+                    } else {
+                        Arg::List(list)
+                    };
 
                     if let Some(state) = self.state_stack.last() {
                         match state {
                             ParserState::InsideCommand => {
                                 let expression = self.expression_stack.last_mut().unwrap();
-                                expression.args.push(Arg::List(list));
+                                expression.args.push(collection);
                             }
                             ParserState::InsideList => {
                                 let parent = self.list_stack.last_mut().unwrap();
-                                parent.push(Arg::List(list));
+                                Self::push_list_item(parent, collection);
                             }
                         }
                     } else {
                         let expression = self.expression_stack.last_mut().unwrap();
-                        expression.args.push(Arg::List(list));
+                        expression.args.push(collection);
                     }
                 } else {
                     return Err(ParserError::ValueOutsideOfContext(ParserErrorContext::new(
@@ -204,11 +286,15 @@ impl Parser {
             Symbol::Dot => {
                 if let Some(arg) = self.current_arg.take() {
                     if let Some(dot_arg) = self.dot_arg.take() {
-                        if let Arg::Var(_) = dot_arg {
-                            if let Arg::Var(_) = arg {
-                                return Err(ParserError::ObjectsNotSupported(
-                                    ParserErrorContext::new(code, token),
-                                ));
+                        if let Arg::Var(dot_arg) = dot_arg {
+                            if let Arg::Var(key) = arg {
+                                if let Some(mut path) = self.path.take() {
+                                    path.push(Arg::String(key));
+                                    self.path = Some(path);
+                                } else {
+                                    self.path = Some(vec![Arg::String(key)]);
+                                }
+                                self.dot_arg = Some(Arg::Var(dot_arg));
                             } else {
                                 return Err(ParserError::InvalidDotPlacement(
                                     ParserErrorContext::new(code, token),
@@ -241,7 +327,45 @@ impl Parser {
                             }
                             ParserState::InsideList => {
                                 let list = self.list_stack.last_mut().unwrap();
-                                list.push(arg);
+                                if let Some(last_item) = list.last_mut() {
+                                    match last_item {
+                                        Arg::KeyValue(_, value) => *value = Some(Box::new(arg)),
+                                        _ => {
+                                            list.push(arg);
+                                        }
+                                    }
+                                } else {
+                                    list.push(arg);
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(ParserError::ValueOutsideOfContext(ParserErrorContext::new(
+                            code, token,
+                        )));
+                    }
+                }
+            }
+            Symbol::Colon => {
+                if let Some(arg) = self.current_arg.take() {
+                    if let Some(state) = self.state_stack.last() {
+                        match state {
+                            ParserState::InsideCommand => {
+                                return Err(ParserError::KeyOutsideOfContext(
+                                    ParserErrorContext::new(code, token),
+                                ));
+                            }
+                            ParserState::InsideList => {
+                                let list = self.list_stack.last_mut().unwrap();
+                                let key = match arg {
+                                    Arg::Var(keyword) => keyword,
+                                    _ => {
+                                        return Err(ParserError::InvalidKey(
+                                            ParserErrorContext::new(code, token),
+                                        ));
+                                    }
+                                };
+                                list.push(Arg::KeyValue(key, None));
                             }
                         }
                     } else {
@@ -283,6 +407,8 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use crate::parser::{Arg, Expression, Parser};
 
     #[test]
@@ -444,24 +570,23 @@ mod tests {
 
     #[test]
     fn dot_arg_object() {
-        let result = Parser::new().parse("character.weapon.name.store(\"sword\")");
+        let result = Parser::new().parse("character.weapon.name.set(\"sword\")");
         dbg!(&result);
-        assert!(
-            result.is_err_and(|e| matches!(e, crate::parser::ParserError::ObjectsNotSupported(_)))
-        )
-        /*
         let expressions = result.unwrap();
         assert!(
             expressions
                 == vec![Expression {
-                    name: "store".to_string(),
+                    name: "set".to_string(),
                     args: vec![
-                        Arg::Var("character.weapon.name".to_string()),
+                        Arg::Var("character".to_string()),
+                        Arg::List(vec![
+                            Arg::String("weapon".to_string()),
+                            Arg::String("name".to_string()),
+                        ]),
                         Arg::String("sword".to_string())
                     ]
                 }]
         );
-        */
     }
 
     #[test]
@@ -1178,5 +1303,265 @@ mod tests {
                 ])]
             }]
         );
+    }
+
+    #[test]
+    fn map_with_mixed_content() {
+        let result = Parser::new().parse(
+            r#"
+                player.store([
+                name: "blah",
+                health: 100,
+                dodge: 0,
+                strength: 0
+                ])
+            "#,
+        );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "store".to_string(),
+                args: vec![
+                    Arg::Var("player".to_string()),
+                    Arg::Map(HashMap::from([
+                        ("name".to_string(), Arg::String("blah".to_string())),
+                        ("health".to_string(), Arg::Number("100".to_string())),
+                        ("dodge".to_string(), Arg::Number("0".to_string())),
+                        ("strength".to_string(), Arg::Number("0".to_string())),
+                    ]))
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn map_with_list() {
+        let result = Parser::new().parse(
+            r#"
+                player.store([
+                name: "blah",
+                items: [x, y, z]
+                ])
+            "#,
+        );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "store".to_string(),
+                args: vec![
+                    Arg::Var("player".to_string()),
+                    Arg::Map(HashMap::from([
+                        ("name".to_string(), Arg::String("blah".to_string())),
+                        (
+                            "items".to_string(),
+                            Arg::List(vec![
+                                Arg::Var("x".to_string()),
+                                Arg::Var("y".to_string()),
+                                Arg::Var("z".to_string()),
+                            ])
+                        ),
+                    ]))
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn map_inside_list_inside_map() {
+        let result = Parser::new().parse(
+            r#"
+                player.store([
+                name: "blah",
+                inventory: [
+                    [
+                        name: "sword",
+                        damage: 10
+                    ],
+                    [
+                        name: "shield",
+                        defense: 5
+                    ]
+                ]
+                ])
+            "#,
+        );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "store".to_string(),
+                args: vec![
+                    Arg::Var("player".to_string()),
+                    Arg::Map(HashMap::from([
+                        ("name".to_string(), Arg::String("blah".to_string())),
+                        (
+                            "inventory".to_string(),
+                            Arg::List(vec![
+                                Arg::Map(HashMap::from([
+                                    ("name".to_string(), Arg::String("sword".to_string())),
+                                    ("damage".to_string(), Arg::Number("10".to_string())),
+                                ])),
+                                Arg::Map(HashMap::from([
+                                    ("name".to_string(), Arg::String("shield".to_string())),
+                                    ("defense".to_string(), Arg::Number("5".to_string())),
+                                ])),
+                            ])
+                        ),
+                    ]))
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn map_inside_map() {
+        let result = Parser::new().parse(
+            r#"
+                player.store([
+                name: "blah",
+                stats: [
+                    health: 100,
+                    strength: 10
+                ]
+                ])
+            "#,
+        );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "store".to_string(),
+                args: vec![
+                    Arg::Var("player".to_string()),
+                    Arg::Map(HashMap::from([
+                        ("name".to_string(), Arg::String("blah".to_string())),
+                        (
+                            "stats".to_string(),
+                            Arg::Map(HashMap::from([
+                                ("health".to_string(), Arg::Number("100".to_string())),
+                                ("strength".to_string(), Arg::Number("10".to_string())),
+                            ]))
+                        ),
+                    ]))
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn deeply_nested_maps() {
+        let result = Parser::new().parse(
+            r#"
+                world.store([
+                player: [
+                    name: "blah",
+                    location: [
+                        x: 0,
+                        y: 0
+                    ]
+                ]
+                ])
+            "#,
+        );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "store".to_string(),
+                args: vec![
+                    Arg::Var("world".to_string()),
+                    Arg::Map(HashMap::from([(
+                        "player".to_string(),
+                        Arg::Map(HashMap::from([
+                            ("name".to_string(), Arg::String("blah".to_string())),
+                            (
+                                "location".to_string(),
+                                Arg::Map(HashMap::from([
+                                    ("x".to_string(), Arg::Number("0".to_string())),
+                                    ("y".to_string(), Arg::Number("0".to_string())),
+                                ]))
+                            ),
+                        ]))
+                    )]))
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn map_value_is_expression() {
+        let result = Parser::new().parse(
+            r#"
+                player.store([
+                name: get_name(),
+                health: add(50, 50)
+                ])
+            "#,
+        );
+        dbg!(&result);
+        let expressions = result.unwrap();
+        assert_eq!(
+            expressions,
+            vec![Expression {
+                name: "store".to_string(),
+                args: vec![
+                    Arg::Var("player".to_string()),
+                    Arg::Map(HashMap::from([
+                        (
+                            "name".to_string(),
+                            Arg::Expression(Expression {
+                                name: "get_name".to_string(),
+                                args: vec![]
+                            })
+                        ),
+                        (
+                            "health".to_string(),
+                            Arg::Expression(Expression {
+                                name: "add".to_string(),
+                                args: vec![
+                                    Arg::Number("50".to_string()),
+                                    Arg::Number("50".to_string()),
+                                ]
+                            })
+                        ),
+                    ]))
+                ]
+            }]
+        );
+    }
+
+    #[test]
+    fn mixed_list_and_map_is_error() {
+        let result = Parser::new().parse(
+            r#"
+            player.store([
+                "blah",
+                name: "blah"
+            ])
+        "#,
+        );
+        dbg!(&result);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn key_without_value_is_error() {
+        let result = Parser::new().parse(
+            r#"
+            player.store([
+                name: "blah",
+                weapon:
+            ])
+        "#,
+        );
+        dbg!(&result);
+        assert!(result.is_err());
     }
 }

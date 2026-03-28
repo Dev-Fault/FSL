@@ -5,6 +5,7 @@ const OPEN_PAREN: &str = "(";
 const CLOSED_PAREN: &str = ")";
 const OPEN_BRACKET: &str = "[";
 const CLOSED_BRACKET: &str = "]";
+const COLON: &str = ":";
 const DOT: &str = ".";
 const COMMA: &str = ",";
 const HASHTAG: &str = "#";
@@ -16,6 +17,7 @@ const SYMBOLS: &[&str] = &[
     CLOSED_PAREN,
     OPEN_BRACKET,
     CLOSED_BRACKET,
+    COLON,
     DOT,
     COMMA,
     HASHTAG,
@@ -56,6 +58,7 @@ impl ToString for LexerErrorContext<'_> {
 pub enum LexerError<'a> {
     DotPreceededByInvalidToken(LexerErrorContext<'a>),
     CommaPrecededByInvalidToken(LexerErrorContext<'a>),
+    ColonPrecededByInvalidToken(LexerErrorContext<'a>),
     ClosedParenPrecededByInvalidToken(LexerErrorContext<'a>),
     ClosedBracketPrecededByInvalidToken(LexerErrorContext<'a>),
     UnclosedOpenParenthesis(LexerErrorContext<'a>),
@@ -83,6 +86,13 @@ impl ToString for LexerError<'_> {
                 format!(
                     "{}\n{}",
                     "Syntax error: Out of place comma",
+                    error_context.to_string()
+                )
+            }
+            LexerError::ColonPrecededByInvalidToken(error_context) => {
+                format!(
+                    "{}\n{}",
+                    "Syntax error: Out of place colon",
                     error_context.to_string()
                 )
             }
@@ -174,6 +184,7 @@ pub enum Symbol {
     ClosedParen,
     OpenBracket,
     ClosedBracket,
+    Colon,
     Dot,
     Comma,
     Hashtag,
@@ -188,6 +199,7 @@ impl Symbol {
             Symbol::ClosedParen => CLOSED_PAREN,
             Symbol::OpenBracket => OPEN_BRACKET,
             Symbol::ClosedBracket => CLOSED_BRACKET,
+            Symbol::Colon => COLON,
             Symbol::Dot => DOT,
             Symbol::Comma => COMMA,
             Symbol::Hashtag => HASHTAG,
@@ -203,6 +215,7 @@ fn symbol_from_str(value: &str) -> Option<Symbol> {
         CLOSED_PAREN => Symbol::ClosedParen,
         OPEN_BRACKET => Symbol::OpenBracket,
         CLOSED_BRACKET => Symbol::ClosedBracket,
+        COLON => Symbol::Colon,
         DOT => Symbol::Dot,
         COMMA => Symbol::Comma,
         HASHTAG => Symbol::Hashtag,
@@ -526,6 +539,20 @@ impl Lexer {
 
                         tokens.push_back(Token::new(TokenType::Symbol(Symbol::Comma), i));
                     }
+                    Symbol::Colon if self.inside_code() => {
+                        if self.list_depth == 0 {
+                            return Err(LexerError::SymbolUsedOutsideOfContext(err_context));
+                        } else if !buf.is_empty() {
+                            tokens.push_back(Token::new(parse_token(std::mem::take(&mut buf)), i));
+                        } else if !tokens
+                            .last_type()
+                            .is_some_and(|token| matches!(token, TokenType::Var(_)))
+                        {
+                            return Err(LexerError::ColonPrecededByInvalidToken(err_context));
+                        }
+
+                        tokens.push_back(Token::new(TokenType::Symbol(Symbol::Colon), i));
+                    }
                     Symbol::Hashtag if !self.inside_string && !self.inside_multi_line_comment => {
                         self.inside_single_line_comment = true;
                     }
@@ -712,6 +739,67 @@ mod tests {
         }
 
         assert!(tokens == valid_tokens);
+    }
+
+    #[test]
+    fn tokenize_map() {
+        let lexer = Lexer::new();
+
+        let tokens = lexer
+            .tokenize("map.store([name: \"blah\", address: \"blah\"])")
+            .unwrap()
+            .iter()
+            .map(|t| t.token_type.clone())
+            .collect::<Vec<TokenType>>();
+
+        let valid_tokens: &[TokenType] = &[
+            TokenType::Var("map".to_string()),
+            TokenType::Symbol(Symbol::Dot),
+            TokenType::Command("store".to_string()),
+            TokenType::Symbol(Symbol::OpenParen),
+            TokenType::Symbol(Symbol::OpenBracket),
+            TokenType::Var("name".to_string()),
+            TokenType::Symbol(Symbol::Colon),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("blah".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::Comma),
+            TokenType::Var("address".to_string()),
+            TokenType::Symbol(Symbol::Colon),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::String("blah".to_string()),
+            TokenType::Symbol(Symbol::Quote),
+            TokenType::Symbol(Symbol::ClosedBracket),
+            TokenType::Symbol(Symbol::ClosedParen),
+        ];
+
+        println!("");
+        for token in &tokens {
+            println!("{:?}", token);
+        }
+
+        assert!(tokens == valid_tokens);
+    }
+
+    #[test]
+    fn colon_without_key() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize("map.store([: \"blah\"])");
+        assert!(tokens.is_err());
+    }
+
+    #[test]
+    fn colon_outside_of_map() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize("name: \"blah\"");
+        assert!(tokens.is_err());
+    }
+
+    #[test]
+    fn double_colon() {
+        let lexer = Lexer::new();
+        let tokens = lexer.tokenize("map.store([name:: \"blah\"])");
+        assert!(tokens.is_err());
     }
 
     #[test]

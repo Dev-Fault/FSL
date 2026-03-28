@@ -721,6 +721,16 @@ impl FslInterpreter {
                 Ok(Value::List(list))
             }
             parser::Arg::Expression(expression) => Ok(self.parse_expression(expression).await?),
+            parser::Arg::KeyValue(_, _) => unreachable!(),
+            parser::Arg::Map(map) => {
+                let mut value_map = HashMap::new();
+
+                for (key, value) in map {
+                    value_map.insert(key, self.parse_arg(value).await?);
+                }
+
+                Ok(Value::Map(value_map))
+            }
         }
     }
 
@@ -755,6 +765,8 @@ impl FslInterpreter {
                 (WHILE_LOOP, WHILE_RULES, commands::while_command),
                 (REPEAT, REPEAT_RULES, commands::repeat),
                 (INDEX, INDEX_RULES, commands::index),
+                (GET, GET_RULES, commands::get),
+                (SET, SET_RULES, commands::set),
                 (LENGTH, LENGTH_RULES, commands::length),
                 (SWAP, SWAP_RULES, commands::swap),
                 (INSERT, INSERT_RULES, commands::insert),
@@ -2082,6 +2094,86 @@ mod interpreter {
 	            get_potion_mod().print()
             "#,
             "-100",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn multiple_maps() {
+        test_interpreter(
+            r#"
+	            player.store([
+	            	name: "blah",
+	            	health: 100,
+	            	dodge: 0,
+	            	strength: 0
+	            ])
+	            player.set("name", "player")
+	            player.set("health", 5)
+
+	            opponent.store([
+	            	name: "blah",
+	            	health: 100,
+	            	dodge: 0,
+	            	strength: 0
+	            ])
+	            opponent.set("name", "opponent")
+	            opponent.set("health", 25)
+
+	            characters.store([player, opponent])
+
+	            print(player.get("health"), "\n")
+	            print(opponent.get("health"))
+            "#,
+            "5\n25",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inner_map_access() {
+        test_interpreter(
+            r#"
+	            player.store([
+	            	name: "blah",
+	            	health: 100,
+	            	dodge: 0,
+	            	strength: 0,
+	            	weapon: [
+	            	    type: "sword",
+	            	    damage: 100
+	            	],
+	            ])
+
+	            player.get(["weapon", "type"]).print("\n")
+	            player.set(["weapon", "type"], "knife")
+	            player.get(["weapon", "type"]).print()
+            "#,
+            "sword\nknife",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn map_dot_notation() {
+        test_interpreter(
+            r#"
+	            player.store([
+	            	name: "blah",
+	            	health: 100,
+	            	dodge: 0,
+	            	strength: 0,
+	            	weapon: [
+	            	    type: "sword",
+	            	    damage: 100
+	            	],
+	            ])
+
+	            player.weapon.type.get().print("\n")
+	            player.weapon.type.set("knife")
+	            player.weapon.type.get().print()
+            "#,
+            "sword\nknife",
         )
         .await;
     }

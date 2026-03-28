@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     num::{ParseFloatError, ParseIntError},
     sync::Arc,
 };
@@ -26,6 +27,9 @@ pub enum ValueError {
     CommandExecutionFailed(String),
     AttemptToOverwriteConstant(String),
     AttemptToFreeConstant(String),
+    EmptyMapPath(String),
+    NotAMap(String),
+    NonExistantKey(String),
 }
 
 impl ValueError {
@@ -42,6 +46,9 @@ impl ValueError {
             ValueError::VarMemoryLimitReached => "interpreter var memory limit reached".into(),
             ValueError::AttemptToOverwriteConstant(error_text) => error_text,
             ValueError::AttemptToFreeConstant(error_text) => error_text,
+            ValueError::EmptyMapPath(error_text) => error_text,
+            ValueError::NotAMap(error_text) => error_text,
+            ValueError::NonExistantKey(error_text) => error_text,
         }
     }
 }
@@ -53,6 +60,7 @@ pub enum Value {
     Bool(bool),
     Text(String),
     List(Vec<Value>),
+    Map(HashMap<String, Value>),
     Var(String),
     Command(Box<Command>),
     None,
@@ -72,6 +80,7 @@ impl Value {
             Value::Text(_) => FslType::Text,
             Value::Bool(_) => FslType::Bool,
             Value::List(_) => FslType::List,
+            Value::Map(_) => FslType::Map,
             Value::Var(_) => FslType::Var,
             Value::Command(_) => FslType::Command,
             Value::None => FslType::None,
@@ -92,6 +101,17 @@ impl Value {
                 let mut size: usize = size_of::<Value>().checked_add(size_of::<Vec<Value>>())?;
                 for element in list {
                     size = size.checked_add(element.mem_size()?)?;
+                }
+                Some(size)
+            }
+            Value::Map(map) => {
+                let mut size: usize =
+                    size_of::<Value>().checked_add(size_of::<HashMap<String, Value>>())?;
+                for key_value_pair in map {
+                    let key = key_value_pair.0;
+                    let value = key_value_pair.1;
+                    size = size.checked_add(key.capacity())?;
+                    size = size.checked_add(value.mem_size()?)?;
                 }
                 Some(size)
             }
@@ -154,6 +174,7 @@ impl Value {
             },
             Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::None => Err(self.gen_conversion_err_to_type(to_type)),
         }
     }
@@ -189,6 +210,7 @@ impl Value {
             },
             Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::None => Err(self.gen_conversion_err_to_type(to_type)),
         }
     }
@@ -205,6 +227,7 @@ impl Value {
             },
             Value::Bool(value) => Ok(value),
             Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::Var(label) => data.vars.get_var_value(&label)?.as_bool(data).await,
             Value::Command(command) => {
                 command
@@ -226,6 +249,7 @@ impl Value {
             Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::Var(label) => Ok(label),
             Value::Command(command) => {
                 command
@@ -251,6 +275,24 @@ impl Value {
                 let empty = values.is_empty();
                 for value in values {
                     output.push_str(&format!("{}, ", value.as_text(data.clone()).await?));
+                }
+                if !empty {
+                    output.pop();
+                    output.pop();
+                }
+                output.push(']');
+                Ok(output)
+            }
+            Value::Map(map) => {
+                let mut output = String::new();
+                output.push('[');
+                let empty = map.is_empty();
+                for (key, value) in map {
+                    output.push_str(&format!(
+                        "{}: {}, ",
+                        key,
+                        value.as_text(data.clone()).await?
+                    ));
                 }
                 if !empty {
                     output.pop();
@@ -291,12 +333,49 @@ impl Value {
                 }
                 Ok(values)
             }
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::Var(label) => data.vars.get_var_value(&label)?.as_list(data).await,
             Value::Command(command) => {
                 command
                     .execute(data.clone())
                     .await?
                     .as_list(data.clone())
+                    .await
+            }
+            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+        }
+    }
+
+    #[async_recursion]
+    pub async fn as_map(
+        self,
+        data: Arc<InterpreterData>,
+    ) -> Result<HashMap<String, Value>, ValueError> {
+        let to_type = FslType::List;
+        match self {
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Map(mut map) => {
+                for (_, value) in map.iter_mut() {
+                    if value.is_type(FslType::Command) {
+                        let new_value = std::mem::take(value)
+                            .as_command()?
+                            .execute(data.clone())
+                            .await?;
+                        *value = new_value
+                    }
+                }
+                Ok(map)
+            }
+            Value::Var(label) => data.vars.get_var_value(&label)?.as_map(data).await,
+            Value::Command(command) => {
+                command
+                    .execute(data.clone())
+                    .await?
+                    .as_map(data.clone())
                     .await
             }
             Value::None => Err(self.gen_conversion_err_to_type(to_type)),
@@ -401,6 +480,7 @@ impl ToString for Value {
             Value::Text(value) => value.to_string(),
             Value::Bool(value) => value.to_string(),
             Value::List(values) => format!("{:?}", values),
+            Value::Map(map) => format!("{:?}", map),
             Value::Var(value) => value.to_string(),
             Value::Command(command) => command.get_label().to_string(),
             Value::None => "".to_string(),
