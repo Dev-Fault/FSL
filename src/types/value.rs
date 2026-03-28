@@ -351,7 +351,7 @@ impl Value {
         self,
         data: Arc<InterpreterData>,
     ) -> Result<HashMap<String, Value>, ValueError> {
-        let to_type = FslType::List;
+        let to_type = FslType::Map;
         match self {
             Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
             Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),

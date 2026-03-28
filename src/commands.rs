@@ -3031,4 +3031,153 @@ pub mod tests {
         )
         .await;
     }
+
+    #[tokio::test]
+    async fn return_across_multiple_functions_and_loops() {
+        test_interpreter(
+            r#"
+	            HEALTH.const("health")
+	            STRENGTH.const("strength")
+	            DODGE.const("dodge")
+
+	            LOW_QUALITY.const("low")
+	            MEDIUM_QUALITY.const("medium")
+	            HIGH_QUALITY.const("high")
+
+	            POTION.const("potion")
+
+	            action_id_counter.store(0)
+	            create_action.def(name, type, ability,
+	            	action.local([
+	            		id: action_id_counter.inc(),
+	            		name: name,
+	            		type: type,
+	            		ability: ability,
+	            	]).return()
+	            )
+
+	            HEALTH_POTION_QUALITY_RANGES.const([
+	            	modifier: [
+	            		low: [min: -50, max: 20],
+	            		medium: [min: -5, max: 30],
+	            		high: [min: 10, max: 50],
+	            	],
+	            	duration: [
+	            		low: [min: 0, max: 0],
+	            		medium: [min: 0, max: 0],
+	            		high: [min: 0, max: 0],
+	            	]
+	            ])
+
+	            STRENGTH_POTION_QUALITY_RANGES.const([
+	            	modifier: [
+	            		low: [min: -15, max: 15],
+	            		medium: [min: -5, max: 25],
+	            		high: [min: 10, max: 30],
+	            	],
+	            	duration: [
+	            		low: [min: 2, max: 2],
+	            		medium: [min: 1, max: 3],
+	            		high: [min: 2, max: 4],
+	            	]
+	            ])
+
+	            DODGE_POTION_QUALITY_RANGES.const([
+	            	modifier: [
+	            		low: [min: -15, max: 10],
+	            		medium: [min: -2, max: 20],
+	            		high: [min: 10, max: 50],
+	            	],
+	            	duration: [
+	            		low: [min: 2, max: 2],
+	            		medium: [min: 1, max: 3],
+	            		high: [min: 2, max: 4],
+	            	]
+	            ])
+
+	            create_potion_action.def(type, quality,
+	            	name.local("test")
+
+	            	if_then(type.eq(HEALTH),
+	            		ranges.store(HEALTH_POTION_QUALITY_RANGES)
+	            	)
+	            	if_then(type.eq(STRENGTH),
+	            		ranges.store(STRENGTH_POTION_QUALITY_RANGES)
+	            	)
+	            	if_then(type.eq(DODGE),
+	            		ranges.store(DODGE_POTION_QUALITY_RANGES)
+	            	)
+
+	            	min_mod.store(ranges.get(["modifier", quality, "min"]))
+	            	max_mod.store(ranges.get(["modifier", quality, "max"]))
+	            	min_dur.store(ranges.get(["duration", quality, "min"]))
+	            	max_dur.store(ranges.get(["duration", quality, "max"]))
+	            	modifier.store(
+	            		if_then_else(min_mod.lt(max_mod),
+	            			random_range(min_mod, max_mod)
+	            			min_mod.clone()
+	            		)
+	            	)
+	            	duration.store(
+	            		if_then_else(min_dur.lt(max_dur),
+	            			random_range(min_dur, max_dur)
+	            			min_dur.clone()
+	            		)
+	            	)
+
+	            	potion.local([
+	            		type: type,
+	            		modifier: modifier.free(),
+	            		duration: duration.free(),
+	            		quality: quality,
+	            	])
+	            	action.store(create_action(name.free(), POTION, potion.free())).return()
+	            )
+
+	            QUALITY_THRESHOLDS.const([
+	            	[
+	            		threshold: 50,
+	            		value: LOW_QUALITY,
+	            	],
+	            	[
+	            		threshold: 80,
+	            		value: MEDIUM_QUALITY,
+	            	],
+	            	[
+	            		threshold: 100,
+	            		value: HIGH_QUALITY,
+	            	]
+	            ])
+
+	            get_threshold_value.def(thresholds, threshold,
+	            	i.local(0)
+	            	repeat(thresholds.length(),
+	            		current_threshold.local(thresholds.index(i).get("threshold"))
+	            		if_then(threshold.ltoe(current_threshold),
+	            			thresholds.index(i).get("value").return()
+	            		)
+	            		i.inc()
+	            	)
+	            	return("low")
+	            )
+
+	            generate_starter_potions.def(n,
+	            	potion_actions.store([])
+	            	repeat(n,
+	            		type.local(random_entry([HEALTH.clone(), STRENGTH.clone(), DODGE.clone()]))
+	            		*return across multiple functions and loops must be fixed*
+	            		quality.local(get_threshold_value(QUALITY_THRESHOLDS, random_range(0, 100)))
+	            		potion.store(create_potion_action(type, quality))
+	            		potion_actions.push(potion.free())
+	            	)
+	            	return(potion_actions)
+	            )
+
+	            actions.store(generate_starter_potions(5))
+	            actions.length().print()
+            "#,
+            "5",
+        )
+        .await;
+    }
 }
