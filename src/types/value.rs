@@ -390,16 +390,27 @@ impl Value {
     ) -> Result<Value, ValueError> {
         let fsl_type = self.as_type();
         let value;
-        if self.is_type(FslType::Var) {
-            value = self.get_var_value(data.clone())?;
-        } else if self.is_type(FslType::Command) {
-            let result = self.as_command()?.execute(data.clone()).await?;
-            value = result.as_raw(data.clone(), valid_types).await?;
-        } else if self.is_type(FslType::List) {
-            value = Value::List(self.as_list(data.clone()).await?);
-        } else {
-            value = self
+        match self.as_type() {
+            FslType::Int => value = self,
+            FslType::Float => value = self,
+            FslType::Bool => value = self,
+            FslType::Text => value = self,
+            FslType::List => {
+                value = Value::List(self.as_list(data.clone()).await?);
+            }
+            FslType::Map => {
+                value = Value::Map(self.as_map(data.clone()).await?);
+            }
+            FslType::Var => {
+                value = self.get_var_value(data.clone())?;
+            }
+            FslType::Command => {
+                let result = self.as_command()?.execute(data.clone()).await?;
+                value = result.as_raw(data.clone(), valid_types).await?;
+            }
+            FslType::None => value = self,
         }
+
         if valid_types.contains(&value.as_type()) {
             Ok(value)
         } else {
