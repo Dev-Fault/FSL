@@ -599,7 +599,7 @@ pub async fn while_command(
                 data.continue_flag.store(false, Ordering::Relaxed);
                 continue 'outer;
             }
-            if data.break_flag.load(Ordering::Relaxed) {
+            if data.break_flag.load(Ordering::Relaxed) || data.return_flag.load(Ordering::Relaxed) {
                 data.break_flag.store(false, Ordering::Relaxed);
                 break 'outer;
             }
@@ -632,7 +632,7 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 data.continue_flag.store(false, Ordering::Relaxed);
                 continue 'outer;
             }
-            if data.break_flag.load(Ordering::Relaxed) {
+            if data.break_flag.load(Ordering::Relaxed) || data.return_flag.load(Ordering::Relaxed) {
                 data.break_flag.store(false, Ordering::Relaxed);
                 break 'outer;
             }
@@ -1690,9 +1690,17 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let vars = var_labels.len();
     for _ in 0..vars {
         let mut value = values.pop_front().unwrap();
-        if value.is_type(FslType::Command) || value.is_type(FslType::List) {
-            value = value.as_raw(data.clone(), NON_NONE_VALUES).await?;
-        };
+        match value.as_type() {
+            FslType::Int
+            | FslType::Float
+            | FslType::Bool
+            | FslType::Text
+            | FslType::None
+            | FslType::Var => {}
+            FslType::List | FslType::Map | FslType::Command => {
+                value = value.as_raw(data.clone(), NON_NONE_VALUES).await?;
+            }
+        }
         var_map.insert(var_labels.pop_front().unwrap(), value);
     }
 
@@ -2956,12 +2964,70 @@ pub mod tests {
 	                    health: 100,
 	                    dodge: 0,
 	                    strength: 0
-	                ]).return()
+	                ])
+	                player.return()
 	            )
 	            player.store(create_player("jake"))
 	            player.name.get().print()
             "#,
             "jake",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_from_loop() {
+        test_interpreter(
+            r#"
+	            test.def(
+	            	repeat(5,
+	            		return(0)
+	            		print("shouldn't happen")
+	            	)
+	            )
+
+	            test().print()
+            "#,
+            "0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn return_in_repeat_in_if() {
+        test_interpreter(
+            r#"
+	            LOW_QUALITY.const("low")
+	            MEDIUM_QUALITY.const("medium")
+	            HIGH_QUALITY.const("high")
+
+	            QUALITY_THRESHOLDS.const([
+	            	[
+	            		threshold: 50,
+	            		value: LOW_QUALITY,
+	            	],
+	            	[
+	            		threshold: 80,
+	            		value: MEDIUM_QUALITY,
+	            	],
+	            	[
+	            		threshold: 100,
+	            		value: HIGH_QUALITY,
+	            	]
+	            ])
+
+	            get_threshold_value.def(thresholds, threshold,
+	            	repeat(thresholds.length(),
+	            		current_threshold.store(thresholds.index(0).get("threshold"))
+	            		if_then(threshold.ltoe(current_threshold),
+	            			thresholds.index(0).get("value").return()
+	            		)
+	            	)
+	            )
+
+	            get_threshold_value(QUALITY_THRESHOLDS, 5).print()
+            "#,
+            "low",
         )
         .await;
     }
