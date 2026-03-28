@@ -56,6 +56,7 @@ pub const LITERAL_VALUES: &[FslType] = &[
     FslType::Bool,
     FslType::Text,
     FslType::List,
+    FslType::Map,
 ];
 
 pub const NUMERIC_TYPES: &[FslType] = &[
@@ -272,15 +273,17 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
         .unwrap()
         .as_var_label(data.clone())
         .await?;
-    let value_to_store = values.pop_front().unwrap();
+    let value_to_store = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), LITERAL_VALUES)
+        .await?;
     let var_label = &var;
 
-    data.vars.update_or_create_mut_var(
-        var_label,
-        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
-    )?;
+    data.vars
+        .update_or_create_mut_var(var_label, value_to_store.clone())?;
 
-    Ok(data.vars.get_var_value(var_label)?)
+    Ok(value_to_store)
 }
 
 pub const LOCAL_RULES: &[ArgRule] = &[
@@ -1737,11 +1740,16 @@ pub const RETURN: &str = "return";
 pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let return_value = command.take_args().pop_front();
 
-    data.return_flag.store(true, Ordering::Relaxed);
-
     match return_value {
-        Some(value) => Ok(value),
-        None => Ok(Value::None),
+        Some(value) => {
+            let value = value.as_raw(data.clone(), LITERAL_VALUES).await?;
+            data.return_flag.store(true, Ordering::Relaxed);
+            Ok(value)
+        }
+        None => {
+            data.return_flag.store(true, Ordering::Relaxed);
+            Ok(Value::None)
+        }
     }
 }
 
