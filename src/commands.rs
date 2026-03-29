@@ -874,7 +874,7 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         vec![accesor]
     };
 
-    let replacement_value = arg_2;
+    let replacement_value = arg_2.as_raw(data.clone(), NON_NONE_VALUES).await?;
 
     if arg_0.is_type(FslType::Var) {
         let var_label = &arg_0.clone().as_var_label(data.clone()).await?;
