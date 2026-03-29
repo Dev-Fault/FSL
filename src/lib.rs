@@ -651,33 +651,36 @@ impl FslInterpreter {
             command.set_args(args);
 
             Ok(Value::Command(Box::new(command)))
-        } else if let Some(user_command) = self
-            .data
-            .user_commands
-            .lock()
-            .await
-            .get(expression.name.as_str())
-        {
-            let mut command = Command::new(
-                CommandSpec::new(&expression.name, RUN_RULES),
-                Self::construct_executor(commands::run),
-            );
-
-            let mut args = VecDeque::new();
-            args.push_back(Value::Var(user_command.label.clone()));
-
-            for arg in expression.args {
-                args.push_back(self.parse_arg(arg).await?);
-            }
-
-            command.set_args(args);
-
-            Ok(Value::Command(Box::new(command)))
         } else {
-            return Err(CommandError::NonExistantCommand(format!(
-                "command with name {} does not exist",
-                expression.name
-            )));
+            let user_command_label = {
+                let user_commands = self.data.user_commands.lock().await;
+                user_commands
+                    .get(expression.name.as_str())
+                    .map(|uc| uc.label.clone())
+            };
+
+            if let Some(label) = user_command_label {
+                let mut command = Command::new(
+                    CommandSpec::new(&expression.name, RUN_RULES),
+                    Self::construct_executor(commands::run),
+                );
+
+                let mut args = VecDeque::new();
+                args.push_back(Value::Var(label));
+
+                for arg in expression.args {
+                    args.push_back(self.parse_arg(arg).await?);
+                }
+
+                command.set_args(args);
+
+                Ok(Value::Command(Box::new(command)))
+            } else {
+                return Err(CommandError::NonExistantCommand(format!(
+                    "command with name {} does not exist",
+                    expression.name
+                )));
+            }
         }
     }
 
