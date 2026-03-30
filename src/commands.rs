@@ -388,6 +388,20 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
     Ok(Value::None)
 }
 
+pub const DEBUG_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
+pub const DEBUG: &str = "debug";
+pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let values = command.take_args();
+    let mut output = String::new();
+
+    for value in values {
+        output.push_str(&value.as_text(data.clone()).await?);
+    }
+
+    dbg!(&output);
+    Ok(Value::None)
+}
+
 pub const SCOPE_RULES: &'static [ArgRule] =
     &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
 pub const SCOPE: &str = "";

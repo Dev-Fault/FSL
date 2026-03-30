@@ -754,6 +754,7 @@ impl FslInterpreter {
                 (CLONE, CLONE_RULES, commands::clone),
                 (FREE, FREE_RULES, commands::free),
                 (PRINT, PRINT_RULES, commands::print),
+                (DEBUG, DEBUG_RULES, commands::debug),
                 (SCOPE, SCOPE_RULES, commands::scope),
                 (EQ, EQ_RULES, commands::eq),
                 (GT, GT_RULES, commands::gt),
