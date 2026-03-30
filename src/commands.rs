@@ -1725,6 +1725,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         final_value = command.execute(data.clone()).await?;
         if data.return_flag.load(Ordering::Relaxed) {
             data.return_flag.store(false, Ordering::Relaxed);
+            data.vars.pop();
             return Ok(final_value);
         }
     }

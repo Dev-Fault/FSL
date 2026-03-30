@@ -282,6 +282,10 @@ impl VarStack {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.stack.lock().unwrap().len()
+    }
+
     pub fn push(&self) {
         let mut stack = self.stack.lock().unwrap();
         stack.push(VarMap::new());
