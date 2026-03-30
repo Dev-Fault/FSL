@@ -388,7 +388,6 @@ impl Value {
         data: Arc<InterpreterData>,
         valid_types: &[FslType],
     ) -> Result<Value, ValueError> {
-        let fsl_type = self.as_type();
         let value;
         match self.as_type() {
             FslType::Int => value = self,
@@ -414,7 +413,7 @@ impl Value {
         if valid_types.contains(&value.as_type()) {
             Ok(value)
         } else {
-            Err(fsl_type.gen_conversion_err_to_types(valid_types))
+            Err(value.gen_conversion_err_to_types(valid_types))
         }
     }
 
@@ -458,27 +457,19 @@ impl Value {
 
     fn gen_conversion_err_to_type(&self, to: FslType) -> ValueError {
         ValueError::InvalidConversion(format!(
-            "cannot convert from type {} to type {}",
+            "cannot convert value \"{}\" from type {} to type {}",
+            self.to_string(),
             self.as_type().as_str(),
             to.as_str(),
         ))
     }
 
-    #[allow(dead_code)]
     fn gen_conversion_err_to_types(&self, to: &[FslType]) -> ValueError {
         ValueError::InvalidConversion(format!(
-            "cannot convert type {} to type {:?}",
+            "cannot convert value \"{}\" from type {} to type {:?}",
+            self.to_string(),
             self.as_type().as_str(),
             to,
-        ))
-    }
-
-    #[allow(dead_code)]
-    fn gen_parse_err(&self, to: FslType) -> ValueError {
-        ValueError::FailedParse(format!(
-            "failed to parse type {} to type {}",
-            self.as_type().as_str(),
-            to.as_str()
         ))
     }
 }

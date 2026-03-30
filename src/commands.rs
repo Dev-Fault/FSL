@@ -398,7 +398,7 @@ pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value
         output.push_str(&value.as_text(data.clone()).await?);
     }
 
-    dbg!(&output);
+    println!("{}", output);
     Ok(Value::None)
 }
 
