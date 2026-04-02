@@ -290,20 +290,24 @@ impl Command {
     pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
         self.validate_args()?;
 
+        let return_flag = data.return_flag.load(Ordering::Relaxed);
+        let break_flag = data.break_flag.load(Ordering::Relaxed);
+        let continue_flag = data.continue_flag.load(Ordering::Relaxed);
+
+        if return_flag || break_flag || continue_flag {
+            return Ok(Value::None);
+        }
+
         let label = self.get_label().to_string();
         data.clone().call_stack.lock().await.push(label.clone());
 
-        if data.return_flag.load(Ordering::Relaxed) == false {
-            let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
-            match executor.execute(self, data.clone()).await {
-                Ok(value) => {
-                    data.call_stack.lock().await.pop();
-                    Ok(value)
-                }
-                Err(e) => Err(e),
+        let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
+        match executor.execute(self, data.clone()).await {
+            Ok(value) => {
+                data.call_stack.lock().await.pop();
+                Ok(value)
             }
-        } else {
-            Ok(Value::None)
+            Err(e) => Err(e),
         }
     }
 }
