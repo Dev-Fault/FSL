@@ -23,7 +23,6 @@ pub enum ParserError<'a> {
     InvalidKey(ParserErrorContext<'a>),
     KeyMustBeProceededByAValue(ParserErrorContext<'a>),
     MixedListAndMap(ParserErrorContext<'a>),
-    ObjectsNotSupported(ParserErrorContext<'a>),
 }
 
 impl ToString for ParserError<'_> {
@@ -39,13 +38,6 @@ impl ToString for ParserError<'_> {
             ParserError::ValueOutsideOfContext(context) => {
                 format!(
                     "Syntax error: Out of place value\nValue: {}\n{}",
-                    context.token.token_type.as_str(),
-                    format_error_context(context.input, context.token.location)
-                )
-            }
-            ParserError::ObjectsNotSupported(context) => {
-                format!(
-                    "Parser error: Objects are not currently supported in FSL\n{}\n{}",
                     context.token.token_type.as_str(),
                     format_error_context(context.input, context.token.location)
                 )
