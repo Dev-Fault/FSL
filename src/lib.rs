@@ -835,7 +835,8 @@ mod interpreter {
     use crate::commands::tests::{
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
-    use crate::types::value::Value;
+    use crate::types::command::CommandError;
+    use crate::types::value::{Value, ValueError};
     use crate::{FslInterpreter, InterpreterError};
 
     async fn test_interpreter_err(code: &str) {
@@ -2184,5 +2185,31 @@ mod interpreter {
             "sword\nknife",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn const_map() {
+        let err = test_interpreter_err_type(
+            r#"
+	            player.const([
+	            	name: "blah",
+	            	health: 100,
+	            ])
+
+	            player.name.set("player")
+            "#,
+        )
+        .await;
+
+        match err {
+            InterpreterError::CommandError(command_error) => match command_error {
+                CommandError::ValueError(value_error) => match value_error {
+                    ValueError::AttemptToOverwriteConstant(_) => {}
+                    _ => panic!("should be overwrite constant err"),
+                },
+                _ => panic!("should be overwrite constant err"),
+            },
+            _ => panic!("should be overwrite constant err"),
+        }
     }
 }
