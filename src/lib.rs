@@ -2188,6 +2188,26 @@ mod interpreter {
     }
 
     #[tokio::test]
+    async fn custom_command_calls_custom_command() {
+        test_interpreter(
+            r#"
+            add_two.def(value,
+                value.add(2).return()
+            )
+            add_three.def(value,
+                value.add(3).return()
+            )
+
+            number.store(0)
+            number.store(add_two(add_three(number)))
+            number.print()
+            "#,
+            "5",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn const_map() {
         let err = test_interpreter_err_type(
             r#"
