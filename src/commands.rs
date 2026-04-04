@@ -242,6 +242,53 @@ pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Val
     Ok(Value::Int(remainder))
 }
 
+pub const CLAMP_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+];
+pub const CLAMP: &str = "clamp";
+pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), NUMERIC_TYPES)
+        .await?;
+    let arg_1 = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), NUMERIC_TYPES)
+        .await?;
+    let arg_2 = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), NUMERIC_TYPES)
+        .await?;
+
+    if arg_0.is_type(FslType::Float) {
+        let value = arg_0.as_float(data.clone()).await?;
+        let min = arg_1.as_float(data.clone()).await?;
+        let max = arg_2.as_float(data.clone()).await?;
+
+        if min > max {
+            return Err(CommandError::InvalidRange);
+        }
+
+        return Ok(Value::Float(value.clamp(min, max)));
+    } else {
+        let value = arg_0.as_int(data.clone()).await?;
+        let min = arg_1.as_int(data.clone()).await?;
+        let max = arg_2.as_int(data.clone()).await?;
+
+        if min > max {
+            return Err(CommandError::InvalidRange);
+        }
+
+        return Ok(Value::Int(value.clamp(min, max)));
+    }
+}
+
 pub const PRECISION_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
     ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
@@ -2930,6 +2977,39 @@ pub mod tests {
             "1\n11",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn clamp_int() {
+        test_interpreter(
+            r#"
+            print(clamp(5, 0, 3))
+            "#,
+            "3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn clamp_float() {
+        test_interpreter(
+            r#"
+            print(clamp(5.2, 0, 3.7))
+            "#,
+            "3.7",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn clamp_invalid_range() {
+        let err = test_interpreter_err_type(
+            r#"
+            print(clamp(5, 10, 2))
+            "#,
+        )
+        .await;
+        assert!(matches!(err, InterpreterError::CommandError(_)))
     }
 
     #[tokio::test]

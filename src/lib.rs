@@ -750,6 +750,7 @@ impl FslInterpreter {
                 (MUL, MATH_RULES, commands::mul),
                 (DIV, MATH_RULES, commands::div),
                 (MODULUS, MATH_RULES, commands::modulus),
+                (CLAMP, CLAMP_RULES, commands::clamp),
                 (PRECISION, PRECISION_RULES, commands::precision),
                 (STORE, STORE_RULES, commands::store),
                 (CONST, CONST_RULES, commands::r#const),
