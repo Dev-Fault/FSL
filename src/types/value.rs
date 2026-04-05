@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ValueError {
     InvalidComparison(String),
     InvalidConversion(String),
@@ -435,6 +435,14 @@ impl Value {
                 "{} is not a valid var name",
                 self.to_string()
             )))
+        }
+    }
+
+    pub fn get_command_label(&self) -> Option<&str> {
+        if let Value::Command(command) = self {
+            Some(command.get_label())
+        } else {
+            None
         }
     }
 

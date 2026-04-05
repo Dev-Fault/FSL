@@ -687,8 +687,7 @@ pub async fn if_then(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let arg_1 = values.pop_front().unwrap();
 
     if arg_0.as_bool(data.clone()).await? {
-        let result = arg_1.as_command()?.execute(data).await?;
-        Ok(result)
+        arg_1.as_command()?.execute(data).await
     } else {
         Ok(Value::None)
     }
@@ -710,12 +709,219 @@ pub async fn if_then_else(
     let arg_2 = values.pop_front().unwrap();
 
     if arg_0.as_bool(data.clone()).await? {
-        let result = arg_1.as_command()?.execute(data).await?;
-        Ok(result)
+        arg_1.as_command()?.execute(data).await
     } else {
         let result = arg_2.as_command()?.execute(data).await?;
         Ok(result)
     }
+}
+
+pub const IF_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
+];
+pub const IF: &str = "if";
+pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let condition = values.pop_front().unwrap();
+
+    let mut then_command: Option<Value> = None;
+    let mut else_if_commands: VecDeque<Value> = VecDeque::new();
+    let mut else_command: Option<Value> = None;
+
+    let mut requires_else = false;
+
+    data.if_flag.store(true, Ordering::Relaxed);
+
+    for command in values {
+        let label = command.get_command_label().unwrap();
+        match label {
+            THEN => {
+                if then_command.is_some() {
+                    return Err(CommandError::MultipleThenCommandsInIf);
+                }
+                then_command = Some(command)
+            }
+            ELSE_IF => {
+                requires_else = true;
+                else_if_commands.push_front(command);
+            }
+            ELSE => {
+                if else_command.is_some() {
+                    return Err(CommandError::MultipleThenCommandsInIf);
+                }
+                else_command = Some(command)
+            }
+            _ => return Err(CommandError::DivisionByZero),
+        }
+    }
+
+    let then_command = then_command.ok_or(CommandError::IfMustContainThen)?;
+
+    if requires_else && else_command.is_none() {
+        return Err(CommandError::ElseIfMustBePairedWithElse);
+    }
+
+    if condition.as_bool(data.clone()).await? == true {
+        return then_command.as_command()?.execute(data.clone()).await;
+    } else {
+        for else_if_command in else_if_commands {
+            let result = else_if_command.as_command()?.execute(data.clone()).await;
+            if let Ok(result) = result {
+                return Ok(result);
+            } else if let Err(CommandError::ConditionFalse) = result {
+                continue;
+            } else {
+                return result;
+            }
+        }
+
+        if else_command.is_some() {
+            let else_command = else_command.unwrap();
+            return else_command.as_command()?.execute(data.clone()).await;
+        }
+
+        data.if_flag.store(false, Ordering::Relaxed);
+        return Ok(Value::None);
+    }
+}
+
+pub const THEN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const THEN: &str = "then";
+pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+
+    let in_if = data.if_flag.load(Ordering::Relaxed);
+
+    if !in_if {
+        return Err(CommandError::ThenOutsideIf);
+    }
+
+    data.if_flag.store(false, Ordering::Relaxed);
+
+    Ok(arg_0.as_raw(data, ALL_TYPES).await?)
+}
+
+pub const ELSE_IF_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
+pub const ELSE_IF: &str = "else_if";
+pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+
+    let in_if = data.if_flag.load(Ordering::Relaxed);
+
+    if !in_if {
+        return Err(CommandError::ElseIfOutsideIf);
+    }
+
+    data.if_flag.store(false, Ordering::Relaxed);
+
+    if arg_0.as_bool(data.clone()).await? {
+        Ok(arg_1.as_raw(data, ALL_TYPES).await?)
+    } else {
+        Err(CommandError::ConditionFalse)
+    }
+}
+
+pub const ELSE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const ELSE: &str = "else";
+pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+
+    let in_if = data.if_flag.load(Ordering::Relaxed);
+
+    if !in_if {
+        return Err(CommandError::ElseOutsideIf);
+    }
+
+    data.if_flag.store(false, Ordering::Relaxed);
+
+    Ok(arg_0.as_raw(data, ALL_TYPES).await?)
+}
+
+pub const SWITCH_RULES: &'static [ArgRule] =
+    &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
+pub const SWITCH: &str = "switch";
+pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let commands = command.take_args();
+    let (cases, mut fallback): (VecDeque<Value>, VecDeque<Value>) =
+        commands.into_iter().partition(|statement| {
+            statement
+                .get_command_label()
+                .is_some_and(|label| label == CASE)
+        });
+
+    data.switch_flag.store(true, Ordering::Relaxed);
+
+    if fallback.len() == 1
+        && let Some(fallback) = fallback.pop_front()
+    {
+        for case in cases {
+            let result = case.as_command()?.execute(data.clone()).await;
+            if let Ok(result) = result {
+                return Ok(result);
+            }
+            if let Err(CommandError::ConditionFalse) = result {
+                continue;
+            }
+
+            data.switch_flag.store(false, Ordering::Relaxed);
+
+            return result;
+        }
+
+        let result = fallback.as_command()?.execute(data.clone()).await;
+
+        data.switch_flag.store(false, Ordering::Relaxed);
+
+        return result;
+    } else {
+        return Err(CommandError::SwitchMustHaveSingleFallbackCommand);
+    }
+}
+
+pub const CASE_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+];
+pub const CASE: &str = "case";
+pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap();
+
+    let in_switch = data.switch_flag.load(Ordering::Relaxed);
+
+    if !in_switch {
+        return Err(CommandError::CaseOutsideOfSwitch);
+    }
+
+    if arg_0.as_bool(data.clone()).await? {
+        Ok(arg_1.as_raw(data, ALL_TYPES).await?)
+    } else {
+        Err(CommandError::ConditionFalse)
+    }
+}
+
+pub const FALLBACK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const FALLBACK: &str = "fallback";
+pub async fn fallback(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let mut values = command.take_args();
+    let arg_0 = values.pop_front().unwrap();
+
+    let in_switch = data.switch_flag.load(Ordering::Relaxed);
+
+    if !in_switch {
+        return Err(CommandError::FallbackOutsideOfSwitch);
+    }
+
+    Ok(arg_0.as_raw(data, ALL_TYPES).await?)
 }
 
 pub const WHILE_RULES: &'static [ArgRule] = &[
@@ -1760,7 +1966,7 @@ fn substitute_args_map(
     map: &mut HashMap<String, Value>,
     var_map: &HashMap<String, Value>,
 ) -> Result<(), CommandError> {
-    for (key, value) in map {
+    for (_, value) in map {
         match value {
             Value::Map(map) => substitute_args_map(map, var_map)?,
             Value::List(values) => substitute_args_list(values, var_map)?,
@@ -1958,6 +2164,15 @@ pub mod tests {
         dbg!(&result);
         assert!(result.is_err());
         result.err().unwrap().error_type
+    }
+
+    pub async fn interpreter_throws_err(code: &str, err: InterpreterError) -> bool {
+        let result = FslInterpreter::new().interpret(code).await;
+        dbg!(&result);
+        result.is_err_and(|e| {
+            dbg!(&e);
+            e.error_type == err
+        })
     }
 
     #[tokio::test]
@@ -3378,5 +3593,291 @@ pub mod tests {
             "5",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn if_statement() {
+        test_interpreter(
+            r#"
+                if(true,
+                    then(
+                        print(true)
+                    )
+                )
+            "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn false_if_statement() {
+        test_interpreter(
+            r#"
+                if(false,
+                    then(
+                        print(true)
+                    )
+                )
+            "#,
+            "",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn if_else_statement() {
+        test_interpreter(
+            r#"
+                if(false,
+                    then(
+                        print(true)
+                    )
+                    else(
+                        print(false)
+                    )
+                )
+            "#,
+            "false",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn else_if_statement() {
+        test_interpreter(
+            r#"
+                if(false,
+                    then(
+                        print(true)
+                    )
+                    else_if(true,
+                        print("else_if")
+                    )
+                    else(
+                        print(false)
+                    )
+                )
+            "#,
+            "else_if",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn else_missing() {
+        assert!(
+            interpreter_throws_err(
+                r#"
+                    if(false,
+                        then(
+                            print(true)
+                        )
+                        else_if(true,
+                            print("else_if")
+                        )
+                    )
+                "#,
+                InterpreterError::CommandError(CommandError::ElseIfMustBePairedWithElse)
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn then_outside_if() {
+        assert!(
+            interpreter_throws_err(
+                r#"
+                    then(
+                        print(true)
+                    )
+                "#,
+                InterpreterError::CommandError(CommandError::ThenOutsideIf)
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn else_if_outside_if() {
+        assert!(
+            interpreter_throws_err(
+                r#"
+                    else_if(true,
+                        print(true)
+                    )
+                "#,
+                InterpreterError::CommandError(CommandError::ElseIfOutsideIf)
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn else_outside_if() {
+        assert!(
+            interpreter_throws_err(
+                r#"
+                    else(print(true))
+                "#,
+                InterpreterError::CommandError(CommandError::ElseOutsideIf)
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_if() {
+        test_interpreter(
+            r#"
+                    if(true,
+                        then(
+                            if(true,
+                                then(
+                                    if(true,
+                                        then(
+                                            print(true)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn switch_statement() {
+        test_interpreter(
+            r#"
+                switch(
+                    case(true,
+                        print(0)
+                    )
+                    case(false,
+                        print(1)
+                    )
+                    fallback(
+                        print(2)
+                    )
+                )
+            "#,
+            "0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn switch_statement_second_case() {
+        test_interpreter(
+            r#"
+                switch(
+                    case(false,
+                        print(0)
+                    )
+                    case(true,
+                        print(1)
+                    )
+                    fallback(
+                        print(2)
+                    )
+                )
+            "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn switch_statement_fallback() {
+        test_interpreter(
+            r#"
+                switch(
+                    case(false,
+                        print(0)
+                    )
+                    case(false,
+                        print(1)
+                    )
+                    fallback(
+                        print(2)
+                    )
+                )
+            "#,
+            "2",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn switch_statement_no_fallback() {
+        let err = test_interpreter_err_type(
+            r#"
+                switch(
+                    case(false,
+                        print(0)
+                    )
+                    case(false,
+                        print(1)
+                    )
+                )
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::SwitchMustHaveSingleFallbackCommand)
+        ))
+    }
+
+    #[tokio::test]
+    async fn switch_statement_no_case() {
+        test_interpreter(
+            r#"
+                switch(
+                    fallback(
+                        print(0)
+                    )
+                )
+            "#,
+            "0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn case_outside_switch() {
+        let err = test_interpreter_err_type(
+            r#"
+                case(true,
+                    print(0)
+                )
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::CaseOutsideOfSwitch)
+        ))
+    }
+
+    #[tokio::test]
+    async fn fallback_oustide_of_switch() {
+        let err = test_interpreter_err_type(
+            r#"
+                fallback(
+                    print(0)
+                )
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::FallbackOutsideOfSwitch)
+        ))
     }
 }

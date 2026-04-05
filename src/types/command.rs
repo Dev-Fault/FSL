@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CommandError {
     WrongArgType(String),
     WrongArgCount(String),
@@ -34,6 +34,18 @@ pub enum CommandError {
     NonExistantCommand(String),
     ProgramExited,
     Custom(String),
+    SwitchMustHaveSingleFallbackCommand,
+    ConditionFalse,
+    CaseOutsideOfSwitch,
+    FallbackOutsideOfSwitch,
+    MultipleThenCommandsInIf,
+    MultipleElseCommandsInIf,
+    InvalidCommandInIf,
+    IfMustContainThen,
+    ElseIfMustBePairedWithElse,
+    ThenOutsideIf,
+    ElseIfOutsideIf,
+    ElseOutsideIf,
 }
 
 impl CommandError {
@@ -49,11 +61,33 @@ impl CommandError {
             CommandError::KeyNotPresentInMap(key) => format!("key \"{}\" not present in map", key),
             CommandError::InvalidRange => "invalid range (min should be less than max)".into(),
             CommandError::NonFiniteValue => "cannot use non finite value".into(),
-            CommandError::BreakOutsideLoop => "break used outside of loop".into(),
-            CommandError::ContinueOutsideLoop => "continue used outside of loop".into(),
+            CommandError::BreakOutsideLoop => "break can only be called inside loop".into(),
+            CommandError::ContinueOutsideLoop => "continue can only be called inside loop".into(),
             CommandError::NonExistantCommand(error_text) => error_text,
             CommandError::ProgramExited => "".into(),
             CommandError::Custom(error_text) => error_text,
+            CommandError::SwitchMustHaveSingleFallbackCommand => {
+                "switch statement must have single fallback command".into()
+            }
+            CommandError::ConditionFalse => "".into(),
+            CommandError::CaseOutsideOfSwitch => {
+                "case can only be called inside switch command".into()
+            }
+            CommandError::FallbackOutsideOfSwitch => {
+                "fallback can only be called inside switch command".into()
+            }
+            CommandError::MultipleThenCommandsInIf => "if can only contain one then command".into(),
+            CommandError::MultipleElseCommandsInIf => "if can only contain one else command".into(),
+            CommandError::InvalidCommandInIf => {
+                "if must only contain then, else_if, and else commands".into()
+            }
+            CommandError::IfMustContainThen => "if must contain a then command".into(),
+            CommandError::ElseIfMustBePairedWithElse => {
+                "else if command(s) must be paired with else command".into()
+            }
+            CommandError::ThenOutsideIf => "then can only be called in if command".into(),
+            CommandError::ElseIfOutsideIf => "else_if can only be called in if command".into(),
+            CommandError::ElseOutsideIf => "else can only be called in if command".into(),
         }
     }
 }

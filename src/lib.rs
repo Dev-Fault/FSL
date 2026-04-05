@@ -45,7 +45,7 @@ impl FslError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InterpreterError {
     LexerError(String),
     ParserError(String),
@@ -435,6 +435,8 @@ pub struct InterpreterData {
     pub break_flag: AtomicBool,
     pub continue_flag: AtomicBool,
     pub return_flag: AtomicBool,
+    pub if_flag: AtomicBool,
+    pub switch_flag: AtomicBool,
 }
 
 impl InterpreterData {
@@ -450,6 +452,8 @@ impl InterpreterData {
             break_flag: AtomicBool::new(false),
             continue_flag: AtomicBool::new(false),
             return_flag: AtomicBool::new(false),
+            if_flag: AtomicBool::new(false),
+            switch_flag: AtomicBool::new(false),
         }
     }
 
@@ -773,6 +777,13 @@ impl FslInterpreter {
                 (OR, OR_RULES, commands::or),
                 (IF_THEN, IF_THEN_RULES, commands::if_then),
                 (IF_THEN_ELSE, IF_THEN_ELSE_RULES, commands::if_then_else),
+                (IF, IF_RULES, commands::r#if),
+                (THEN, THEN_RULES, commands::then),
+                (ELSE_IF, ELSE_IF_RULES, commands::else_if),
+                (ELSE, ELSE_RULES, commands::r#else),
+                (SWITCH, SWITCH_RULES, commands::switch),
+                (CASE, CASE_RULES, commands::case),
+                (FALLBACK, FALLBACK_RULES, commands::fallback),
                 (WHILE_LOOP, WHILE_RULES, commands::while_command),
                 (REPEAT, REPEAT_RULES, commands::repeat),
                 (INDEX, INDEX_RULES, commands::index),
