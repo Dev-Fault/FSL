@@ -24,7 +24,7 @@ pub enum ValueError {
     InvalidVarValue(String),
     NegativeIndex(String),
     VarMemoryLimitReached,
-    CommandExecutionFailed(String),
+    CommandExecutionFailed(Box<CommandError>),
     AttemptToOverwriteConstant(String),
     AttemptToFreeConstant(String),
     EmptyMapPath(String),
@@ -42,7 +42,7 @@ impl ValueError {
             ValueError::InvalidVarName(error_text) => error_text,
             ValueError::NegativeIndex(error_text) => error_text,
             ValueError::InvalidVarValue(error_text) => error_text,
-            ValueError::CommandExecutionFailed(error_text) => error_text,
+            ValueError::CommandExecutionFailed(command_error) => command_error.to_string(),
             ValueError::VarMemoryLimitReached => "interpreter var memory limit reached".into(),
             ValueError::AttemptToOverwriteConstant(error_text) => error_text,
             ValueError::AttemptToFreeConstant(error_text) => error_text,
@@ -560,6 +560,6 @@ impl From<ParseFloatError> for ValueError {
 
 impl From<CommandError> for ValueError {
     fn from(value: CommandError) -> Self {
-        ValueError::CommandExecutionFailed(value.to_string())
+        ValueError::CommandExecutionFailed(Box::new(value))
     }
 }

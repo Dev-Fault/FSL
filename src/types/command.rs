@@ -90,6 +90,17 @@ impl CommandError {
             CommandError::ElseOutsideIf => "else can only be called in if command".into(),
         }
     }
+
+    pub fn exited_program(&self) -> bool {
+        match self {
+            CommandError::ProgramExited => true,
+            CommandError::ValueError(e) => match e {
+                ValueError::CommandExecutionFailed(command_error) => command_error.exited_program(),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 impl From<ValueError> for CommandError {

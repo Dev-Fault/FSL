@@ -3629,6 +3629,23 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn exit_inside_if() {
+        test_interpreter(
+            r#"
+                if(true,
+                    then(
+                        print(true)
+                        exit()
+                    )
+                )
+                print(false)
+            "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn then_with_multiple_values() {
         test_interpreter(
             r#"

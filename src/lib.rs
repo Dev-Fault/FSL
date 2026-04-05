@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    path::PrefixComponent,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -605,18 +606,17 @@ impl FslInterpreter {
                         }
                     };
                     if let Err(e) = command.execute(self.data.clone()).await {
-                        match e {
-                            CommandError::ProgramExited => break,
-                            _ => {
-                                return Err(FslError::new(
-                                    InterpreterError::CommandError(e.clone()),
-                                    format!(
-                                        "{}\nError inside command: {}",
-                                        e.to_string(),
-                                        self.call_stack_to_string().await
-                                    ),
-                                ));
-                            }
+                        if e.exited_program() {
+                            break;
+                        } else {
+                            return Err(FslError::new(
+                                InterpreterError::CommandError(e.clone()),
+                                format!(
+                                    "{}\nError inside command: {}",
+                                    e.to_string(),
+                                    self.call_stack_to_string().await
+                                ),
+                            ));
                         }
                     }
                 }
