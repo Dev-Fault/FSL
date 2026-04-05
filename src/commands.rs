@@ -731,8 +731,6 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
     let mut requires_else = false;
 
-    data.if_flag.store(true, Ordering::Relaxed);
-
     for command in values {
         let label = command.get_command_label().unwrap();
         match label {
@@ -763,8 +761,12 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 
     if condition.as_bool(data.clone()).await? == true {
+        data.if_flag.store(true, Ordering::Relaxed);
+
         return then_command.as_command()?.execute(data.clone()).await;
     } else {
+        data.if_flag.store(true, Ordering::Relaxed);
+
         for else_if_command in else_if_commands {
             let result = else_if_command.as_command()?.execute(data.clone()).await;
             if let Ok(result) = result {
@@ -3451,8 +3453,8 @@ pub mod tests {
 	            get_threshold_value.def(thresholds, threshold,
 	            	repeat(thresholds.length(),
 	            		current_threshold.store(thresholds.index(0).get("threshold"))
-	            		if_then(threshold.ltoe(current_threshold),
-	            			thresholds.index(0).get("value").return()
+	            		if(threshold.ltoe(current_threshold),
+	            			then(thresholds.index(0).get("value").return())
 	            		)
 	            	)
 	            )
