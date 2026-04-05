@@ -786,11 +786,10 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 }
 
-pub const THEN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const THEN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ALL_TYPES)];
 pub const THEN: &str = "then";
 pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
+    let values = command.take_args();
 
     let in_if = data.if_flag.load(Ordering::Relaxed);
 
@@ -800,18 +799,22 @@ pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
     data.if_flag.store(false, Ordering::Relaxed);
 
-    Ok(arg_0.as_raw(data, ALL_TYPES).await?)
+    let mut return_value = Value::None;
+    for value in values {
+        return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+    }
+
+    Ok(return_value)
 }
 
 pub const ELSE_IF_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::AnyFrom(1), ALL_TYPES),
 ];
 pub const ELSE_IF: &str = "else_if";
 pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
-    let arg_1 = values.pop_front().unwrap();
 
     let in_if = data.if_flag.load(Ordering::Relaxed);
 
@@ -822,17 +825,20 @@ pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Val
     data.if_flag.store(false, Ordering::Relaxed);
 
     if arg_0.as_bool(data.clone()).await? {
-        Ok(arg_1.as_raw(data, ALL_TYPES).await?)
+        let mut return_value = Value::None;
+        for value in values {
+            return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+        }
+        return Ok(return_value);
     } else {
         Err(CommandError::ConditionFalse)
     }
 }
 
-pub const ELSE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const ELSE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ALL_TYPES)];
 pub const ELSE: &str = "else";
 pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
+    let values = command.take_args();
 
     let in_if = data.if_flag.load(Ordering::Relaxed);
 
@@ -842,7 +848,12 @@ pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 
     data.if_flag.store(false, Ordering::Relaxed);
 
-    Ok(arg_0.as_raw(data, ALL_TYPES).await?)
+    let mut return_value = Value::None;
+    for value in values {
+        return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+    }
+
+    Ok(return_value)
 }
 
 pub const SWITCH_RULES: &'static [ArgRule] =
@@ -888,13 +899,12 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 
 pub const CASE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::AnyFrom(1), ALL_TYPES),
 ];
 pub const CASE: &str = "case";
 pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
-    let arg_1 = values.pop_front().unwrap();
 
     let in_switch = data.switch_flag.load(Ordering::Relaxed);
 
@@ -903,17 +913,20 @@ pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 
     if arg_0.as_bool(data.clone()).await? {
-        Ok(arg_1.as_raw(data, ALL_TYPES).await?)
+        let mut return_value = Value::None;
+        for value in values {
+            return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+        }
+        return Ok(return_value);
     } else {
         Err(CommandError::ConditionFalse)
     }
 }
 
-pub const FALLBACK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const FALLBACK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ALL_TYPES)];
 pub const FALLBACK: &str = "fallback";
 pub async fn fallback(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
+    let values = command.take_args();
 
     let in_switch = data.switch_flag.load(Ordering::Relaxed);
 
@@ -921,7 +934,12 @@ pub async fn fallback(command: Command, data: Arc<InterpreterData>) -> Result<Va
         return Err(CommandError::FallbackOutsideOfSwitch);
     }
 
-    Ok(arg_0.as_raw(data, ALL_TYPES).await?)
+    let mut return_value = Value::None;
+    for value in values {
+        return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+    }
+
+    Ok(return_value)
 }
 
 pub const WHILE_RULES: &'static [ArgRule] = &[
@@ -3611,6 +3629,26 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn then_with_multiple_values() {
+        test_interpreter(
+            r#"
+                print(
+                    if(true,
+                        then(
+                            print(0)
+                            print(1)
+                            print(2)
+                            3
+                        )
+                    )
+                )
+            "#,
+            "0123",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn false_if_statement() {
         test_interpreter(
             r#"
@@ -3767,6 +3805,32 @@ pub mod tests {
                 )
             "#,
             "0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn case_with_multiple_values() {
+        test_interpreter(
+            r#"
+                print(
+                    switch(
+                        case(true,
+                            print(0)
+                            print(1)
+                            print(2)
+                            3
+                        )
+                        case(false,
+                            print(1)
+                        )
+                        fallback(
+                            print(2)
+                        )
+                    )
+                )
+            "#,
+            "0123",
         )
         .await;
     }
