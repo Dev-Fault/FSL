@@ -36,8 +36,19 @@ pub struct LexerErrorContext<'a> {
 }
 
 pub fn format_error_context(input: &str, location: usize) -> String {
-    let left = location.saturating_sub(50);
-    let right = (location.saturating_add(50)).clamp(0, input.len());
+    let left: usize = input[..location]
+        .char_indices()
+        .rev()
+        .take(50)
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(location);
+    let right = input[location..]
+        .char_indices()
+        .take(50)
+        .last()
+        .map(|(i, _)| i + location)
+        .unwrap_or(location);
     let context = &input[left..right];
     format!("Area near where error was detected:\n{}", context,)
 }
@@ -1523,5 +1534,21 @@ mod tests {
         dbg!(&result);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn grapheme_handling() {
+        let result = Lexer::new().tokenize(r#"print("é ñ ü")"#);
+
+        dbg!(&result);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn error_context_with_multibyte_chars() {
+        let result = Lexer::new().tokenize(r#"print("é ñ ü") trailing"#);
+        dbg!(&result);
+        assert!(result.is_err());
     }
 }
