@@ -458,6 +458,23 @@ impl InterpreterData {
         }
     }
 
+    pub fn new_unbounded() -> Self {
+        InterpreterData {
+            output: tokio::sync::Mutex::new(String::new()),
+            vars: VarStack::new_unbounded(),
+            user_commands: tokio::sync::Mutex::new(UserCommands::new()),
+            call_stack: tokio::sync::Mutex::new(Vec::new()),
+            total_loop_limit: None,
+            total_loops: AtomicUsize::new(0),
+            loop_depth: AtomicUsize::new(0),
+            break_flag: AtomicBool::new(false),
+            continue_flag: AtomicBool::new(false),
+            return_flag: AtomicBool::new(false),
+            if_flag: AtomicBool::new(false),
+            switch_flag: AtomicBool::new(false),
+        }
+    }
+
     pub async fn increment_loops(&self) -> Result<(), CommandError> {
         match self.total_loop_limit {
             Some(limit) => {
@@ -479,6 +496,7 @@ impl InterpreterData {
 pub struct FslInterpreter {
     pub commands: CommandMap,
     pub data: Arc<InterpreterData>,
+    bounded: bool,
 }
 
 macro_rules! register_commands {
@@ -496,13 +514,28 @@ impl FslInterpreter {
         let mut interpreter = Self {
             commands: CommandMap::new(),
             data: Arc::new(InterpreterData::new()),
+            bounded: true,
+        };
+        interpreter.add_standard_commands();
+        interpreter
+    }
+
+    pub fn new_unbounded() -> Self {
+        let mut interpreter = Self {
+            commands: CommandMap::new(),
+            data: Arc::new(InterpreterData::new_unbounded()),
+            bounded: false,
         };
         interpreter.add_standard_commands();
         interpreter
     }
 
     pub fn reset_data(&mut self) {
-        self.data = Arc::new(InterpreterData::new());
+        self.data = Arc::new(if self.bounded {
+            InterpreterData::new()
+        } else {
+            InterpreterData::new_unbounded()
+        });
     }
 
     /// Adds a command to the interpreters command map, over-writing the command if it was already in the map
