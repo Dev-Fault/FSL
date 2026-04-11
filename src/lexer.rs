@@ -365,7 +365,7 @@ impl Lexer {
         let mut prev_ch = '\0';
         let mut escaped = false;
 
-        for (i, ch) in code.chars().enumerate() {
+        for (i, ch) in code.char_indices() {
             let err_context = LexerErrorContext::new(code, i);
 
             if ch == '\n' && self.inside_single_line_comment {
@@ -383,23 +383,23 @@ impl Lexer {
                 continue;
             } else if self.inside_string
                 && ch == '\\'
-                && let Some(next_ch) = code.get(i + 1..i + 2)
+                && let Some(next_ch) = code[i + ch.len_utf8()..].chars().next()
             {
                 escaped = true;
                 match next_ch {
-                    "\\" => {
+                    '\\' => {
                         buf.push_str("\\");
                         continue;
                     }
-                    "n" => {
+                    'n' => {
                         buf.push_str("\n");
                         continue;
                     }
-                    "t" => {
+                    't' => {
                         buf.push_str("\t");
                         continue;
                     }
-                    "\"" => {
+                    '"' => {
                         buf.push_str("\"");
                         continue;
                     }
@@ -1505,5 +1505,23 @@ mod tests {
         assert!(
             result.is_err_and(|e| matches!(e, LexerError::ClosedParenPrecededByInvalidToken(_)))
         );
+    }
+
+    #[test]
+    fn emoji_lexing() {
+        let result = Lexer::new().tokenize("print(\"🧪\")");
+
+        dbg!(&result);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn emoji_lexing_with_escape_sequences() {
+        let result = Lexer::new().tokenize(r#"emoji.store("🧪") print("\n", emoji)"#);
+
+        dbg!(&result);
+
+        assert!(result.is_ok());
     }
 }
