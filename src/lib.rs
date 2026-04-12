@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    mem,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -89,9 +90,18 @@ const MEGABYTE: usize = 1024 * 1024;
 pub const DEFAULT_MEMORY_LIMIT: usize = 5 * MEGABYTE;
 
 #[derive(Debug, Clone)]
-struct VarEntry {
-    value: Value,
-    constant: bool,
+pub struct VarEntry {
+    pub value: Value,
+    pub constant: bool,
+}
+
+impl Default for VarEntry {
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+            constant: Default::default(),
+        }
+    }
 }
 
 impl VarEntry {
@@ -140,7 +150,7 @@ impl VarMap {
                 if let Some(prev_entry) = map.get(label) {
                     if prev_entry.constant {
                         return Err(ValueError::AttemptToOverwriteConstant(format!(
-                            "Cannot overwrite constant var {}",
+                            "cannot overwrite constant var {}",
                             label
                         )));
                     }
@@ -169,7 +179,7 @@ impl VarMap {
                 if let Some(prev_entry) = map.get(label) {
                     if prev_entry.constant {
                         return Err(ValueError::AttemptToOverwriteConstant(format!(
-                            "Cannot overwrite constant var {}",
+                            "cannot overwrite constant var {}",
                             label
                         )));
                     }
@@ -187,7 +197,7 @@ impl VarMap {
         if let Some(prev_entry) = map.get(label) {
             if prev_entry.constant {
                 return Err(ValueError::AttemptToFreeConstant(format!(
-                    "Cannot free constant var {}",
+                    "cannot free constant var {}",
                     label
                 )));
             }
@@ -211,6 +221,33 @@ impl VarMap {
                 label
             ))),
         }
+    }
+
+    pub fn take_entry(&self, label: &str) -> Result<VarEntry, ValueError> {
+        let mut vars = self.map.lock().unwrap();
+        let var_entry = vars.get_mut(label);
+
+        match var_entry {
+            Some(var_entry) => {
+                if var_entry.constant {
+                    return Err(ValueError::AttemptToOverwriteConstant(format!(
+                        "cannot overwrite constant var {}",
+                        label
+                    )));
+                }
+                let var_entry = mem::take(var_entry);
+                Ok(var_entry)
+            }
+            None => Err(ValueError::NonExistantVar(format!(
+                "cannot get value of a non existant var: \"{}\"",
+                label
+            ))),
+        }
+    }
+
+    pub fn insert_entry(&self, label: String, var_entry: VarEntry) {
+        let mut vars = self.map.lock().unwrap();
+        vars.insert(label, var_entry);
     }
 
     pub fn has_entry(&self, label: &str) -> bool {
@@ -396,6 +433,49 @@ impl VarStack {
 
     /// Gets value of var in most local scope, throws error if it doesn't exist
     pub fn get_var_value(&self, label: &str) -> Result<Value, ValueError> {
+        let stack = self.stack.lock().unwrap();
+        for var_map in stack.iter().rev() {
+            if var_map.has_entry(label) {
+                return var_map.clone_value(label);
+            }
+        }
+        Err(ValueError::NonExistantVar(format!(
+            "cannot get value of non existant var {}",
+            label
+        )))
+    }
+
+    /// Does mem::take on var entry in the current local scope
+    pub fn take_entry(&self, label: &str) -> Result<VarEntry, ValueError> {
+        let stack = self.stack.lock().unwrap();
+        for var_map in stack.iter().rev() {
+            if var_map.has_entry(label) {
+                return var_map.take_entry(label);
+            }
+        }
+        Err(ValueError::NonExistantVar(format!(
+            "cannot get value of non existant var {}",
+            label
+        )))
+    }
+
+    /// Inserts var entry into most local var map (intended to be used with take_entry)
+    pub fn insert_entry(&self, label: String, var_entry: VarEntry) -> Result<(), ValueError> {
+        let stack = self.stack.lock().unwrap();
+        for var_map in stack.iter().rev() {
+            if var_map.has_entry(&label) {
+                var_map.insert_entry(label, var_entry);
+                return Ok(());
+            }
+        }
+        Err(ValueError::NonExistantVar(format!(
+            "cannot get value of non existant var {}",
+            label
+        )))
+    }
+
+    /// Gets value of var in most local scope, throws error if it doesn't exist
+    pub fn get_mut_var_value(&self, label: &str) -> Result<Value, ValueError> {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {
@@ -1252,7 +1332,7 @@ mod interpreter {
         test_interpreter(
             "
                 matrix.store([[1, 2, 3], [\"#\", \"#\", \"#\"], [7, 8, 9]])
-                matrix.replace(1, matrix.index(1).replace(1, \"X\"))
+                matrix.replace([1, 1], \"X\")
                 print(matrix.index(1).index(1))
             ",
             r#"X"#,
@@ -1390,9 +1470,8 @@ mod interpreter {
         repeat(n,
             j.store(0),
             repeat(sub(n, i, 1),
-                if_then(
-                    gt(numbers.index(j), numbers.index(add(j, 1))),
-                    numbers.store(numbers.swap(j, add(j, 1)))
+                if(gt(numbers.index(j), numbers.index(add(j, 1))),
+                    then(numbers.swap(j, add(j, 1)))
                 ),
                 j.store(add(j, 1))
             ),
@@ -1534,7 +1613,7 @@ mod interpreter {
             num.store(numbers.index(i)),
             if_then(
                 eq(mod(num, 2), 0),
-                evens.store(evens.insert(evens.length(), num))
+                evens.insert(evens.length(), num)
             ),
             i.store(add(i, 1))
         )
@@ -1745,7 +1824,7 @@ mod interpreter {
             r#"
         empty.store([])
         print("Length: ", empty.length())
-        empty.store(empty.insert(0, 42))
+        empty.insert(0, 42)
         print(" After insert: ", empty.index(0))
         "#,
             "Length: 0 After insert: 42",
@@ -1878,7 +1957,7 @@ mod interpreter {
         test_interpreter(
             r#"
         items.store([1, 2, 3, 4, 5])
-        items.store(items.remove(2))
+        items.remove(2)
         print(items.length(), " ", items.index(2))
         "#,
             "4 4",
@@ -1891,7 +1970,7 @@ mod interpreter {
         test_interpreter(
             r#"
         items.store(["a", "b", "c"])
-        items.store(items.replace(1, "X"))
+        items.replace(1, "X")
         print(items.index(0), items.index(1), items.index(2))
         "#,
             "aXc",
@@ -2016,7 +2095,7 @@ mod interpreter {
         test_interpreter(
             r#"
         text.store("helo")
-        text.store(text.insert(3, "l"))
+        text.insert(3, "l")
         print(text)
         "#,
             "hello",
@@ -2032,7 +2111,7 @@ mod interpreter {
         text.store(text.remove(2))
         print(text)
         "#,
-            "helo",
+            "l",
         )
         .await;
     }
@@ -2042,7 +2121,7 @@ mod interpreter {
         test_interpreter(
             r#"
         text.store("hello")
-        text.store(text.replace(1, "a"))
+        text.replace(1, "a")
         print(text)
         "#,
             "hallo",
@@ -2086,15 +2165,10 @@ mod interpreter {
             [4, 5, 6],
             [7, 8, 9]
         ])
-        row.store(1)
-        column.store(1)
-        matrix.replace(0, [3, 2, 1])
-        matrix.replace(row,
-            matrix.index(row).replace(column, 100)
-        )
+        matrix.replace([1, 1], 10)
         matrix.print()
         "#,
-            "[[3, 2, 1], [4, 100, 6], [7, 8, 9]]",
+            "[[1, 2, 3], [4, 10, 6], [7, 8, 9]]",
         )
         .await;
     }

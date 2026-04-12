@@ -29,7 +29,9 @@ pub enum ValueError {
     AttemptToFreeConstant(String),
     EmptyMapPath(String),
     NotAMap(String),
+    NotAList(String),
     NonExistantKey(String),
+    IndexOutOfBounds(String),
 }
 
 impl ValueError {
@@ -48,7 +50,9 @@ impl ValueError {
             ValueError::AttemptToFreeConstant(error_text) => error_text,
             ValueError::EmptyMapPath(error_text) => error_text,
             ValueError::NotAMap(error_text) => error_text,
+            ValueError::NotAList(error_text) => error_text,
             ValueError::NonExistantKey(error_text) => error_text,
+            ValueError::IndexOutOfBounds(error_text) => error_text,
         }
     }
 }
