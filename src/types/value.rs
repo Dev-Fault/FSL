@@ -91,6 +91,20 @@ impl Value {
         }
     }
 
+    pub fn as_literal_type(&self, data: Arc<InterpreterData>) -> FslType {
+        match self {
+            Value::Int(_) => FslType::Int,
+            Value::Float(_) => FslType::Float,
+            Value::Text(_) => FslType::Text,
+            Value::Bool(_) => FslType::Bool,
+            Value::List(_) => FslType::List,
+            Value::Map(_) => FslType::Map,
+            Value::Var(label) => data.vars.get_var_type(label),
+            Value::Command(_) => FslType::Command,
+            Value::None => FslType::None,
+        }
+    }
+
     pub fn is_type(&self, fsl_type: FslType) -> bool {
         return self.as_type() == fsl_type;
     }

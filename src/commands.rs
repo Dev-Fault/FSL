@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    mem,
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
@@ -8,7 +9,7 @@ use async_recursion::async_recursion;
 use rand::seq::SliceRandom;
 
 use crate::{
-    InterpreterData,
+    InterpreterData, VarEntry,
     types::{
         FslType,
         command::{ArgPos, ArgRule, Command, CommandError, UserCommand},
@@ -116,6 +117,33 @@ pub const MATH_RULES: &[ArgRule] = &[
     },
 ];
 
+async fn take_if_var(
+    value: &mut Value,
+    data: Arc<InterpreterData>,
+) -> Result<Option<(String, VarEntry)>, ValueError> {
+    if value.is_type(FslType::Var) {
+        let tmp_value = mem::take(value);
+        let label = tmp_value.as_var_label(data.clone()).await?;
+        let mut var_entry = data.vars.take_entry(&label)?;
+        *value = mem::take(&mut var_entry.value);
+        Ok(Some((label, var_entry)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn update_if_var(
+    var: Option<(String, VarEntry)>,
+    value: Value,
+    data: Arc<InterpreterData>,
+) -> Result<(), ValueError> {
+    if let Some((label, mut var_entry)) = var {
+        var_entry.value = value;
+        data.vars.insert_entry(label, var_entry)?;
+    }
+    Ok(())
+}
+
 #[async_recursion]
 async fn contains_float(
     values: &VecDeque<Value>,
@@ -133,7 +161,7 @@ async fn contains_float(
                 }
             }
             Value::Var(var) => {
-                if data.clone().vars.get_var_type(&var)? == FslType::Float {
+                if data.clone().vars.get_var_type(&var) == FslType::Float {
                     return Ok(true);
                 }
             }
@@ -1075,31 +1103,6 @@ where
     }
 }
 
-async fn index_matrix(
-    data: Arc<InterpreterData>,
-    matrix: Vec<Value>,
-    accessor: &mut VecDeque<Value>,
-) -> Result<Value, CommandError> {
-    let mut matrix = matrix;
-    while let Some(index) = accessor.pop_front() {
-        let index = index.as_usize(data.clone()).await?;
-        match matrix.get_mut(index) {
-            Some(inner) => {
-                if inner.is_type(FslType::List) {
-                    matrix = std::mem::take(inner).as_list(data.clone()).await?;
-                } else {
-                    return Ok(std::mem::take(inner));
-                }
-            }
-            None => {
-                return Err(CommandError::IndexOutOfBounds);
-            }
-        };
-    }
-
-    return Ok(Value::List(matrix));
-}
-
 #[async_recursion]
 async fn get_index(
     list: &Vec<Value>,
@@ -1364,7 +1367,7 @@ pub const SET_RULES: &'static [ArgRule] = &[
 pub const SET: &str = "set";
 pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
+    let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
@@ -1380,12 +1383,13 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let replacement_value = arg_2.as_raw(data.clone(), NON_NONE_VALUES).await?;
 
     if arg_0.is_type(FslType::Var) {
-        let var_label = &arg_0.clone().as_var_label(data.clone()).await?;
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
         let mut map = arg_0.as_map(data.clone()).await?;
 
         let return_value = set_nested(&mut map, &keys, replacement_value, data.clone()).await?;
 
-        data.vars.update_var(var_label, Value::Map(map))?;
+        update_if_var(var, Value::Map(map), data)?;
+
         Ok(return_value)
     } else {
         let mut map = arg_0.as_map(data.clone()).await?;
@@ -1424,17 +1428,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
-    let var_label = if arg_0.is_type(FslType::Var) {
-        let label = arg_0.as_var_label(data.clone()).await?;
-        arg_0 = data.vars.get_var_value(&label)?;
-        Some(label)
-    } else {
-        None
-    };
-
-    if arg_0.is_type(FslType::List) {
-        let mut list = arg_0.as_list(data.clone()).await?;
-
+    if arg_0.as_literal_type(data.clone()) == FslType::List {
         let accesor = arg_1
             .as_raw(data.clone(), &[FslType::List, FslType::Int])
             .await?;
@@ -1445,22 +1439,24 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             vec![accesor]
         };
 
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+        let mut list = arg_0.as_list(data.clone()).await?;
+
         let return_value = remove_index(&mut list, &indices, data.clone()).await;
 
-        if let Some(var_label) = var_label {
-            data.vars.update_var(&var_label, Value::List(list))?;
-        }
+        update_if_var(var, Value::List(list), data)?;
 
         return_value
     } else {
         let i = arg_1.as_usize(data.clone()).await?;
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
         let mut text = arg_0.as_text(data.clone()).await?;
         match text.chars().nth(i) {
             Some(_) => {
                 let return_value = text.remove(i).to_string();
-                if let Some(var_label) = var_label {
-                    data.vars.update_var(&var_label, Value::Text(text))?;
-                }
+
+                update_if_var(var, Value::Text(text), data)?;
+
                 Ok(Value::Text(return_value))
             }
             None => Err(CommandError::IndexOutOfBounds),
@@ -1478,24 +1474,17 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut values = command.take_args();
 
     let mut arg_0 = values.pop_front().unwrap();
-    let arg_1 = values.pop_front().unwrap();
-    let arg_2 = values.pop_front().unwrap();
+    let arg_1 = values.pop_front().unwrap().as_int(data.clone()).await?;
+    let arg_2 = values.pop_front().unwrap().as_int(data.clone()).await?;
 
-    let var_label = if arg_0.is_type(FslType::Var) {
-        let label = arg_0.as_var_label(data.clone()).await?;
-        arg_0 = data.vars.get_var_value(&label)?;
-        Some(label)
-    } else {
-        None
-    };
-
-    if arg_0.is_type(FslType::List) {
+    if arg_0.as_literal_type(data.clone()) == FslType::List {
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
         let mut list = arg_0.as_list(data.clone()).await?;
 
-        let a_value = get_index(&list, &[arg_1.clone()], data.clone()).await?;
-        let b_value = get_index(&list, &[arg_2.clone()], data.clone()).await?;
+        let a_value = get_index(&list, &[Value::Int(arg_1)], data.clone()).await?;
+        let b_value = get_index(&list, &[Value::Int(arg_2)], data.clone()).await?;
 
-        let tmp = get_mut_index(&mut list, &[arg_1], data.clone()).await?;
+        let tmp = get_mut_index(&mut list, &[Value::Int(arg_1)], data.clone()).await?;
         match tmp {
             Some(tmp) => {
                 *tmp = b_value;
@@ -1503,7 +1492,7 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             None => return Err(CommandError::IndexOutOfBounds),
         }
 
-        let tmp = get_mut_index(&mut list, &[arg_2], data.clone()).await?;
+        let tmp = get_mut_index(&mut list, &[Value::Int(arg_2)], data.clone()).await?;
         match tmp {
             Some(tmp) => {
                 *tmp = a_value;
@@ -1511,24 +1500,21 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             None => return Err(CommandError::IndexOutOfBounds),
         }
 
-        if let Some(var_label) = var_label {
-            data.vars.update_var(&var_label, Value::List(list))?;
-        }
+        update_if_var(var, Value::List(list), data)?;
 
         Ok(Value::None)
     } else {
-        let a = arg_1.as_usize(data.clone()).await?;
-        let b = arg_2.as_usize(data.clone()).await?;
+        let a = arg_1 as usize;
+        let b = arg_2 as usize;
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
         let mut text = arg_0.as_text(data.clone()).await?;
         match (text.chars().nth(a), text.chars().nth(b)) {
             (Some(a_ch), Some(b_ch)) => {
                 text.replace_range(a..a + a_ch.len_utf8(), &b_ch.to_string());
                 text.replace_range(b..b + b_ch.len_utf8(), &a_ch.to_string());
 
-                if let Some(var_label) = var_label {
-                    data.vars
-                        .update_var(&var_label, Value::Text(text.clone()))?;
-                }
+                update_if_var(var, Value::Text(text), data)?;
+
                 Ok(Value::None)
             }
             _ => Err(CommandError::IndexOutOfBounds),
@@ -1549,17 +1535,7 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
-    let var_label = if arg_0.is_type(FslType::Var) {
-        let label = arg_0.as_var_label(data.clone()).await?;
-        arg_0 = data.vars.get_var_value(&label)?;
-        Some(label)
-    } else {
-        None
-    };
-
-    if arg_0.is_type(FslType::List) {
-        let mut list = arg_0.as_list(data.clone()).await?;
-
+    if arg_0.as_literal_type(data.clone()) == FslType::List {
         let accesor = arg_1
             .as_raw(data.clone(), &[FslType::List, FslType::Int])
             .await?;
@@ -1570,8 +1546,13 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
             vec![accesor]
         };
 
-        let old_value = get_mut_index(&mut list, &indices, data.clone()).await?;
         let new_value = arg_2.as_raw(data.clone(), NON_NONE_VALUES).await?;
+
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+
+        let mut list = arg_0.as_list(data.clone()).await?;
+
+        let old_value = get_mut_index(&mut list, &indices, data.clone()).await?;
 
         let return_value = match old_value {
             Some(old_value) => {
@@ -1582,29 +1563,28 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
             None => return Err(CommandError::IndexOutOfBounds),
         };
 
-        if let Some(var_label) = var_label {
-            data.vars.update_var(&var_label, Value::List(list))?;
-        }
+        update_if_var(var, Value::List(list), data.clone())?;
 
         Ok(return_value)
     } else {
         let i = arg_1.as_usize(data.clone()).await?;
         let new_ch = arg_2.as_text(data.clone()).await?;
+
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
         let mut text = arg_0.as_text(data.clone()).await?;
         match text.chars().nth(i) {
             Some(old_ch) => {
                 text.replace_range(i..i + old_ch.len_utf8(), &new_ch);
 
-                if let Some(var_label) = var_label {
-                    data.vars
-                        .update_var(&var_label, Value::Text(text.clone()))?;
-                }
+                update_if_var(var, Value::Text(text), data)?;
+
                 Ok(Value::Text(old_ch.to_string()))
             }
             _ => Err(CommandError::IndexOutOfBounds),
         }
     }
 }
+
 pub const INSERT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
     ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
@@ -1618,17 +1598,7 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
-    let var_label = if arg_0.is_type(FslType::Var) {
-        let label = arg_0.as_var_label(data.clone()).await?;
-        arg_0 = data.vars.get_var_value(&label)?;
-        Some(label)
-    } else {
-        None
-    };
-
-    if arg_0.is_type(FslType::List) {
-        let mut list = arg_0.as_list(data.clone()).await?;
-
+    if arg_0.as_literal_type(data.clone()) == FslType::List {
         let accesor = arg_1
             .as_raw(data.clone(), &[FslType::List, FslType::Int])
             .await?;
@@ -1641,27 +1611,32 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 
         let value_to_insert = arg_2.as_raw(data.clone(), NON_NONE_VALUES).await?;
 
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+
+        let mut list = arg_0.as_list(data.clone()).await?;
+
         insert_at_index(&mut list, &indices, value_to_insert, data.clone()).await?;
 
-        if let Some(var_label) = var_label {
-            data.vars.update_var(&var_label, Value::List(list))?;
-        }
+        update_if_var(var, Value::List(list), data)?;
 
         Ok(Value::None)
     } else {
         let i = arg_1.as_usize(data.clone()).await?;
         let text_to_insert = arg_2.as_text(data.clone()).await?;
+
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+
         let mut text = arg_0.as_text(data.clone()).await?;
+
         if i <= text.len() {
             text.insert_str(i, &text_to_insert);
-            if let Some(var_label) = var_label {
-                data.vars
-                    .update_var(&var_label, Value::Text(text.clone()))?;
-            }
-            Ok(Value::None)
         } else {
-            Err(CommandError::IndexOutOfBounds)
+            return Err(CommandError::IndexOutOfBounds);
         }
+
+        update_if_var(var, Value::Text(text), data)?;
+
+        Ok(Value::None)
     }
 }
 
@@ -1673,26 +1648,23 @@ pub const PUSH: &str = "push";
 pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
-    let array = values.pop_front().unwrap();
+    let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
-    let return_result = manipulate_array(
-        array,
-        data.clone(),
-        async |list| {
-            let to_push = arg_1.clone().as_raw(data.clone(), NON_NONE_VALUES).await?;
-            list.push(to_push);
-            Ok(None)
-        },
-        async |text| {
-            let to_push = arg_1.clone().as_text(data.clone()).await?;
-            text.push_str(&to_push);
-            Ok(None)
-        },
-    )
-    .await?;
-
-    Ok(return_result)
+    if arg_0.as_literal_type(data.clone()) == FslType::List {
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+        let mut list = arg_0.as_list(data.clone()).await?;
+        list.push(arg_1);
+        update_if_var(var, Value::List(list), data)?;
+        Ok(Value::None)
+    } else {
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+        let mut text = arg_0.as_text(data.clone()).await?;
+        let text_to_push = arg_1.as_text(data.clone()).await?;
+        text.push_str(&text_to_push);
+        update_if_var(var, Value::Text(text), data)?;
+        Ok(Value::None)
+    }
 }
 
 pub const POP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
@@ -1700,32 +1672,30 @@ pub const POP: &str = "pop";
 pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
-    let array = values.pop_front().unwrap();
+    let mut arg_0 = values.pop_front().unwrap();
 
-    let return_value = manipulate_array(
-        array,
-        data.clone(),
-        async |list| {
-            let ret_value = list.pop();
-            Ok(Some(ret_value.unwrap_or(Value::None)))
-        },
-        async |text| {
-            let ret_value = text.pop();
-            match ret_value {
-                Some(ch) => Ok(Some(Value::Text(ch.to_string()))),
-                None => Ok(Some(Value::None)),
-            }
-        },
-    )
-    .await?;
-
-    Ok(return_value)
+    if arg_0.as_literal_type(data.clone()) == FslType::List {
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+        let mut list = arg_0.as_list(data.clone()).await?;
+        let return_value = list.pop().unwrap_or(Value::None);
+        update_if_var(var, Value::List(list), data)?;
+        Ok(return_value)
+    } else {
+        let var = take_if_var(&mut arg_0, data.clone()).await?;
+        let mut text = arg_0.as_text(data.clone()).await?;
+        let return_value = text
+            .pop()
+            .map(|c| Value::Text(c.to_string()))
+            .unwrap_or(Value::None);
+        update_if_var(var, Value::Text(text), data)?;
+        Ok(return_value)
+    }
 }
 
 pub const SEARCH_REPLACE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
-    ArgRule::new(ArgPos::Index(2), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(2), TEXT_TYPES),
 ];
 pub const SEARCH_REPLACE: &str = "search_replace";
 pub async fn search_replace(
@@ -1733,19 +1703,29 @@ pub async fn search_replace(
     data: Arc<InterpreterData>,
 ) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let input = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let mut arg_0 = values.pop_front().unwrap();
+
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
+
     let from = values.pop_front().unwrap().as_text(data.clone()).await?;
-    let to = values.pop_front().unwrap().as_text(data).await?;
+    let to = values.pop_front().unwrap().as_text(data.clone()).await?;
+
+    let input = arg_0.as_text(data.clone()).await?;
 
     let input = input.replace(&from, &to);
 
-    Ok(Value::Text(input))
+    if var.is_none() {
+        Ok(Value::Text(input))
+    } else {
+        update_if_var(var, Value::Text(input), data)?;
+        Ok(Value::None)
+    }
 }
 
 pub const SLICE_REPLACE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
-    ArgRule::new(ArgPos::Index(1), &[FslType::List]),
-    ArgRule::new(ArgPos::Index(2), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), LIST_TYPES),
+    ArgRule::new(ArgPos::Index(2), TEXT_TYPES),
 ];
 pub const SLICE_REPLACE: &str = "slice_replace";
 pub async fn slice_replace(
@@ -1753,9 +1733,14 @@ pub async fn slice_replace(
     data: Arc<InterpreterData>,
 ) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let mut input = values.pop_front().unwrap().as_text(data.clone()).await?;
+    let mut arg_0 = values.pop_front().unwrap();
+
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
+
     let mut range = values.pop_front().unwrap().as_list(data.clone()).await?;
     let with = values.pop_front().unwrap().as_text(data.clone()).await?;
+
+    let mut input = arg_0.as_text(data.clone()).await?;
 
     if range.len() != 2 {
         return Err(CommandError::IndexOutOfBounds);
@@ -1763,7 +1748,7 @@ pub async fn slice_replace(
 
     let (from, to) = (
         std::mem::take(&mut range[0]).as_usize(data.clone()).await?,
-        std::mem::take(&mut range[1]).as_usize(data).await?,
+        std::mem::take(&mut range[1]).as_usize(data.clone()).await?,
     );
 
     if from > input.len() || to > input.len() || from > to {
@@ -1772,7 +1757,12 @@ pub async fn slice_replace(
 
     input.replace_range(from..to, &with);
 
-    Ok(Value::Text(input))
+    if var.is_none() {
+        Ok(Value::Text(input))
+    } else {
+        update_if_var(var, Value::Text(input), data)?;
+        Ok(Value::None)
+    }
 }
 
 pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
@@ -1802,26 +1792,60 @@ pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Val
     Ok(return_value)
 }
 
-pub const INC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub const INC_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::Var]),
+    ArgRule::new(ArgPos::OptionalIndex(1), WHOLE_NUMBER_TYPES),
+];
 pub const INC: &str = "inc";
 pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let values = command.take_args();
-    let n = values[0].clone().as_int(data.clone()).await?;
-    let new_value = Value::Int(n + 1);
-    data.vars
-        .update_var(&values[0].get_var_label()?, new_value.clone())?;
-    Ok(new_value)
+    let mut values = command.take_args();
+    let label = values
+        .pop_front()
+        .unwrap()
+        .as_var_label(data.clone())
+        .await?;
+
+    let amount = if let Some(value) = values.pop_front() {
+        value.as_int(data.clone()).await?
+    } else {
+        1
+    };
+
+    let mut var_entry = data.vars.take_entry(&label)?;
+    let mut int = var_entry.value.as_int(data.clone()).await?;
+    int = int + amount;
+    var_entry.value = Value::Int(int);
+    data.vars.insert_entry(label, var_entry)?;
+
+    Ok(Value::Int(int))
 }
 
-pub const DEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub const DEC_RULES: &[ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), &[FslType::Var]),
+    ArgRule::new(ArgPos::OptionalIndex(1), WHOLE_NUMBER_TYPES),
+];
 pub const DEC: &str = "dec";
 pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let values = command.take_args();
-    let n = values[0].clone().as_int(data.clone()).await?;
-    let new_value = Value::Int(n - 1);
-    data.vars
-        .update_var(&values[0].get_var_label()?, new_value.clone())?;
-    Ok(new_value)
+    let mut values = command.take_args();
+    let label = values
+        .pop_front()
+        .unwrap()
+        .as_var_label(data.clone())
+        .await?;
+
+    let amount = if let Some(value) = values.pop_front() {
+        value.as_int(data.clone()).await?
+    } else {
+        1
+    };
+
+    let mut var_entry = data.vars.take_entry(&label)?;
+    let mut int = var_entry.value.as_int(data.clone()).await?;
+    int = int - amount;
+    var_entry.value = Value::Int(int);
+    data.vars.insert_entry(label, var_entry)?;
+
+    Ok(Value::Int(int))
 }
 
 pub const CONTAINS_RULES: &[ArgRule] = &[
@@ -2786,21 +2810,26 @@ pub mod tests {
     #[tokio::test]
     async fn push() {
         test_interpreter(
-            r#"nums.store([1, 2, 3]) nums.push(0).print()"#,
+            r#"nums.store([1, 2, 3]) nums.push(0) nums.print()"#,
             "[1, 2, 3, 0]",
         )
         .await;
-        test_interpreter(r#"nums.store("123") nums.push(0).print()"#, "1230").await;
+        test_interpreter(r#"nums.store("123") nums.push(0) nums.print()"#, "1230").await;
     }
 
     #[tokio::test]
     async fn push_matrix() {
         test_interpreter(
-            r#"nums.store([1, [2, [3, 4], 5], 6]) nums.index([1, 1]).push(0) nums.print()"#,
-            "[1, [2, [3, 4], 5], 6]",
+            r#"
+                nums.store([1, [2, [3, 4], 5], 6])
+                tmp.store(nums.index([1, 1]))
+                tmp.push(0)
+                nums.replace([1, 1], tmp)
+                nums.print()
+            "#,
+            "[1, [2, [3, 4, 0], 5], 6]",
         )
         .await;
-        test_interpreter(r#"nums.store("123") nums.push(0).print()"#, "1230").await;
     }
 
     #[tokio::test]
@@ -2823,8 +2852,18 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn inc_by_x() {
+        test_interpreter(r#"x.store(5) i.store(1) i.inc(x) i.print()"#, "6").await;
+    }
+
+    #[tokio::test]
     async fn dec() {
         test_interpreter(r#"i.store(1) i.dec().print()"#, "0").await;
+    }
+
+    #[tokio::test]
+    async fn dec_by_x() {
+        test_interpreter(r#"x.store(5) i.store(1) i.dec(x) i.print()"#, "-4").await;
     }
 
     #[tokio::test]
@@ -3046,9 +3085,27 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn slice_replace_var() {
+        test_interpreter(
+            r#"text.store("hello") text.slice_replace([1, 5], "hhhh") text.print()"#,
+            "hhhhh",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn search_replace() {
         test_interpreter(
             r#"search_replace("this text has not been replaced", "not", "").print()"#,
+            "this text has  been replaced",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn search_replace_var() {
+        test_interpreter(
+            r#"text.store("this text has not been replaced") text.search_replace("not", "") text.print()"#,
             "this text has  been replaced",
         )
         .await;

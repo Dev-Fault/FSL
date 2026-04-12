@@ -271,7 +271,7 @@ impl VarMap {
             .sum()
     }
 
-    pub fn get_type(&self, label: &str) -> Result<FslType, ValueError> {
+    pub fn get_type(&self, label: &str) -> FslType {
         let lock = self.map.lock();
         let map = lock.unwrap();
         let var_entry = map.get(label);
@@ -280,15 +280,17 @@ impl VarMap {
             Some(var_entry) => {
                 let value = &var_entry.value;
                 if value.is_type(FslType::Var) {
-                    return self.get_type(&value.get_var_label()?);
+                    match value.get_var_label() {
+                        Ok(label) => {
+                            return self.get_type(&label);
+                        }
+                        Err(_) => FslType::None,
+                    }
                 } else {
-                    Ok(value.as_type())
+                    value.as_type()
                 }
             }
-            None => Err(ValueError::NonExistantVar(format!(
-                "cannot get type of non existant var {}",
-                label
-            ))),
+            None => FslType::None,
         }
     }
 }
@@ -488,18 +490,15 @@ impl VarStack {
         )))
     }
 
-    /// Gets type of var in most local scope, throws error if it doesn't exist
-    pub fn get_var_type(&self, label: &str) -> Result<FslType, ValueError> {
+    /// Gets type of var in most local scope, returns None if doesn't exist
+    pub fn get_var_type(&self, label: &str) -> FslType {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {
                 return var_map.get_type(label);
             }
         }
-        Err(ValueError::NonExistantVar(format!(
-            "cannot get value of non existant var {}",
-            label
-        )))
+        FslType::None
     }
 }
 
