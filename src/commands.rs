@@ -1649,7 +1649,11 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut values = command.take_args();
 
     let mut arg_0 = values.pop_front().unwrap();
-    let arg_1 = values.pop_front().unwrap();
+    let arg_1 = values
+        .pop_front()
+        .unwrap()
+        .as_raw(data.clone(), NON_NONE_VALUES)
+        .await?;
 
     if arg_0.as_literal_type(data.clone()) == FslType::List {
         let var = take_if_var(&mut arg_0, data.clone()).await?;
