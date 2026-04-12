@@ -3,10 +3,7 @@ use std::{
     collections::VecDeque,
     ops::Range,
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{self, Ordering},
-    },
+    sync::{Arc, atomic::Ordering},
 };
 
 use crate::{
