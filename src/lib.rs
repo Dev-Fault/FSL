@@ -2399,4 +2399,23 @@ mod interpreter {
         )
         .await;
     }
+
+    #[tokio::test]
+    async fn nested_map_set() {
+        test_interpreter(
+            r#"
+            player.store([
+                weapons: [
+                    sword: [
+                        name: "Diamond Sword"
+                    ]
+                ]
+            ])
+            player.weapons.sword.name.set("Gold Sword")
+            player.weapons.sword.name.get().print()
+            "#,
+            "Gold Sword",
+        )
+        .await;
+    }
 }
