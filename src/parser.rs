@@ -294,7 +294,6 @@ impl Parser {
                             }
                         } else if let Arg::Expression(dot_arg) = dot_arg {
                             if let Arg::Var(key) = arg {
-                                dbg!(&key);
                                 if let Some(mut path) = self.path.take() {
                                     path.push(Arg::String(key));
                                     self.path = Some(path);
@@ -408,7 +407,6 @@ impl Parser {
             };
         }
 
-        dbg!(&self.output);
         Ok(self.output)
     }
 }
