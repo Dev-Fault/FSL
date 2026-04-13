@@ -1507,17 +1507,17 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         let a = arg_1 as usize;
         let b = arg_2 as usize;
         let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut text = arg_0.as_text(data.clone()).await?;
-        match (text.chars().nth(a), text.chars().nth(b)) {
-            (Some(a_ch), Some(b_ch)) => {
-                text.replace_range(a..a + a_ch.len_utf8(), &b_ch.to_string());
-                text.replace_range(b..b + b_ch.len_utf8(), &a_ch.to_string());
+        let text = arg_0.as_text(data.clone()).await?;
 
-                update_if_var(var, Value::Text(text), data)?;
+        let mut chars: Vec<char> = text.chars().collect();
 
-                Ok(Value::None)
-            }
-            _ => Err(CommandError::IndexOutOfBounds),
+        if a < chars.len() && b < chars.len() {
+            chars.swap(a, b);
+            let text = chars.iter().collect();
+            update_if_var(var, Value::Text(text), data)?;
+            Ok(Value::None)
+        } else {
+            Err(CommandError::IndexOutOfBounds)
         }
     }
 }
@@ -1571,16 +1571,21 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
         let new_ch = arg_2.as_text(data.clone()).await?;
 
         let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut text = arg_0.as_text(data.clone()).await?;
-        match text.chars().nth(i) {
-            Some(old_ch) => {
-                text.replace_range(i..i + old_ch.len_utf8(), &new_ch);
+        let text = arg_0.as_text(data.clone()).await?;
+        let mut chars: Vec<char> = text.chars().collect();
+        let old_ch;
+        match chars.get_mut(i) {
+            Some(ch) => {
+                old_ch = ch.clone();
+                *ch = new_ch.chars().nth(0).ok_or(CommandError::InvalidArgument(
+                    "text replacement value must be a single character".to_string(),
+                ))?;
 
+                let text = chars.iter().collect();
                 update_if_var(var, Value::Text(text), data)?;
-
                 Ok(Value::Text(old_ch.to_string()))
             }
-            _ => Err(CommandError::IndexOutOfBounds),
+            None => Err(CommandError::IndexOutOfBounds),
         }
     }
 }
@@ -1757,6 +1762,10 @@ pub async fn slice_replace(
 
     if from > input.len() || to > input.len() || from > to {
         return Err(CommandError::IndexOutOfBounds);
+    } else if !input.is_char_boundary(from) || !input.is_char_boundary(to) {
+        return Err(CommandError::InvalidArgument(format!(
+            "slice of text must lie within char boundries"
+        )));
     }
 
     input.replace_range(from..to, &with);
@@ -1936,11 +1945,14 @@ pub async fn capitalize(
     data: Arc<InterpreterData>,
 ) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let text = values.pop_front().unwrap().as_text(data).await?;
+    let mut text = values.pop_front().unwrap().as_text(data).await?;
     if text.len() < 1 {
         Ok("".into())
     } else {
-        Ok(format!("{}{}", text[0..1].to_uppercase(), &text[1..]).into())
+        if let Some(ch) = text.get_mut(0..1) {
+            ch.make_ascii_uppercase();
+        }
+        Ok(Value::Text(text))
     }
 }
 
@@ -2900,6 +2912,17 @@ pub mod tests {
         test_interpreter(r#"capitalize("hey").print()"#, "Hey").await;
     }
 
+    //ﬃ
+    #[tokio::test]
+    async fn capitalize_non_capitalizable_character() {
+        test_interpreter(r#"capitalize("ﬆ").print()"#, "ﬆ").await;
+    }
+
+    #[tokio::test]
+    async fn capitalize_expandable_character() {
+        test_interpreter(r#"capitalize("ﬃ").print()"#, "ﬃ").await;
+    }
+
     #[tokio::test]
     async fn uppercase() {
         test_interpreter(r#"uppercase("hey").print()"#, "HEY").await;
@@ -3086,6 +3109,17 @@ pub mod tests {
     #[tokio::test]
     async fn slice_replace() {
         test_interpreter(r#"slice_replace("hello", [1, 5], "hhhh").print()"#, "hhhhh").await;
+    }
+
+    #[tokio::test]
+    async fn slice_replace_invalid_index() {
+        let err = test_interpreter_err_type(r#"slice_replace("café", [4, 5], "h").print()"#).await;
+        assert!(matches!(
+            err,
+            InterpreterError::CommandError(CommandError::ValueError(
+                ValueError::CommandExecutionFailed(_)
+            ))
+        ));
     }
 
     #[tokio::test]

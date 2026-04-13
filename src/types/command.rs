@@ -43,6 +43,7 @@ pub enum CommandError {
     ThenOutsideIf,
     ElseIfOutsideIf,
     ElseOutsideIf,
+    InvalidArgument(String),
 }
 
 impl CommandError {
@@ -85,6 +86,7 @@ impl CommandError {
             CommandError::ThenOutsideIf => "then can only be called in if command".into(),
             CommandError::ElseIfOutsideIf => "else_if can only be called in if command".into(),
             CommandError::ElseOutsideIf => "else can only be called in if command".into(),
+            CommandError::InvalidArgument(error_text) => error_text,
         }
     }
 
