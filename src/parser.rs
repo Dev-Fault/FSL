@@ -292,6 +292,21 @@ impl Parser {
                                     ParserErrorContext::new(code, token),
                                 ));
                             }
+                        } else if let Arg::Expression(dot_arg) = dot_arg {
+                            if let Arg::Var(key) = arg {
+                                dbg!(&key);
+                                if let Some(mut path) = self.path.take() {
+                                    path.push(Arg::String(key));
+                                    self.path = Some(path);
+                                } else {
+                                    self.path = Some(vec![Arg::String(key)]);
+                                }
+                                self.dot_arg = Some(Arg::Expression(dot_arg));
+                            } else {
+                                return Err(ParserError::InvalidDotPlacement(
+                                    ParserErrorContext::new(code, token),
+                                ));
+                            }
                         } else {
                             return Err(ParserError::InvalidDotPlacement(ParserErrorContext::new(
                                 code, token,
@@ -393,6 +408,7 @@ impl Parser {
             };
         }
 
+        dbg!(&self.output);
         Ok(self.output)
     }
 }

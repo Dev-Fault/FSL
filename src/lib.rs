@@ -2351,4 +2351,52 @@ mod interpreter {
             _ => panic!("should be overwrite constant err"),
         }
     }
+
+    #[tokio::test]
+    async fn indexing_maps_in_lists() {
+        test_interpreter(
+            r#"
+            action.store([
+                id: "id1"
+            ])
+            action2.store([
+                id: "id2"
+            ])
+            actions.store([[action.clone(), action2.clone()]])
+            actions.index(0).index(0).id.get().print()
+            "#,
+            "id1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn indexing_map_with_index_command() {
+        test_interpreter_err(
+            r#"
+            map.store([
+                tags: [["rust", "cool"]]
+            ])
+            map.index(0).print()
+            "#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn indexing_deeply_nested_maps_and_lists() {
+        test_interpreter(
+            r#"
+            inner.store([
+                tags: [["rust", "cool"]]
+            ])
+            outer.store([
+                data: [[inner.clone()]]
+            ])
+            outer.data.get().index(0).index(0).tags.get().index(0).index(0).print()
+            "#,
+            "rust",
+        )
+        .await;
+    }
 }

@@ -81,13 +81,7 @@ pub const INDEX_TYPES: &[FslType] = &[
 
 pub const KEY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
 
-pub const ARRAY_TYPES: &[FslType] = &[
-    FslType::List,
-    FslType::Map,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
-];
+pub const ARRAY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
 
 pub const LIST_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
 
@@ -1323,6 +1317,7 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     };
 
     let map = arg_0.as_map(data.clone()).await?;
+    dbg!(&map);
 
     get_nested(&map, &keys, data).await
 }
