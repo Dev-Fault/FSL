@@ -1317,7 +1317,6 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     };
 
     let map = arg_0.as_map(data.clone()).await?;
-    dbg!(&map);
 
     get_nested(&map, &keys, data).await
 }
