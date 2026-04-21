@@ -622,6 +622,23 @@ impl Lexer {
 mod tests {
     use crate::lexer::{Lexer, LexerError, Symbol, TokenType};
 
+    macro_rules! token {
+        (($sym:path)) => {
+            TokenType::Symbol($sym)
+        };
+        (($type:ident, $var:expr)) => {
+            TokenType::$type($var.to_string())
+        };
+    }
+
+    macro_rules! tokens {
+        ( $( $token:tt ),* $(,)? ) => {
+            &[
+                $( token!($token)),*
+            ]
+        }
+    }
+
     #[test]
     fn print_error_context() {
         let lexer = Lexer::new();
@@ -669,15 +686,15 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Var("a".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("store".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("hello".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Var, "a"),
+            (Symbol::Dot),
+            (Command, "store"),
+            (Symbol::OpenParen),
+            (Symbol::Quote),
+            (String, "hello"),
+            (Symbol::Quote),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -699,13 +716,13 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command("add".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Number("12".to_string()),
-            TokenType::Symbol(Symbol::Comma),
-            TokenType::Number("34".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "add"),
+            (Symbol::OpenParen),
+            (Number, 12),
+            (Symbol::Comma),
+            (Number, 34),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -751,7 +768,6 @@ mod tests {
 
         assert!(tokens == valid_tokens);
     }
-
     #[test]
     fn tokenize_map() {
         let lexer = Lexer::new();
@@ -763,25 +779,25 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Var("map".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("store".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::OpenBracket),
-            TokenType::Var("name".to_string()),
-            TokenType::Symbol(Symbol::Colon),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("blah".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::Comma),
-            TokenType::Var("address".to_string()),
-            TokenType::Symbol(Symbol::Colon),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("blah".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::ClosedBracket),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Var, "map"),
+            (Symbol::Dot),
+            (Command, "store"),
+            (Symbol::OpenParen),
+            (Symbol::OpenBracket),
+            (Var, "name"),
+            (Symbol::Colon),
+            (Symbol::Quote),
+            (String, "blah"),
+            (Symbol::Quote),
+            (Symbol::Comma),
+            (Var, "address"),
+            (Symbol::Colon),
+            (Symbol::Quote),
+            (String, "blah"),
+            (Symbol::Quote),
+            (Symbol::ClosedBracket),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -815,13 +831,15 @@ mod tests {
 
     #[test]
     fn tokenize_complex() {
-        let input = "i.store(0)
-        names.store([\"name 1\", \"name 2\"])
-        names.index(i).print() 
-        i.add(1)
-        print(nl())
-        names.index(i).print()
-        nl().print()";
+        let input = "
+            i.store(0)
+            names.store([\"name 1\", \"name 2\"])
+            names.index(i).print() 
+            i.add(1)
+            print(nl())
+            names.index(i).print()
+            nl().print()
+        ";
 
         let lexer = Lexer::new();
         let tokens = lexer
@@ -831,66 +849,66 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Var("i".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("store".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Number("0".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Var("names".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("store".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::OpenBracket),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("name 1".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::Comma),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("name 2".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::ClosedBracket),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Var("names".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("index".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Var("i".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Var("i".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("add".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Number("1".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Command("nl".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Var("names".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("index".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Var("i".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Command("nl".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::ClosedParen),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Var, "i"),
+            (Symbol::Dot),
+            (Command, "store"),
+            (Symbol::OpenParen),
+            (Number, 0),
+            (Symbol::ClosedParen),
+            (Var, "names"),
+            (Symbol::Dot),
+            (Command, "store"),
+            (Symbol::OpenParen),
+            (Symbol::OpenBracket),
+            (Symbol::Quote),
+            (String, "name 1"),
+            (Symbol::Quote),
+            (Symbol::Comma),
+            (Symbol::Quote),
+            (String, "name 2"),
+            (Symbol::Quote),
+            (Symbol::ClosedBracket),
+            (Symbol::ClosedParen),
+            (Var, "names"),
+            (Symbol::Dot),
+            (Command, "index"),
+            (Symbol::OpenParen),
+            (Var, "i"),
+            (Symbol::ClosedParen),
+            (Symbol::Dot),
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Symbol::ClosedParen),
+            (Var, "i"),
+            (Symbol::Dot),
+            (Command, "add"),
+            (Symbol::OpenParen),
+            (Number, 1),
+            (Symbol::ClosedParen),
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Command, "nl"),
+            (Symbol::OpenParen),
+            (Symbol::ClosedParen),
+            (Symbol::ClosedParen),
+            (Var, "names"),
+            (Symbol::Dot),
+            (Command, "index"),
+            (Symbol::OpenParen),
+            (Var, "i"),
+            (Symbol::ClosedParen),
+            (Symbol::Dot),
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Symbol::ClosedParen),
+            (Command, "nl"),
+            (Symbol::OpenParen),
+            (Symbol::ClosedParen),
+            (Symbol::Dot),
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1072,13 +1090,13 @@ mod tests {
         }
         println!("start{}end", text_output);
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Symbol::Quote),
+            (String, ""),
+            (Symbol::Quote),
+            (Symbol::ClosedParen),
         ];
 
         assert!(tokens == valid_tokens);
@@ -1096,13 +1114,13 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("  ".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Symbol::Quote),
+            (String, "  "),
+            (Symbol::Quote),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1201,13 +1219,13 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("h(el.lo), Wor[ld]".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Symbol::Quote),
+            (String, "h(el.lo), Wor[ld]"),
+            (Symbol::Quote),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1229,18 +1247,18 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Symbol(Symbol::OpenBracket),
-            TokenType::Number(1.to_string()),
-            TokenType::Symbol(Symbol::Comma),
-            TokenType::Number(2.to_string()),
-            TokenType::Symbol(Symbol::Comma),
-            TokenType::Number(3.to_string()),
-            TokenType::Symbol(Symbol::ClosedBracket),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command(format!("length")),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Symbol::OpenBracket),
+            (Number, 1),
+            (Symbol::Comma),
+            (Number, 2),
+            (Symbol::Comma),
+            (Number, 3),
+            (Symbol::ClosedBracket),
+            (Symbol::Dot),
+            (Command, "length"),
+            (Symbol::OpenParen),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1262,14 +1280,14 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("123".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command(format!("length")),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Symbol::Quote),
+            (String, "123"),
+            (Symbol::Quote),
+            (Symbol::Dot),
+            (Command, "length"),
+            (Symbol::OpenParen),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1291,19 +1309,19 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Var("character".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Var("weapon".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Var("name".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Command("store".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::String("sword".to_string()),
-            TokenType::Symbol(Symbol::Quote),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Var, "character"),
+            (Symbol::Dot),
+            (Var, "weapon"),
+            (Symbol::Dot),
+            (Var, "name"),
+            (Symbol::Dot),
+            (Command, "store"),
+            (Symbol::OpenParen),
+            (Symbol::Quote),
+            (String, "sword"),
+            (Symbol::Quote),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1325,15 +1343,15 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Var("character".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Var("weapon".to_string()),
-            TokenType::Symbol(Symbol::Dot),
-            TokenType::Var("name".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Var, "character"),
+            (Symbol::Dot),
+            (Var, "weapon"),
+            (Symbol::Dot),
+            (Var, "name"),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1354,11 +1372,11 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command(format!("print")),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Number("1.1".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Number, 1.1),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1379,11 +1397,11 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command(format!("print")),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Number("11.11".to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Number, 11.11),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1412,12 +1430,12 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command(format!("print")),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Number("1.".to_string()),
-            TokenType::Symbol(Symbol::Comma),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Number, "1."),
+            (Symbol::Comma),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
@@ -1448,11 +1466,11 @@ mod tests {
             .map(|t| t.token_type.clone())
             .collect::<Vec<TokenType>>();
 
-        let valid_tokens: &[TokenType] = &[
-            TokenType::Command("print".to_string()),
-            TokenType::Symbol(Symbol::OpenParen),
-            TokenType::Var(r#"\n"#.to_string()),
-            TokenType::Symbol(Symbol::ClosedParen),
+        let valid_tokens = tokens![
+            (Command, "print"),
+            (Symbol::OpenParen),
+            (Var, r#"\n"#),
+            (Symbol::ClosedParen),
         ];
 
         println!("");
