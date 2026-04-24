@@ -9,12 +9,13 @@ use async_recursion::async_recursion;
 use rand::seq::SliceRandom;
 
 use crate::{
-    InterpreterData, VarEntry,
+    InterpreterData,
     types::{
         FslType,
         command::{ArgPos, ArgRule, Command, CommandError, UserCommand},
         value::{Value, ValueError},
     },
+    vars::VarEntry,
 };
 
 pub const ALL_TYPES: &[FslType] = &[
