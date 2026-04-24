@@ -22,6 +22,7 @@ pub enum CommandError {
     ValueError(ValueError),
     DivisionByZero,
     LoopLimitReached,
+    OutputLimitExceeded,
     IndexOutOfBounds,
     KeyNotPresentInMap(String),
     InvalidRange,
@@ -87,6 +88,7 @@ impl CommandError {
             CommandError::ElseIfOutsideIf => "else_if can only be called in if command".into(),
             CommandError::ElseOutsideIf => "else can only be called in if command".into(),
             CommandError::InvalidArgument(error_text) => error_text,
+            CommandError::OutputLimitExceeded => "memory limit for print exceeded".into(),
         }
     }
 
@@ -132,21 +134,6 @@ impl ArgRule {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct CommandSpec {
-    label: String,
-    arg_rules: &'static [ArgRule],
-}
-
-impl CommandSpec {
-    pub fn new(label: &str, arg_rules: &'static [ArgRule]) -> Self {
-        Self {
-            label: label.to_string(),
-            arg_rules,
-        }
-    }
-}
-
 pub trait CommandFn: Send + Sync {
     fn execute(
         &self,
@@ -172,7 +159,8 @@ where
 pub type Executor = Option<Arc<dyn CommandFn>>;
 
 pub struct Command {
-    command_spec: CommandSpec,
+    label: String,
+    arg_rules: &'static [ArgRule],
     args: VecDeque<Value>,
     executor: Executor,
 }
@@ -186,20 +174,21 @@ impl Command {
         Some(size)
     }
 
-    pub fn new(command_spec: CommandSpec, executor: Executor) -> Self {
+    pub fn new(label: String, arg_rules: &'static [ArgRule], executor: Executor) -> Self {
         Self {
-            command_spec,
             args: VecDeque::new(),
             executor,
+            label,
+            arg_rules,
         }
     }
 
     pub fn get_label(&self) -> &str {
-        &self.command_spec.label
+        &self.label
     }
 
     pub fn get_rules(&self) -> &'static [ArgRule] {
-        self.command_spec.arg_rules
+        self.arg_rules
     }
 
     pub fn set_args(&mut self, args: VecDeque<Value>) {
@@ -208,10 +197,6 @@ impl Command {
 
     pub fn take_args(self) -> VecDeque<Value> {
         self.args
-    }
-
-    pub fn take_executor(self) -> Executor {
-        self.executor
     }
 
     pub fn get_args(&self) -> &VecDeque<Value> {
@@ -245,7 +230,7 @@ impl Command {
 
     fn validate_args(&self) -> Result<(), CommandError> {
         let mut max_args = 0;
-        for arg_rule in self.command_spec.arg_rules {
+        for arg_rule in self.arg_rules {
             match &arg_rule.position {
                 ArgPos::Index(i) => {
                     max_args = if max_args < (*i + 1) {
@@ -373,9 +358,10 @@ impl fmt::Debug for Command {
 impl Clone for Command {
     fn clone(&self) -> Self {
         Self {
-            command_spec: self.command_spec.clone(),
             args: self.args.clone(),
             executor: self.executor.clone(),
+            label: self.label.clone(),
+            arg_rules: self.arg_rules,
         }
     }
 }

@@ -13,7 +13,7 @@ use crate::{
     lexer::LexerError,
     parser::{Expression, Parser, ParserError},
     types::{
-        command::{ArgRule, Command, CommandError, CommandSpec, Executor, UserCommand},
+        command::{ArgRule, Command, CommandError, Executor, UserCommand},
         value::{Value, ValueError},
     },
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
@@ -24,6 +24,8 @@ mod lexer;
 mod parser;
 pub mod types;
 mod vars;
+
+pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -91,6 +93,7 @@ pub struct InterpreterData {
     pub vars: VarStack,
     pub user_commands: tokio::sync::Mutex<UserCommands>,
     call_stack: tokio::sync::Mutex<Vec<String>>,
+    pub output_limit: Option<usize>,
     pub total_loop_limit: Option<usize>,
     pub total_loops: AtomicUsize,
     pub loop_depth: AtomicUsize,
@@ -116,6 +119,7 @@ impl InterpreterData {
             return_flag: AtomicBool::new(false),
             if_flag: AtomicBool::new(false),
             switch_flag: AtomicBool::new(false),
+            output_limit: Some(DEFAULT_OUTPUT_LIMIT),
         }
     }
 
@@ -133,6 +137,7 @@ impl InterpreterData {
             return_flag: AtomicBool::new(false),
             if_flag: AtomicBool::new(false),
             switch_flag: AtomicBool::new(false),
+            output_limit: None,
         }
     }
 
@@ -206,10 +211,8 @@ impl FslInterpreter {
         rules: &'static [ArgRule],
         executor: Executor,
     ) {
-        self.commands.insert(
-            label,
-            Command::new(CommandSpec::new(label, rules), executor),
-        );
+        self.commands
+            .insert(label, Command::new(label.to_owned(), rules, executor));
     }
 
     pub fn construct_executor<F, Fut>(closure: F) -> Executor
@@ -363,7 +366,8 @@ impl FslInterpreter {
 
             if let Some(label) = user_command_label {
                 let mut command = Command::new(
-                    CommandSpec::new(&expression.name, RUN_RULES),
+                    expression.name,
+                    RUN_RULES,
                     Self::construct_executor(commands::run),
                 );
 
@@ -674,6 +678,18 @@ mod interpreter {
             r#"
             big.store("123456789")
             repeat(1000, big.store(concat(big, big)))
+            "#,
+        )
+        .await;
+        assert!(matches!(err, InterpreterError::CommandError(_)))
+    }
+
+    #[tokio::test]
+    async fn catch_output_overflow() {
+        let err = test_interpreter_err_type(
+            r#"
+            big.store("0000000")
+            repeat(10000, print(concat(big, big)))
             "#,
         )
         .await;

@@ -537,6 +537,11 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
     }
 
     let mut std_out = data.output.lock().await;
+    if let Some(limit) = data.output_limit {
+        if std_out.len() + output.len() > limit {
+            return Err(CommandError::LoopLimitReached);
+        }
+    }
     std_out.push_str(&output);
     Ok(Value::None)
 }
