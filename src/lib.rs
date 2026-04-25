@@ -13,7 +13,7 @@ use crate::{
     lexer::LexerError,
     parser::{Expression, Parser, ParserError},
     types::{
-        command::{ArgRule, Command, CommandError, Executor, UserCommand},
+        command::{ArgRule, Command, CommandError, Handler, UserCommand},
         value::{Value, ValueError},
     },
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
@@ -182,7 +182,7 @@ macro_rules! register_commands {
         $( ($label:expr, $rules:expr, $executor:path) ),* $(,)?
     ]) => {
         $(
-            $self.add_command($label, $rules, Self::construct_executor($executor));
+            $self.register($label, $rules, Handler::from($executor));
         )*
     };
 }
@@ -216,25 +216,10 @@ impl FslInterpreter {
         });
     }
 
-    /// Adds a command to the interpreters command map, over-writing the command if it was already in the map
-    pub fn add_command(
-        &mut self,
-        label: &'static str,
-        rules: &'static [ArgRule],
-        executor: Executor,
-    ) {
+    /// Register command to interpreter allowing it to execute it, overwrites commands with same name if they exist
+    pub fn register(&mut self, label: &'static str, rules: &'static [ArgRule], executor: Handler) {
         self.commands
             .insert(label, Command::new(label.to_owned(), rules, executor));
-    }
-
-    pub fn construct_executor<F, Fut>(closure: F) -> Executor
-    where
-        F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Value, CommandError>> + Send + 'static,
-    {
-        Some(Arc::new(move |command: Command, vars| {
-            Box::pin(closure(command, vars))
-        }))
     }
 
     pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, FslError> {
@@ -377,11 +362,8 @@ impl FslInterpreter {
             };
 
             if let Some(label) = user_command_label {
-                let mut command = Command::new(
-                    expression.name,
-                    RUN_RULES,
-                    Self::construct_executor(commands::run),
-                );
+                let mut command =
+                    Command::new(expression.name, RUN_RULES, Handler::from(commands::run));
 
                 let mut args = VecDeque::new();
                 args.push_back(Value::Var(label));

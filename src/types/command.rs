@@ -134,35 +134,38 @@ impl ArgRule {
     }
 }
 
-pub trait CommandFn: Send + Sync {
-    fn execute(
-        &self,
-        command: Command,
-        interpreter: Arc<InterpreterData>,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, CommandError>> + Send + '_>>;
-}
+pub type InterpreterFut =
+    Pin<Box<dyn Future<Output = Result<Value, CommandError>> + Send + 'static>>;
 
-impl<F, Fut> CommandFn for F
+pub type InterpeterFn =
+    Arc<dyn Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync + 'static>;
+
+#[derive(Clone)]
+pub struct Handler(InterpeterFn);
+
+impl<F, Fut> From<F> for Handler
 where
-    F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync,
+    F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<Value, CommandError>> + Send + 'static,
 {
-    fn execute(
-        &self,
-        command: Command,
-        data: Arc<InterpreterData>,
-    ) -> Pin<Box<dyn Future<Output = Result<Value, CommandError>> + Send + '_>> {
-        Box::pin(self(command, data))
+    fn from(func: F) -> Self {
+        Self(Arc::new(move |command: Command, vars| {
+            Box::pin(func(command, vars))
+        }))
     }
 }
 
-pub type Executor = Option<Arc<dyn CommandFn>>;
+impl Handler {
+    pub fn handle(&self, command: Command, data: Arc<InterpreterData>) -> InterpreterFut {
+        self.0(command, data)
+    }
+}
 
 pub struct Command {
     label: String,
     arg_rules: &'static [ArgRule],
     args: VecDeque<Value>,
-    executor: Executor,
+    handler: Option<Handler>,
 }
 
 impl Command {
@@ -174,10 +177,10 @@ impl Command {
         Some(size)
     }
 
-    pub fn new(label: String, arg_rules: &'static [ArgRule], executor: Executor) -> Self {
+    pub fn new(label: String, arg_rules: &'static [ArgRule], handler: Handler) -> Self {
         Self {
             args: VecDeque::new(),
-            executor,
+            handler: Some(handler),
             label,
             arg_rules,
         }
@@ -330,8 +333,8 @@ impl Command {
         let label = self.get_label().to_string();
         data.clone().call_stack.lock().await.push(label.clone());
 
-        let executor = self.executor.take().expect(Self::EXECUTE_EXPECT);
-        match executor.execute(self, data.clone()).await {
+        let handler = self.handler.take().expect(Self::EXECUTE_EXPECT);
+        match handler.handle(self, data.clone()).await {
             Ok(value) => {
                 data.call_stack.lock().await.pop();
                 Ok(value)
@@ -359,7 +362,7 @@ impl Clone for Command {
     fn clone(&self) -> Self {
         Self {
             args: self.args.clone(),
-            executor: self.executor.clone(),
+            handler: self.handler.clone(),
             label: self.label.clone(),
             arg_rules: self.arg_rules,
         }
