@@ -90,13 +90,18 @@ pub type UserCommands = HashMap<String, UserCommand>;
 #[derive(Debug)]
 pub struct InterpreterData {
     pub output: tokio::sync::Mutex<String>,
+
     pub vars: VarStack,
+
     pub user_commands: tokio::sync::Mutex<UserCommands>,
+
     call_stack: tokio::sync::Mutex<Vec<String>>,
+
     pub output_limit: Option<usize>,
     pub total_loop_limit: Option<usize>,
     pub total_loops: AtomicUsize,
     pub loop_depth: AtomicUsize,
+
     pub break_flag: AtomicBool,
     pub continue_flag: AtomicBool,
     pub return_flag: AtomicBool,
@@ -144,10 +149,8 @@ impl InterpreterData {
     pub async fn increment_loops(&self) -> Result<(), CommandError> {
         match self.total_loop_limit {
             Some(limit) => {
-                let mut loops = self.total_loops.load(Ordering::Relaxed);
-                loops += 1;
-                self.total_loops.store(loops, Ordering::Relaxed);
-                if loops >= limit {
+                let prev_loops = self.total_loops.fetch_add(1, Ordering::Relaxed);
+                if prev_loops + 1 >= limit {
                     Err(CommandError::LoopLimitReached)
                 } else {
                     Ok(())
