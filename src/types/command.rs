@@ -319,9 +319,9 @@ impl Command {
     pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
         self.validate_args()?;
 
-        let return_flag = data.return_flag.load(Ordering::Relaxed);
-        let break_flag = data.break_flag.load(Ordering::Relaxed);
-        let continue_flag = data.continue_flag.load(Ordering::Relaxed);
+        let return_flag = data.flags.return_flag.load(Ordering::Relaxed);
+        let break_flag = data.flags.break_flag.load(Ordering::Relaxed);
+        let continue_flag = data.flags.continue_flag.load(Ordering::Relaxed);
 
         if return_flag || break_flag || continue_flag {
             return Ok(Value::None);
@@ -369,6 +369,6 @@ impl Clone for Command {
 #[derive(Debug, Clone)]
 pub struct UserCommand {
     pub label: String,
-    pub vars: VecDeque<String>,
+    pub parameters: VecDeque<String>,
     pub commands: Vec<Command>,
 }

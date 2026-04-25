@@ -789,11 +789,11 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 
     if condition.as_bool(data.clone()).await? == true {
-        data.if_flag.store(true, Ordering::Relaxed);
+        data.flags.if_flag.store(true, Ordering::Relaxed);
 
         return then_command.as_command()?.execute(data.clone()).await;
     } else {
-        data.if_flag.store(true, Ordering::Relaxed);
+        data.flags.if_flag.store(true, Ordering::Relaxed);
 
         for else_if_command in else_if_commands {
             let result = else_if_command.as_command()?.execute(data.clone()).await;
@@ -811,7 +811,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             return else_command.as_command()?.execute(data.clone()).await;
         }
 
-        data.if_flag.store(false, Ordering::Relaxed);
+        data.flags.if_flag.store(false, Ordering::Relaxed);
         return Ok(Value::None);
     }
 }
@@ -821,13 +821,13 @@ pub const THEN: &str = "then";
 pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
-    let in_if = data.if_flag.load(Ordering::Relaxed);
+    let in_if = data.flags.if_flag.load(Ordering::Relaxed);
 
     if !in_if {
         return Err(CommandError::ThenOutsideIf);
     }
 
-    data.if_flag.store(false, Ordering::Relaxed);
+    data.flags.if_flag.store(false, Ordering::Relaxed);
 
     let mut return_value = Value::None;
     for value in values {
@@ -846,13 +846,13 @@ pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
 
-    let in_if = data.if_flag.load(Ordering::Relaxed);
+    let in_if = data.flags.if_flag.load(Ordering::Relaxed);
 
     if !in_if {
         return Err(CommandError::ElseIfOutsideIf);
     }
 
-    data.if_flag.store(false, Ordering::Relaxed);
+    data.flags.if_flag.store(false, Ordering::Relaxed);
 
     if arg_0.as_bool(data.clone()).await? {
         let mut return_value = Value::None;
@@ -870,13 +870,13 @@ pub const ELSE: &str = "else";
 pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
-    let in_if = data.if_flag.load(Ordering::Relaxed);
+    let in_if = data.flags.if_flag.load(Ordering::Relaxed);
 
     if !in_if {
         return Err(CommandError::ElseOutsideIf);
     }
 
-    data.if_flag.store(false, Ordering::Relaxed);
+    data.flags.if_flag.store(false, Ordering::Relaxed);
 
     let mut return_value = Value::None;
     for value in values {
@@ -898,7 +898,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 .is_some_and(|label| label == CASE)
         });
 
-    data.switch_flag.store(true, Ordering::Relaxed);
+    data.flags.switch_flag.store(true, Ordering::Relaxed);
 
     if fallback.len() == 1
         && let Some(fallback) = fallback.pop_front()
@@ -912,14 +912,14 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 continue;
             }
 
-            data.switch_flag.store(false, Ordering::Relaxed);
+            data.flags.switch_flag.store(false, Ordering::Relaxed);
 
             return result;
         }
 
         let result = fallback.as_command()?.execute(data.clone()).await;
 
-        data.switch_flag.store(false, Ordering::Relaxed);
+        data.flags.switch_flag.store(false, Ordering::Relaxed);
 
         return result;
     } else {
@@ -936,7 +936,7 @@ pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
 
-    let in_switch = data.switch_flag.load(Ordering::Relaxed);
+    let in_switch = data.flags.switch_flag.load(Ordering::Relaxed);
 
     if !in_switch {
         return Err(CommandError::CaseOutsideOfSwitch);
@@ -958,7 +958,7 @@ pub const FALLBACK: &str = "fallback";
 pub async fn fallback(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
-    let in_switch = data.switch_flag.load(Ordering::Relaxed);
+    let in_switch = data.flags.switch_flag.load(Ordering::Relaxed);
 
     if !in_switch {
         return Err(CommandError::FallbackOutsideOfSwitch);
@@ -993,12 +993,14 @@ pub async fn while_command(
             let command = command.clone().as_command()?;
             final_value = command.execute(data.clone()).await?;
 
-            if data.continue_flag.load(Ordering::Relaxed) {
-                data.continue_flag.store(false, Ordering::Relaxed);
+            if data.flags.continue_flag.load(Ordering::Relaxed) {
+                data.flags.continue_flag.store(false, Ordering::Relaxed);
                 continue 'outer;
             }
-            if data.break_flag.load(Ordering::Relaxed) || data.return_flag.load(Ordering::Relaxed) {
-                data.break_flag.store(false, Ordering::Relaxed);
+            if data.flags.break_flag.load(Ordering::Relaxed)
+                || data.flags.return_flag.load(Ordering::Relaxed)
+            {
+                data.flags.break_flag.store(false, Ordering::Relaxed);
                 break 'outer;
             }
         }
@@ -1026,12 +1028,14 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         for command in &values {
             let command = command.clone().as_command()?;
             final_value = command.execute(data.clone()).await?;
-            if data.continue_flag.load(Ordering::Relaxed) {
-                data.continue_flag.store(false, Ordering::Relaxed);
+            if data.flags.continue_flag.load(Ordering::Relaxed) {
+                data.flags.continue_flag.store(false, Ordering::Relaxed);
                 continue 'outer;
             }
-            if data.break_flag.load(Ordering::Relaxed) || data.return_flag.load(Ordering::Relaxed) {
-                data.break_flag.store(false, Ordering::Relaxed);
+            if data.flags.break_flag.load(Ordering::Relaxed)
+                || data.flags.return_flag.load(Ordering::Relaxed)
+            {
+                data.flags.break_flag.store(false, Ordering::Relaxed);
                 break 'outer;
             }
         }
@@ -2185,7 +2189,7 @@ pub const DEF: &str = "def";
 pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let label = values.pop_front().unwrap().get_var_label()?.to_string();
-    let mut local_vars: VecDeque<String> = VecDeque::new();
+    let mut parameters: VecDeque<String> = VecDeque::new();
     let mut commands: Vec<Command> = Vec::new();
 
     let values_len = values.len();
@@ -2198,7 +2202,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
                 )));
             }
             let var_label = values[i].get_var_label()?.to_string();
-            local_vars.push_back(var_label);
+            parameters.push_back(var_label);
         } else {
             encountered_command = true;
             let command = values[i].clone().as_command()?;
@@ -2209,10 +2213,10 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut user_commands = data.user_commands.lock().await;
     let user_command = UserCommand {
         label: label.clone(),
-        vars: local_vars,
+        parameters,
         commands: commands,
     };
-    user_commands.insert(label.clone(), user_command);
+    user_commands.insert(label, user_command);
 
     Ok(Value::None)
 }
@@ -2302,7 +2306,11 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let commands_lock = data.user_commands.lock().await;
 
-    let mut var_labels = commands_lock.get(&command_label).unwrap().vars.clone();
+    let mut var_labels = commands_lock
+        .get(&command_label)
+        .unwrap()
+        .parameters
+        .clone();
     let commands = commands_lock.get(&command_label).unwrap().commands.clone();
     drop(commands_lock);
 
@@ -2338,8 +2346,8 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for mut command in commands {
         substitute_args(&mut command, &var_map)?;
         final_value = command.execute(data.clone()).await?;
-        if data.return_flag.load(Ordering::Relaxed) {
-            data.return_flag.store(false, Ordering::Relaxed);
+        if data.flags.return_flag.load(Ordering::Relaxed) {
+            data.flags.return_flag.store(false, Ordering::Relaxed);
             break;
         }
     }
@@ -2351,7 +2359,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 pub const BREAK: &str = "break";
 pub async fn break_command(_: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     if data.loop_depth.load(Ordering::Relaxed) > 0 {
-        data.break_flag.store(true, Ordering::Relaxed);
+        data.flags.break_flag.store(true, Ordering::Relaxed);
     } else {
         return Err(CommandError::BreakOutsideLoop);
     }
@@ -2365,7 +2373,7 @@ pub async fn continue_command(
     data: Arc<InterpreterData>,
 ) -> Result<Value, CommandError> {
     if data.loop_depth.load(Ordering::Relaxed) > 0 {
-        data.continue_flag.store(true, Ordering::Relaxed);
+        data.flags.continue_flag.store(true, Ordering::Relaxed);
     } else {
         return Err(CommandError::ContinueOutsideLoop);
     }
@@ -2380,11 +2388,11 @@ pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Va
     match return_value {
         Some(value) => {
             let value = value.as_raw(data.clone(), LITERAL_VALUES).await?;
-            data.return_flag.store(true, Ordering::Relaxed);
+            data.flags.return_flag.store(true, Ordering::Relaxed);
             Ok(value)
         }
         None => {
-            data.return_flag.store(true, Ordering::Relaxed);
+            data.flags.return_flag.store(true, Ordering::Relaxed);
             Ok(Value::None)
         }
     }
