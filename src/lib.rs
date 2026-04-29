@@ -11,7 +11,7 @@ use crate::{
     error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
     parser::{Expression, Parser},
     types::{
-        command::{ArgRule, Command, Handler},
+        command::{ArgRule, Command, CommandDefinition, Handler},
         value::Value,
     },
 };
@@ -24,11 +24,11 @@ mod parser;
 pub mod types;
 mod vars;
 
-pub type CommandMap = HashMap<&'static str, Command>;
+pub type CommandDefinitions = HashMap<&'static str, CommandDefinition>;
 
 #[derive(Debug)]
 pub struct FslInterpreter {
-    pub commands: CommandMap,
+    pub command_definitions: CommandDefinitions,
     pub data: Arc<InterpreterData>,
     bounded: bool,
 }
@@ -46,7 +46,7 @@ macro_rules! register_commands {
 impl FslInterpreter {
     pub fn new() -> Self {
         let mut interpreter = Self {
-            commands: CommandMap::new(),
+            command_definitions: CommandDefinitions::new(),
             data: Arc::new(InterpreterData::new()),
             bounded: true,
         };
@@ -56,7 +56,7 @@ impl FslInterpreter {
 
     pub fn new_unbounded() -> Self {
         let mut interpreter = Self {
-            commands: CommandMap::new(),
+            command_definitions: CommandDefinitions::new(),
             data: Arc::new(InterpreterData::new_unbounded()),
             bounded: false,
         };
@@ -74,8 +74,8 @@ impl FslInterpreter {
 
     /// Register command to interpreter allowing it to execute it, overwrites commands with same name if they exist
     pub fn register(&mut self, label: &'static str, rules: &'static [ArgRule], executor: Handler) {
-        self.commands
-            .insert(label, Command::new(label.to_owned(), rules, executor));
+        self.command_definitions
+            .insert(label, CommandDefinition::new(label, rules, executor));
     }
 
     /// Interprets plain fsl code
@@ -138,7 +138,7 @@ impl FslInterpreter {
         match expressions {
             Ok(expressions) => {
                 for expression in expressions {
-                    let command = match self.parse_expression(expression.clone()).await {
+                    let command = match self.parse_expression(expression).await {
                         Ok(value) => match value {
                             Value::Command(command) => command,
                             _ => unreachable!("parse expression should always return a command"),
@@ -166,7 +166,9 @@ impl FslInterpreter {
                 return Err(InterpreterErrorType::Parse(e.to_string()).into());
             }
         }
-        Ok(self.data.output.lock().await.clone())
+        let mut output = self.data.output.lock().await;
+        let output = std::mem::take(&mut *output);
+        Ok(output)
     }
 
     async fn call_stack_to_string(&self) -> String {
@@ -185,8 +187,12 @@ impl FslInterpreter {
     }
 
     async fn parse_expression(&self, expression: Expression) -> Result<Value, InterpreterError> {
-        if let Some(command) = self.commands.get(expression.name.as_str()) {
-            let mut command = command.clone();
+        if let Some(command_def) = self
+            .command_definitions
+            .get(expression.name.as_str())
+            .cloned()
+        {
+            let mut command = Command::from(command_def);
 
             let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
 
@@ -196,7 +202,7 @@ impl FslInterpreter {
 
             command.set_args(args);
 
-            Ok(Value::Command(Box::new(command)))
+            Ok(Value::from_command(command))
         } else {
             let user_command_label = {
                 let user_commands = self.data.user_commands.lock().await;

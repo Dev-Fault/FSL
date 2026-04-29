@@ -63,11 +63,47 @@ impl Handler {
     }
 }
 
+#[derive(Clone)]
+pub struct CommandDefinition {
+    label: &'static str,
+    arg_rules: &'static [ArgRule],
+    handler: Option<Handler>,
+}
+
+impl fmt::Debug for CommandDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Command")
+            .field("label", &self.label)
+            .finish()
+    }
+}
+
+impl CommandDefinition {
+    pub fn new(label: &'static str, arg_rules: &'static [ArgRule], handler: Handler) -> Self {
+        Self {
+            label,
+            arg_rules,
+            handler: Some(handler),
+        }
+    }
+}
+
 pub struct Command {
     label: String,
     arg_rules: &'static [ArgRule],
     args: VecDeque<Value>,
     handler: Option<Handler>,
+}
+
+impl From<CommandDefinition> for Command {
+    fn from(value: CommandDefinition) -> Self {
+        Self {
+            label: value.label.to_string(),
+            arg_rules: value.arg_rules,
+            args: VecDeque::new(),
+            handler: value.handler,
+        }
+    }
 }
 
 impl Command {

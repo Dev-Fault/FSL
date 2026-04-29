@@ -32,6 +32,10 @@ impl Default for Value {
 }
 
 impl Value {
+    pub fn from_command(command: Command) -> Self {
+        Self::Command(Box::new(command))
+    }
+
     pub fn as_type(&self) -> FslType {
         match self {
             Value::Int(_) => FslType::Int,
