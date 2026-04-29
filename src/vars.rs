@@ -81,7 +81,7 @@ impl VarMap {
                         )));
                     }
                 }
-                map.insert(label.to_string(), VarEntry::new_mut(value.clone()));
+                map.insert(label.to_string(), VarEntry::new_mut(value));
                 Ok(())
             }
         }
