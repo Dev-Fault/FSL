@@ -2130,7 +2130,12 @@ pub async fn random_entry(
 ) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let list = values.pop_front().unwrap().as_list(data).await?;
-    Ok(list[rand::random_range(0..list.len())].clone())
+    let range = 0..list.len();
+    if range.is_empty() {
+        Err(CommandError::InvalidRange)
+    } else {
+        Ok(list[rand::random_range(range)].clone())
+    }
 }
 
 pub const SHUFFLE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LIST_TYPES)];
