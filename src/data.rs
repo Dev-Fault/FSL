@@ -94,4 +94,14 @@ impl InterpreterData {
             None => Ok(()),
         }
     }
+
+    pub async fn push_call(&self, command_label: &str) {
+        let mut call_stack = self.call_stack.lock().await;
+        call_stack.push(command_label.to_string());
+    }
+
+    pub async fn pop_call(&self) {
+        let mut call_stack = self.call_stack.lock().await;
+        call_stack.pop();
+    }
 }

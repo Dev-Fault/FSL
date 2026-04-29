@@ -268,13 +268,12 @@ impl Command {
             return Ok(Value::None);
         }
 
-        let label = self.get_label().to_string();
-        data.clone().call_stack.lock().await.push(label.clone());
+        data.push_call(&self.label).await;
 
         let handler = self.handler.take().expect(Self::EXECUTE_EXPECT);
         match handler.handle(self, data.clone()).await {
             Ok(value) => {
-                data.call_stack.lock().await.pop();
+                data.pop_call().await;
                 Ok(value)
             }
             Err(e) => Err(e),

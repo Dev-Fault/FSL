@@ -513,7 +513,7 @@ pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)]
 pub const CLONE: &str = "clone";
 pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let value = command.take_args().pop_front().unwrap();
-    Ok(value.clone().as_raw(data, ALL_TYPES).await?)
+    Ok(value.as_raw(data, ALL_TYPES).await?)
 }
 
 pub const FREE: &str = "free";
