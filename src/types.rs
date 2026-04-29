@@ -1,4 +1,4 @@
-use crate::types::value::ValueError;
+use crate::error::ValueError;
 
 pub mod command;
 pub mod value;

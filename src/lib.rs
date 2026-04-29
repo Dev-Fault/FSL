@@ -10,79 +10,23 @@ use async_recursion::async_recursion;
 
 use crate::{
     commands::*,
-    lexer::LexerError,
-    parser::{Expression, Parser, ParserError},
+    error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
+    parser::{Expression, Parser},
     types::{
-        command::{ArgRule, Command, CommandError, Handler, UserCommand},
-        value::{Value, ValueError},
+        command::{ArgRule, Command, Handler, UserCommand},
+        value::Value,
     },
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
 
 pub mod commands;
+pub mod error;
 mod lexer;
 mod parser;
 pub mod types;
 mod vars;
 
 pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct FslError {
-    error_type: InterpreterError,
-    error_text: String,
-}
-
-impl FslError {
-    pub fn new(error_type: InterpreterError, error_text: String) -> Self {
-        Self {
-            error_type,
-            error_text,
-        }
-    }
-
-    pub fn to_string(self) -> String {
-        self.error_text
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum InterpreterError {
-    LexerError(String),
-    ParserError(String),
-    CommandError(CommandError),
-    UnmatchedCurlyBraces,
-}
-
-impl InterpreterError {
-    pub fn to_string(self) -> String {
-        match self {
-            InterpreterError::LexerError(error_text) => error_text,
-            InterpreterError::ParserError(error_text) => error_text,
-            InterpreterError::CommandError(command_error) => command_error.to_string(),
-            InterpreterError::UnmatchedCurlyBraces => "unmatched curly braces".into(),
-        }
-    }
-}
-
-impl From<CommandError> for InterpreterError {
-    fn from(value: CommandError) -> Self {
-        InterpreterError::CommandError(value)
-    }
-}
-
-impl<'a> From<LexerError<'a>> for InterpreterError {
-    fn from(value: LexerError) -> Self {
-        Self::LexerError(value.to_string())
-    }
-}
-
-impl<'a> From<ParserError<'a>> for InterpreterError {
-    fn from(value: ParserError<'a>) -> Self {
-        Self::ParserError(value.to_string())
-    }
-}
 
 pub type CommandMap = HashMap<&'static str, Command>;
 pub type UserCommands = HashMap<String, UserCommand>;
@@ -222,11 +166,14 @@ impl FslInterpreter {
             .insert(label, Command::new(label.to_owned(), rules, executor));
     }
 
-    pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, FslError> {
+    pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, InterpreterError> {
         self.evaluate_expressions(code).await
     }
 
-    pub async fn interpret_embedded_code(&mut self, input: &str) -> Result<String, FslError> {
+    pub async fn interpret_embedded_code(
+        &mut self,
+        input: &str,
+    ) -> Result<String, InterpreterError> {
         let mut output = String::with_capacity(input.len());
         let mut code_stack: Vec<String> = Vec::new();
 
@@ -239,10 +186,7 @@ impl FslInterpreter {
             } else if c == '}' {
                 code_depth -= 1;
                 if code_depth < 0 {
-                    return Err(FslError::new(
-                        InterpreterError::UnmatchedCurlyBraces,
-                        InterpreterError::UnmatchedCurlyBraces.to_string(),
-                    ));
+                    return Err(InterpreterErrorType::UnmatchedCurlyBraces.into());
                 } else {
                     match code_stack.pop() {
                         Some(code) => {
@@ -269,16 +213,13 @@ impl FslInterpreter {
         }
 
         if code_depth != 0 {
-            return Err(FslError::new(
-                InterpreterError::UnmatchedCurlyBraces,
-                InterpreterError::UnmatchedCurlyBraces.to_string(),
-            ));
+            return Err(InterpreterErrorType::UnmatchedCurlyBraces.into());
         }
 
         Ok(output)
     }
 
-    async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, FslError> {
+    async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, InterpreterError> {
         let expressions = Parser::new().parse(code);
         match expressions {
             Ok(expressions) => {
@@ -289,13 +230,9 @@ impl FslInterpreter {
                             _ => unreachable!("parse expression should always return a command"),
                         },
                         Err(e) => {
-                            return Err(FslError::new(
-                                InterpreterError::CommandError(e.clone()),
-                                format!(
-                                    "{}\nError inside command: {}",
-                                    e.to_string(),
-                                    self.call_stack_to_string().await
-                                ),
+                            return Err(InterpreterError::new(
+                                e.error_type,
+                                Some(self.call_stack_to_string().await),
                             ));
                         }
                     };
@@ -303,23 +240,16 @@ impl FslInterpreter {
                         if e.exited_program() {
                             break;
                         } else {
-                            return Err(FslError::new(
-                                InterpreterError::CommandError(e.clone()),
-                                format!(
-                                    "{}\nError inside command: {}",
-                                    e.to_string(),
-                                    self.call_stack_to_string().await
-                                ),
+                            return Err(InterpreterError::new(
+                                InterpreterErrorType::Command(e),
+                                Some(self.call_stack_to_string().await),
                             ));
                         }
                     }
                 }
             }
             Err(e) => {
-                return Err(FslError::new(
-                    InterpreterError::ParserError(e.to_string()),
-                    e.to_string(),
-                ));
+                return Err(InterpreterErrorType::Parse(e.to_string()).into());
             }
         }
         Ok(self.data.output.lock().await.clone())
@@ -340,7 +270,7 @@ impl FslInterpreter {
         output
     }
 
-    async fn parse_expression(&self, expression: Expression) -> Result<Value, CommandError> {
+    async fn parse_expression(&self, expression: Expression) -> Result<Value, InterpreterError> {
         if let Some(command) = self.commands.get(expression.name.as_str()) {
             let mut command = command.clone();
 
@@ -379,13 +309,14 @@ impl FslInterpreter {
                 return Err(CommandError::NonExistantCommand(format!(
                     "command with name {} does not exist",
                     expression.name
-                )));
+                ))
+                .into());
             }
         }
     }
 
     #[async_recursion]
-    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, ValueError> {
+    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, InterpreterError> {
         match arg {
             parser::Arg::Number(number) => {
                 if number.contains('.') {
@@ -393,7 +324,8 @@ impl FslInterpreter {
                         Ok(value) => Ok(Value::Float(value)),
                         Err(_) => Err(ValueError::FailedParse(
                             "failed to convert to a number".into(),
-                        )),
+                        )
+                        .into()),
                     }
                 } else {
                     if let Ok(value) = number.parse::<i64>() {
@@ -402,9 +334,10 @@ impl FslInterpreter {
                         if let Ok(value) = number.parse::<f64>() {
                             Ok(Value::Float(value))
                         } else {
-                            Err(ValueError::FailedParse(
-                                "failed to convert to a number".into(),
-                            ))
+                            Err(
+                                ValueError::FailedParse("failed to convert to a number".into())
+                                    .into(),
+                            )
                         }
                     }
                 }
@@ -541,9 +474,9 @@ mod interpreter {
     use crate::commands::tests::{
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
-    use crate::types::command::CommandError;
-    use crate::types::value::{Value, ValueError};
-    use crate::{FslInterpreter, InterpreterError};
+    use crate::error::{CommandError, ValueError};
+    use crate::types::value::Value;
+    use crate::{FslInterpreter, InterpreterErrorType};
 
     async fn test_interpreter_err(code: &str) {
         let result = FslInterpreter::new().interpret(code).await;
@@ -675,7 +608,7 @@ mod interpreter {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterError::CommandError(_)))
+        assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
 
     #[tokio::test]
@@ -687,7 +620,7 @@ mod interpreter {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterError::CommandError(_)))
+        assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
 
     #[tokio::test]
@@ -1934,7 +1867,7 @@ mod interpreter {
         .await;
 
         match err {
-            InterpreterError::CommandError(command_error) => match command_error {
+            InterpreterErrorType::Command(command_error) => match command_error {
                 CommandError::ValueError(value_error) => match value_error {
                     ValueError::AttemptToOverwriteConstant(_) => {}
                     _ => panic!("should be overwrite constant err"),

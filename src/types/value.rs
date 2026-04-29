@@ -8,54 +8,9 @@ use async_recursion::async_recursion;
 
 use crate::{
     InterpreterData,
-    types::{
-        FslType,
-        command::{Command, CommandError},
-    },
+    error::{ExecutionError, ValueError},
+    types::{FslType, command::Command},
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ValueError {
-    InvalidComparison(String),
-    InvalidConversion(String),
-    FailedParse(String),
-    NonExistantVar(String),
-    InvalidVarName(String),
-    InvalidVarValue(String),
-    NegativeIndex(String),
-    VarMemoryLimitReached,
-    CommandExecutionFailed(Box<CommandError>),
-    AttemptToOverwriteConstant(String),
-    AttemptToFreeConstant(String),
-    EmptyMapPath(String),
-    NotAMap(String),
-    NotAList(String),
-    NonExistantKey(String),
-    IndexOutOfBounds(String),
-}
-
-impl ValueError {
-    pub fn to_string(self) -> String {
-        match self {
-            ValueError::InvalidComparison(error_text) => error_text,
-            ValueError::InvalidConversion(error_text) => error_text,
-            ValueError::FailedParse(error_text) => error_text,
-            ValueError::NonExistantVar(error_text) => error_text,
-            ValueError::InvalidVarName(error_text) => error_text,
-            ValueError::NegativeIndex(error_text) => error_text,
-            ValueError::InvalidVarValue(error_text) => error_text,
-            ValueError::CommandExecutionFailed(command_error) => command_error.to_string(),
-            ValueError::VarMemoryLimitReached => "interpreter var memory limit reached".into(),
-            ValueError::AttemptToOverwriteConstant(error_text) => error_text,
-            ValueError::AttemptToFreeConstant(error_text) => error_text,
-            ValueError::EmptyMapPath(error_text) => error_text,
-            ValueError::NotAMap(error_text) => error_text,
-            ValueError::NotAList(error_text) => error_text,
-            ValueError::NonExistantKey(error_text) => error_text,
-            ValueError::IndexOutOfBounds(error_text) => error_text,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -173,7 +128,7 @@ impl Value {
     }
 
     #[async_recursion]
-    pub async fn as_int(self, data: Arc<InterpreterData>) -> Result<i64, ValueError> {
+    pub async fn as_int(self, data: Arc<InterpreterData>) -> Result<i64, ExecutionError> {
         let to_type = FslType::Int;
         match self {
             Value::Int(value) => Ok(value),
@@ -188,28 +143,29 @@ impl Value {
             }
             Value::Text(value) => match value.parse::<i64>() {
                 Ok(value) => Ok(value),
-                Err(_) => Err(FslType::Text.gen_parse_err(to_type)),
+                Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
             },
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
         }
     }
 
-    pub async fn as_usize(self, data: Arc<InterpreterData>) -> Result<usize, ValueError> {
+    pub async fn as_usize(self, data: Arc<InterpreterData>) -> Result<usize, ExecutionError> {
         let integer = self.as_int(data).await?;
         if integer < 0 {
-            Err(ValueError::NegativeIndex(format!(
-                "cannot use a negative value as an index"
-            )))
+            Err(
+                ValueError::NegativeIndex(format!("cannot use a negative value as an index"))
+                    .into(),
+            )
         } else {
             Ok(integer as usize)
         }
     }
 
     #[async_recursion]
-    pub async fn as_float(self, data: Arc<InterpreterData>) -> Result<f64, ValueError> {
+    pub async fn as_float(self, data: Arc<InterpreterData>) -> Result<f64, ExecutionError> {
         let to_type = FslType::Float;
         match self {
             Value::Int(value) => Ok(value as f64),
@@ -224,28 +180,28 @@ impl Value {
             }
             Value::Text(value) => match value.parse::<f64>() {
                 Ok(value) => Ok(value),
-                Err(_) => Err(FslType::Text.gen_parse_err(to_type)),
+                Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
             },
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
         }
     }
 
     #[async_recursion]
-    pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, ValueError> {
+    pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, ExecutionError> {
         let to_type = FslType::Bool;
         match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
             Value::Text(value) => match value.parse::<bool>() {
                 Ok(value) => Ok(value),
-                Err(_) => Err(FslType::Text.gen_parse_err(to_type)),
+                Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
             },
             Value::Bool(value) => Ok(value),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
             Value::Var(label) => data.vars.get_var_value(&label)?.as_bool(data).await,
             Value::Command(command) => {
                 command
@@ -254,20 +210,20 @@ impl Value {
                     .as_bool(data.clone())
                     .await
             }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
         }
     }
 
     #[async_recursion]
-    pub async fn as_var_label(self, data: Arc<InterpreterData>) -> Result<String, ValueError> {
+    pub async fn as_var_label(self, data: Arc<InterpreterData>) -> Result<String, ExecutionError> {
         let to_type = FslType::Var;
         match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
             Value::Var(label) => Ok(label),
             Value::Command(command) => {
                 command
@@ -276,12 +232,12 @@ impl Value {
                     .as_var_label(data.clone())
                     .await
             }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
         }
     }
 
     #[async_recursion]
-    pub async fn as_text(self, data: Arc<InterpreterData>) -> Result<String, ValueError> {
+    pub async fn as_text(self, data: Arc<InterpreterData>) -> Result<String, ExecutionError> {
         match self {
             Value::Int(value) => Ok(value.to_string()),
             Value::Float(value) => Ok(value.to_string()),
@@ -327,18 +283,18 @@ impl Value {
                     .as_text(data.clone())
                     .await
             }
-            Value::None => Err(self.gen_conversion_err_to_type(FslType::Text)),
+            Value::None => Err(self.gen_conversion_err_to_type(FslType::Text).into()),
         }
     }
 
     #[async_recursion]
-    pub async fn as_list(self, data: Arc<InterpreterData>) -> Result<Vec<Value>, ValueError> {
+    pub async fn as_list(self, data: Arc<InterpreterData>) -> Result<Vec<Value>, ExecutionError> {
         let to_type = FslType::List;
         match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
             Value::List(mut values) => {
                 for value in values.iter_mut() {
                     if value.is_type(FslType::Command) {
@@ -351,7 +307,7 @@ impl Value {
                 }
                 Ok(values)
             }
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
             Value::Var(label) => data.vars.get_var_value(&label)?.as_list(data).await,
             Value::Command(command) => {
                 command
@@ -360,7 +316,7 @@ impl Value {
                     .as_list(data.clone())
                     .await
             }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
         }
     }
 
@@ -368,14 +324,14 @@ impl Value {
     pub async fn as_map(
         self,
         data: Arc<InterpreterData>,
-    ) -> Result<HashMap<String, Value>, ValueError> {
+    ) -> Result<HashMap<String, Value>, ExecutionError> {
         let to_type = FslType::Map;
         match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type)),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
             Value::Map(mut map) => {
                 for (_, value) in map.iter_mut() {
                     if value.is_type(FslType::Command) {
@@ -396,7 +352,7 @@ impl Value {
                     .as_map(data.clone())
                     .await
             }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type)),
+            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
         }
     }
 
@@ -405,7 +361,7 @@ impl Value {
         self,
         data: Arc<InterpreterData>,
         valid_types: &[FslType],
-    ) -> Result<Value, ValueError> {
+    ) -> Result<Value, ExecutionError> {
         let value;
         match self.as_type() {
             FslType::Int => value = self,
@@ -431,7 +387,7 @@ impl Value {
         if valid_types.contains(&value.as_type()) {
             Ok(value)
         } else {
-            Err(value.gen_conversion_err_to_types(valid_types))
+            Err(value.gen_conversion_err_to_types(valid_types).into())
         }
     }
 
@@ -573,11 +529,5 @@ impl From<ParseIntError> for ValueError {
 impl From<ParseFloatError> for ValueError {
     fn from(_: ParseFloatError) -> Self {
         ValueError::FailedParse("failed to convert text to float (decimal)".into())
-    }
-}
-
-impl From<CommandError> for ValueError {
-    fn from(value: CommandError) -> Self {
-        ValueError::CommandExecutionFailed(Box::new(value))
     }
 }

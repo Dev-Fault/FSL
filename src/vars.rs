@@ -7,9 +7,9 @@ use std::{
     },
 };
 
-use crate::types::{
-    FslType,
-    value::{Value, ValueError},
+use crate::{
+    error::ValueError,
+    types::{FslType, value::Value},
 };
 
 const MEGABYTE: usize = 1024 * 1024;

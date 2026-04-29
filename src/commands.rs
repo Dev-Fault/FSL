@@ -10,10 +10,11 @@ use rand::seq::SliceRandom;
 
 use crate::{
     InterpreterData,
+    error::{CommandError, ExecutionError, ValueError},
     types::{
         FslType,
-        command::{ArgPos, ArgRule, Command, CommandError, UserCommand},
-        value::{Value, ValueError},
+        command::{ArgPos, ArgRule, Command, UserCommand},
+        value::Value,
     },
     vars::VarEntry,
 };
@@ -115,7 +116,7 @@ pub const MATH_RULES: &[ArgRule] = &[
 async fn take_if_var(
     value: &mut Value,
     data: Arc<InterpreterData>,
-) -> Result<Option<(String, VarEntry)>, ValueError> {
+) -> Result<Option<(String, VarEntry)>, ExecutionError> {
     if value.is_type(FslType::Var) {
         let tmp_value = mem::take(value);
         let label = tmp_value.as_var_label(data.clone()).await?;
@@ -2407,7 +2408,9 @@ pub async fn exit(_: Command, _: Arc<InterpreterData>) -> Result<Value, CommandE
 pub mod tests {
     use std::time::{Duration, SystemTime};
 
-    use crate::{CommandError, FslInterpreter, InterpreterError, types::value::ValueError};
+    use crate::{
+        CommandError, FslInterpreter, InterpreterError, InterpreterErrorType, error::ValueError,
+    };
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
         let result = FslInterpreter::new().interpret(code).await;
@@ -2446,7 +2449,7 @@ pub mod tests {
         assert!(result == expected_output);
     }
 
-    pub async fn test_interpreter_err_type(code: &str) -> crate::InterpreterError {
+    pub async fn test_interpreter_err_type(code: &str) -> crate::InterpreterErrorType {
         let result = FslInterpreter::new().interpret(code).await;
         dbg!(&result);
         assert!(result.is_err());
@@ -2458,7 +2461,7 @@ pub mod tests {
         dbg!(&result);
         result.is_err_and(|e| {
             dbg!(&e);
-            e.error_type == err
+            e.error_type == err.error_type
         })
     }
 
@@ -2544,9 +2547,7 @@ pub mod tests {
         dbg!(&err);
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::ValueError(
-                ValueError::CommandExecutionFailed(_)
-            ))
+            InterpreterErrorType::Command(CommandError::DivisionByZero)
         ));
     }
 
@@ -2555,9 +2556,7 @@ pub mod tests {
         let err = test_interpreter_err_type("print(mod(1, 0))").await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::ValueError(
-                ValueError::CommandExecutionFailed(_)
-            ))
+            InterpreterErrorType::Command(CommandError::DivisionByZero)
         ));
     }
 
@@ -2595,7 +2594,7 @@ pub mod tests {
         let err = test_interpreter_err_type("a.store(1) print(a) a.free() print(a)").await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::ValueError(ValueError::NonExistantVar(_)))
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_)))
         ));
     }
 
@@ -2618,7 +2617,7 @@ pub mod tests {
         let err = test_interpreter_err_type(r#"(1)"#).await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::WrongArgType(_))
+            InterpreterErrorType::Command(CommandError::WrongArgType(_))
         ));
     }
 
@@ -2692,9 +2691,7 @@ pub mod tests {
         let err = test_interpreter_err_type(r#"print(eq(1, "a"))"#).await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::ValueError(
-                ValueError::CommandExecutionFailed(_)
-            ))
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::FailedParse(_)))
         ));
     }
 
@@ -2998,7 +2995,7 @@ pub mod tests {
         let err = test_interpreter_err_type(r#"break()"#).await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::BreakOutsideLoop)
+            InterpreterErrorType::Command(CommandError::BreakOutsideLoop)
         ));
     }
 
@@ -3025,7 +3022,7 @@ pub mod tests {
         let err = test_interpreter_err_type(r#"continue()"#).await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::ContinueOutsideLoop)
+            InterpreterErrorType::Command(CommandError::ContinueOutsideLoop)
         ));
     }
 
@@ -3124,9 +3121,7 @@ pub mod tests {
         let err = test_interpreter_err_type(r#"slice_replace("café", [4, 5], "h").print()"#).await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::ValueError(
-                ValueError::CommandExecutionFailed(_)
-            ))
+            InterpreterErrorType::Command(CommandError::InvalidArgument(_))
         ));
     }
 
@@ -3232,9 +3227,9 @@ pub mod tests {
         let err = test_interpreter_err_type("var.store(true) length(var).print()").await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::ValueError(
-                ValueError::CommandExecutionFailed(_)
-            ))
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::InvalidConversion(
+                _
+            )))
         ))
     }
 
@@ -3409,7 +3404,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterError::CommandError(_)))
+        assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
 
     #[tokio::test]
@@ -3421,7 +3416,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterError::CommandError(_)))
+        assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
 
     #[tokio::test]
@@ -3451,7 +3446,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterError::CommandError(_)))
+        assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
 
     #[tokio::test]
@@ -3623,7 +3618,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterError::CommandError(_)))
+        assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
 
     #[tokio::test]
@@ -3697,7 +3692,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterError::CommandError(_)))
+        assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
 
     #[tokio::test]
@@ -4083,7 +4078,7 @@ pub mod tests {
                         )
                     )
                 "#,
-                InterpreterError::CommandError(CommandError::ElseIfMustBePairedWithElse)
+                InterpreterErrorType::Command(CommandError::ElseIfMustBePairedWithElse).into()
             )
             .await
         );
@@ -4098,7 +4093,7 @@ pub mod tests {
                         print(true)
                     )
                 "#,
-                InterpreterError::CommandError(CommandError::ThenOutsideIf)
+                InterpreterErrorType::Command(CommandError::ThenOutsideIf).into()
             )
             .await
         );
@@ -4113,7 +4108,7 @@ pub mod tests {
                         print(true)
                     )
                 "#,
-                InterpreterError::CommandError(CommandError::ElseIfOutsideIf)
+                InterpreterErrorType::Command(CommandError::ElseIfOutsideIf).into()
             )
             .await
         );
@@ -4126,7 +4121,7 @@ pub mod tests {
                 r#"
                     else(print(true))
                 "#,
-                InterpreterError::CommandError(CommandError::ElseOutsideIf)
+                InterpreterErrorType::Command(CommandError::ElseOutsideIf).into()
             )
             .await
         );
@@ -4261,7 +4256,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::SwitchMustHaveSingleFallbackCommand)
+            InterpreterErrorType::Command(CommandError::SwitchMustHaveSingleFallbackCommand)
         ))
     }
 
@@ -4292,7 +4287,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::CaseOutsideOfSwitch)
+            InterpreterErrorType::Command(CommandError::CaseOutsideOfSwitch)
         ))
     }
 
@@ -4308,7 +4303,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterError::CommandError(CommandError::FallbackOutsideOfSwitch)
+            InterpreterErrorType::Command(CommandError::FallbackOutsideOfSwitch)
         ))
     }
 }
