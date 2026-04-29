@@ -14,7 +14,7 @@ impl std::fmt::Display for InterpreterErrorType {
         let output = match self {
             InterpreterErrorType::Lex(output) => output,
             InterpreterErrorType::Parse(output) => output,
-            InterpreterErrorType::Command(command_error) => &command_error.clone().to_string(),
+            InterpreterErrorType::Command(command_error) => &command_error.to_string(),
             InterpreterErrorType::Value(value_error) => &value_error.to_string(),
             InterpreterErrorType::UnmatchedCurlyBraces => "unmatched curly braces",
         };
