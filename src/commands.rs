@@ -705,46 +705,6 @@ pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
     Ok(arg_0.into())
 }
 
-pub const IF_THEN_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
-];
-pub const IF_THEN: &str = "if_then";
-pub async fn if_then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
-    let arg_1 = values.pop_front().unwrap();
-
-    if arg_0.as_bool(data.clone()).await? {
-        arg_1.as_command()?.execute(data).await
-    } else {
-        Ok(Value::None)
-    }
-}
-
-pub const IF_THEN_ELSE_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Command]),
-    ArgRule::new(ArgPos::Index(2), &[FslType::Command]),
-];
-pub const IF_THEN_ELSE: &str = "if_then_else";
-pub async fn if_then_else(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
-    let arg_1 = values.pop_front().unwrap();
-    let arg_2 = values.pop_front().unwrap();
-
-    if arg_0.as_bool(data.clone()).await? {
-        arg_1.as_command()?.execute(data).await
-    } else {
-        let result = arg_2.as_command()?.execute(data).await?;
-        Ok(result)
-    }
-}
-
 pub const IF_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
@@ -2722,19 +2682,19 @@ pub mod tests {
 
     #[tokio::test]
     async fn if_then() {
-        test_interpreter(r#"if_then(true, print("true"))"#, "true").await;
-        test_interpreter(r#"if_then(false, print("true"))"#, "").await;
+        test_interpreter(r#"if(true, then(print("true")))"#, "true").await;
+        test_interpreter(r#"if(false, then(print("true")))"#, "").await;
     }
 
     #[tokio::test]
     async fn if_then_else() {
         test_interpreter(
-            r#"if_then_else(true, print("true"), print("false"))"#,
+            r#"if(true, then(print("true")), else(print("false")))"#,
             "true",
         )
         .await;
         test_interpreter(
-            r#"if_then_else(false, print("true"), print("false"))"#,
+            r#"if(false, then(print("true")), else(print("false")))"#,
             "false",
         )
         .await;
@@ -2984,7 +2944,20 @@ pub mod tests {
     #[tokio::test]
     async fn break_nested() {
         test_interpreter(
-            r#"i.store(0) repeat(2, repeat(2, if_then(i.eq(0), (i.inc(), break()) ), i.print() ))"#,
+            r#"
+                i.store(0)
+                repeat(2,
+                    repeat(2,
+                        if(i.eq(0)
+                            then(
+                                i.inc()
+                                break()
+                            )
+                        )
+                        i.print()
+                    )
+                )
+            "#,
             r#"11"#,
         )
         .await;
@@ -3002,7 +2975,18 @@ pub mod tests {
     #[tokio::test]
     async fn r#continue() {
         test_interpreter(
-            r#"i.store(0) repeat(2, if_then(i.eq(0), (i.inc(), continue())), print("1"))"#,
+            r#"
+                i.store(0)
+                repeat(2,
+                    if(i.eq(0)
+                        then(
+                            i.inc()
+                            continue()
+                        )
+                    )
+                    print("1")
+                )
+            "#,
             r#"1"#,
         )
         .await;
@@ -3011,10 +2995,25 @@ pub mod tests {
     #[tokio::test]
     async fn continue_deeply_nested() {
         test_interpreter(
-        r#"i.store(0) repeat(2, repeat(2, repeat(2, if_then(i.eq(0), (i.inc(), continue()) ), i.print() )))"#,
-        r#"1111111"#,
-    )
-    .await;
+            r#"
+            i.store(0)
+            repeat(2,
+                repeat(2,
+                    repeat(2,
+                        if(i.eq(0)
+                            then(
+                                i.inc()
+                                continue()
+                            )
+                        )
+                        i.print()
+                    )
+                )
+            )
+        "#,
+            r#"1111111"#,
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -3337,8 +3336,8 @@ pub mod tests {
         test_interpreter(
             r#"
                 function.def(
-                    if_then(true,
-                        return(1)
+                    if(true,
+                        then(return(1))
                     )
                     print("never")
                 )
@@ -3875,14 +3874,14 @@ pub mod tests {
 	            create_potion_action.def(type, quality,
 	            	name.local("test")
 
-	            	if_then(type.eq(HEALTH),
-	            		ranges.store(HEALTH_POTION_QUALITY_RANGES)
+	            	if(type.eq(HEALTH),
+	            		then(ranges.store(HEALTH_POTION_QUALITY_RANGES))
 	            	)
-	            	if_then(type.eq(STRENGTH),
-	            		ranges.store(STRENGTH_POTION_QUALITY_RANGES)
+	            	if(type.eq(STRENGTH),
+	            		then(ranges.store(STRENGTH_POTION_QUALITY_RANGES))
 	            	)
-	            	if_then(type.eq(DODGE),
-	            		ranges.store(DODGE_POTION_QUALITY_RANGES)
+	            	if(type.eq(DODGE),
+	            		then(ranges.store(DODGE_POTION_QUALITY_RANGES))
 	            	)
 
 	            	min_mod.store(ranges.get(["modifier", quality, "min"]))
@@ -3890,15 +3889,15 @@ pub mod tests {
 	            	min_dur.store(ranges.get(["duration", quality, "min"]))
 	            	max_dur.store(ranges.get(["duration", quality, "max"]))
 	            	modifier.store(
-	            		if_then_else(min_mod.lt(max_mod),
-	            			random_range(min_mod, max_mod)
-	            			min_mod.clone()
+	            		if(min_mod.lt(max_mod),
+	            			then(random_range(min_mod, max_mod))
+	            			else(min_mod.clone())
 	            		)
 	            	)
 	            	duration.store(
-	            		if_then_else(min_dur.lt(max_dur),
-	            			random_range(min_dur, max_dur)
-	            			min_dur.clone()
+	            		if(min_dur.lt(max_dur),
+	            			then(random_range(min_dur, max_dur))
+	            			else(min_dur.clone())
 	            		)
 	            	)
 
@@ -3930,8 +3929,8 @@ pub mod tests {
 	            	i.local(0)
 	            	repeat(thresholds.length(),
 	            		current_threshold.local(thresholds.index(i).get("threshold"))
-	            		if_then(threshold.ltoe(current_threshold),
-	            			thresholds.index(i).get("value").return()
+	            		if(threshold.ltoe(current_threshold),
+	            			then(thresholds.index(i).get("value").return())
 	            		)
 	            		i.inc()
 	            	)

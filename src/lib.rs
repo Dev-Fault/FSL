@@ -314,8 +314,6 @@ impl FslInterpreter {
                 (NOT, NOT_RULES, commands::not),
                 (AND, AND_RULES, commands::and),
                 (OR, OR_RULES, commands::or),
-                (IF_THEN, IF_THEN_RULES, commands::if_then),
-                (IF_THEN_ELSE, IF_THEN_ELSE_RULES, commands::if_then_else),
                 (IF, IF_RULES, commands::r#if),
                 (THEN, THEN_RULES, commands::then),
                 (ELSE_IF, ELSE_IF_RULES, commands::else_if),
@@ -865,13 +863,13 @@ mod interpreter {
             r#"
             x.store(10)
             y.store(20)
-            if_then_else(
-                gt(x, y),
-                print("x is greater"),
-                if_then_else(
-                    lt(x, y),
-                    print("y is greater"),
-                    print("they are equal")
+            if(x.gt(y),
+                then(print("x is greater")),
+                else(
+                    if(x.lt(y),
+                        then(print("y is greater")),
+                        else(print("they are equal"))
+                    )
                 )
             )
         "#,
@@ -1023,14 +1021,14 @@ mod interpreter {
         count.store(0)
         i.store(0)
         repeat(text.length(),
-            if_then(
+            if(
                 and(
                     text.index(i).eq("h"),
-                    if_then(i.add(1).lt(text.length()),
-                        text.index(add(i, 1)).eq("e"),
+                    if(i.add(1).lt(text.length()),
+                        then(text.index(add(i, 1)).eq("e")),
                     )
                 ),
-                count.store(count.add(1))
+                then(count.store(count.add(1)))
             ),
             i.store(i.add(1)),
         )
@@ -1050,9 +1048,8 @@ mod interpreter {
         i.store(0)
         repeat(numbers.length(),
             num.store(numbers.index(i)),
-            if_then(
-                eq(mod(num, 2), 0),
-                evens.insert(evens.length(), num)
+            if(eq(mod(num, 2), 0),
+                then(evens.insert(evens.length(), num))
             ),
             i.store(add(i, 1))
         )
@@ -1112,17 +1109,15 @@ mod interpreter {
         found.store(false)
         i.store(0)
         while(and(lt(i, fruits.length()), not(found)),
-            if_then(
-                eq(fruits.index(i), search),
-                found.store(true),
+            if(eq(fruits.index(i), search),
+                then(found.store(true)),
             )
                 i.store(add(i, 1))
         )
         i.store(i.sub(1))
-        if_then_else(
-            found,
-            print("Found ", search, " at index ", i),
-            print(search, " not found")
+        if(found,
+            then(print("Found ", search, " at index ", i)),
+            else(print(search, " not found"))
         )
         "#,
             "Found cherry at index 2",
@@ -1156,9 +1151,8 @@ mod interpreter {
         max.store(numbers.index(0))
         i.store(1)
         repeat(sub(numbers.length(), 1),
-            if_then(
-                gt(numbers.index(i), max),
-                max.store(numbers.index(i))
+            if(numbers.index(i).gt(max),
+                then(max.store(numbers.index(i)))
             ),
             i.store(add(i, 1))
         )
@@ -1215,13 +1209,13 @@ mod interpreter {
             r#"
         is_valid.store(true)
         is_ready.store(false)
-        if_then_else(
-            and(is_valid, is_ready),
-            print("Both true"),
-            if_then_else(
-                or(is_valid, is_ready),
-                print("At least one true"),
-                print("Both false")
+        if(and(is_valid, is_ready),
+            then(print("Both true")),
+            else(
+                if(or(is_valid, is_ready),
+                    then(print("At least one true")),
+                    else(print("Both false"))
+                )
             )
         )
         "#,
@@ -1443,7 +1437,7 @@ mod interpreter {
         test_interpreter(
             r#"
         x.store(5)
-        result.store(if_then_else(gt(x, 3), add(x, 10), mul(x, 2)))
+        result.store(if(gt(x, 3), then(add(x, 10)), else(mul(x, 2))))
         print(result)
         "#,
             "15",
@@ -1650,10 +1644,10 @@ mod interpreter {
 
 	            get_potion_mod.def(
 	                repeat(2,
-	                    if_then(true,
-			                potion_modifier.store(
+	                    if(true,
+			                then(potion_modifier.store(
 			                    HEALTH_POTION_RANGES.index(0).index(MIN)
-			                )
+			                ))
 	                    )
 	                )
 			        potion_modifier.free()
