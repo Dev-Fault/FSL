@@ -67,7 +67,7 @@ impl Handler {
 pub struct CommandDefinition {
     label: &'static str,
     arg_rules: &'static [ArgRule],
-    handler: Option<Handler>,
+    handler: Handler,
 }
 
 impl fmt::Debug for CommandDefinition {
@@ -83,7 +83,7 @@ impl CommandDefinition {
         Self {
             label,
             arg_rules,
-            handler: Some(handler),
+            handler: handler,
         }
     }
 }
@@ -92,7 +92,7 @@ pub struct Command {
     label: String,
     arg_rules: &'static [ArgRule],
     args: VecDeque<Value>,
-    handler: Option<Handler>,
+    handler: Handler,
 }
 
 impl From<CommandDefinition> for Command {
@@ -118,7 +118,7 @@ impl Command {
     pub fn new(label: String, arg_rules: &'static [ArgRule], handler: Handler) -> Self {
         Self {
             args: VecDeque::new(),
-            handler: Some(handler),
+            handler: handler,
             label,
             arg_rules,
         }
@@ -256,8 +256,7 @@ impl Command {
         Ok(())
     }
 
-    const EXECUTE_EXPECT: &str = "Command should always have executor before being consumed";
-    pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    pub async fn execute(self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
         self.validate_args()?;
 
         let return_flag = data.flags.return_flag.load(Ordering::Relaxed);
@@ -270,7 +269,7 @@ impl Command {
 
         data.push_call(&self.label).await;
 
-        let handler = self.handler.take().expect(Self::EXECUTE_EXPECT);
+        let handler = self.handler.clone();
         match handler.handle(self, data.clone()).await {
             Ok(value) => {
                 data.pop_call().await;
