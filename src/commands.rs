@@ -531,19 +531,24 @@ pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), N
 pub const PRINT: &str = "print";
 pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
-    let mut output = String::new();
 
-    for value in values {
-        output.push_str(&value.as_text(data.clone()).await?);
-    }
-
-    let mut std_out = data.output.lock().await;
     if let Some(limit) = data.output_limit {
-        if std_out.len() + output.len() > limit {
-            return Err(CommandError::OutputLimitExceeded);
+        for value in values {
+            let text = value.as_text(data.clone()).await?;
+            // Must be locked after as_text (could require evaluating command that calls print)
+            let mut output = data.output.lock().await;
+            if text.len() + output.len() > limit {
+                return Err(CommandError::OutputLimitExceeded);
+            }
+            output.push_str(&text);
+        }
+    } else {
+        for value in values {
+            let text = value.as_text(data.clone()).await?;
+            let mut output = data.output.lock().await;
+            output.push_str(&text);
         }
     }
-    std_out.push_str(&output);
     Ok(Value::None)
 }
 

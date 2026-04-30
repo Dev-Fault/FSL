@@ -89,7 +89,7 @@ impl CommandDefinition {
 }
 
 pub struct Command {
-    label: String,
+    label: Arc<str>,
     arg_rules: &'static [ArgRule],
     args: VecDeque<Value>,
     handler: Handler,
@@ -98,7 +98,7 @@ pub struct Command {
 impl From<CommandDefinition> for Command {
     fn from(value: CommandDefinition) -> Self {
         Self {
-            label: value.label.to_string(),
+            label: Arc::from(value.label),
             arg_rules: value.arg_rules,
             args: VecDeque::new(),
             handler: value.handler,
@@ -119,7 +119,7 @@ impl Command {
         Self {
             args: VecDeque::new(),
             handler: handler,
-            label,
+            label: Arc::from(label),
             arg_rules,
         }
     }
