@@ -443,10 +443,6 @@ impl Lexer {
                         buf.clear();
                     }
                     Symbol::OpenParen if self.inside_code() => {
-                        if buf.is_empty() {
-                            //return Err(LexerError::OpenParenNotPrecededByCommand(err_context));
-                        }
-
                         tokens
                             .push_back(Token::new(TokenType::Command(std::mem::take(&mut buf)), i));
                         tokens.push_back(Token::new(TokenType::Symbol(Symbol::OpenParen), i));
