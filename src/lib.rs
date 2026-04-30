@@ -373,8 +373,8 @@ impl FslInterpreter {
                 (SHUFFLE, SHUFFLE_RULES, commands::shuffle),
                 (DEF, DEF_RULES, commands::def),
                 (EXIT, NO_ARGS, commands::exit),
-                (BREAK, NO_ARGS, commands::break_command),
-                (CONTINUE, NO_ARGS, commands::continue_command),
+                (BREAK, NO_ARGS, commands::r#break),
+                (CONTINUE, NO_ARGS, commands::r#continue),
                 (RETURN, RETURN_RULES, commands::r#return),
             ]
         );

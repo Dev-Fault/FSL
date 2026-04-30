@@ -2285,7 +2285,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const BREAK: &str = "break";
-pub async fn break_command(_: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+pub async fn r#break(_: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     if data.loop_depth.load(Ordering::Relaxed) > 0 {
         data.flags.break_flag.store(true, Ordering::Relaxed);
     } else {
@@ -2296,10 +2296,7 @@ pub async fn break_command(_: Command, data: Arc<InterpreterData>) -> Result<Val
 }
 
 pub const CONTINUE: &str = "continue";
-pub async fn continue_command(
-    _: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, CommandError> {
+pub async fn r#continue(_: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     if data.loop_depth.load(Ordering::Relaxed) > 0 {
         data.flags.continue_flag.store(true, Ordering::Relaxed);
     } else {
