@@ -570,15 +570,14 @@ pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value
     Ok(Value::None)
 }
 
-pub const SCOPE_RULES: &'static [ArgRule] =
-    &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
+pub const SCOPE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub const SCOPE: &str = "";
 pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
     data.vars.push();
     let mut return_value = Value::None;
     for value in values {
-        return_value = value.as_command()?.execute(data.clone()).await?;
+        return_value = value.as_raw(data.clone(), ANY).await?;
     }
     data.vars.pop();
 
@@ -2482,12 +2481,36 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn values_in_scope() {
-        let err = test_interpreter_err_type(r#"(1)"#).await;
+    async fn scope_vars() {
+        let err = test_interpreter_err_type(
+            r#"
+            (
+                inner.local(0)
+            )
+            print(inner)
+            "#,
+        )
+        .await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::WrongArgType(_))
-        ));
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_)))
+        ))
+    }
+
+    #[tokio::test]
+    async fn scope_returns() {
+        test_interpreter(
+            r#"
+            (1,2,3).print()
+            "#,
+            "3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn values_in_scope() {
+        test_interpreter(r#"(1)"#, "").await;
     }
 
     #[tokio::test]
@@ -4408,5 +4431,30 @@ pub mod tests {
             "0",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn keys_with_commands() {
+        test_interpreter(
+            r#"
+                index([1, add(1, 1), 3], [add(1, 0)]).print()
+            "#,
+            "2",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn invalid_key() {
+        let err = test_interpreter_err_type(
+            r#"
+                index([1, add(1, 1), 3], ["one"]).print()
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::FailedParse(_))),
+        ))
     }
 }
