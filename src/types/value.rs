@@ -395,6 +395,20 @@ impl Value {
         }
     }
 
+    // Attempts to convert value to a value that can be used to access indices in a map or list
+    pub async fn as_key(
+        self,
+        data: Arc<InterpreterData>,
+        key_types: &[FslType],
+    ) -> Result<Vec<Value>, ExecutionError> {
+        let accesor = self.as_raw(data.clone(), key_types).await?;
+
+        match accesor {
+            Value::List(values) => Ok(values),
+            _ => Ok(vec![accesor]),
+        }
+    }
+
     pub fn as_command(self) -> Result<Command, ValueError> {
         if let Value::Command(command) = self {
             Ok(*command)

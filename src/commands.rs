@@ -19,7 +19,7 @@ use crate::{
     vars::VarEntry,
 };
 
-pub const ALL_TYPES: &[FslType] = &[
+pub const ANY: &[FslType] = &[
     FslType::Int,
     FslType::Float,
     FslType::Bool,
@@ -31,7 +31,7 @@ pub const ALL_TYPES: &[FslType] = &[
     FslType::None,
 ];
 
-pub const NON_NONE_VALUES: &[FslType] = &[
+pub const NOT_NONE: &[FslType] = &[
     FslType::Int,
     FslType::Float,
     FslType::Bool,
@@ -42,7 +42,7 @@ pub const NON_NONE_VALUES: &[FslType] = &[
     FslType::Command,
 ];
 
-pub const VAR_VALUES: &[FslType] = &[
+pub const STORABLE: &[FslType] = &[
     FslType::Int,
     FslType::Float,
     FslType::Bool,
@@ -53,7 +53,7 @@ pub const VAR_VALUES: &[FslType] = &[
     FslType::Command,
 ];
 
-pub const LITERAL_VALUES: &[FslType] = &[
+pub const LITERAL: &[FslType] = &[
     FslType::Int,
     FslType::Float,
     FslType::Bool,
@@ -62,7 +62,7 @@ pub const LITERAL_VALUES: &[FslType] = &[
     FslType::Map,
 ];
 
-pub const NUMERIC_TYPES: &[FslType] = &[
+pub const MAYBE_NUMBER: &[FslType] = &[
     FslType::Int,
     FslType::Float,
     FslType::Command,
@@ -70,10 +70,9 @@ pub const NUMERIC_TYPES: &[FslType] = &[
     FslType::Text,
 ];
 
-pub const WHOLE_NUMBER_TYPES: &[FslType] =
-    &[FslType::Int, FslType::Command, FslType::Var, FslType::Text];
+pub const MAYBE_INT: &[FslType] = &[FslType::Int, FslType::Command, FslType::Var, FslType::Text];
 
-pub const INDEX_TYPES: &[FslType] = &[
+pub const MAYBE_LIST_KEY: &[FslType] = &[
     FslType::List,
     FslType::Int,
     FslType::Command,
@@ -81,17 +80,25 @@ pub const INDEX_TYPES: &[FslType] = &[
     FslType::Text,
 ];
 
-pub const KEY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
+pub const LIST_KEY: &[FslType] = &[FslType::List, FslType::Int];
 
-pub const ARRAY_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
+pub const MAYBE_MAP_KEY: &[FslType] =
+    &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
 
-pub const LIST_TYPES: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
+pub const MAP_KEY: &[FslType] = &[FslType::List, FslType::Text];
 
-pub const MAP_TYPES: &[FslType] = &[FslType::Map, FslType::Command, FslType::Var];
+pub const MAYBE_INDEXABLE: &[FslType] =
+    &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
 
-pub const TEXT_TYPES: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
+pub const INDEXABLE: &[FslType] = &[FslType::List, FslType::Text];
 
-pub const LOGIC_TYPES: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
+pub const MAYBE_LIST: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
+
+pub const MAYBE_MAP: &[FslType] = &[FslType::Map, FslType::Command, FslType::Var];
+
+pub const MAYBE_TEXT: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
+
+pub const MAYBE_BOOL: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
 
 pub const NO_ARGS: &[ArgRule] = &[ArgRule {
     position: ArgPos::None,
@@ -101,19 +108,20 @@ pub const NO_ARGS: &[ArgRule] = &[ArgRule {
 pub const MATH_RULES: &[ArgRule] = &[
     ArgRule {
         position: ArgPos::AnyFrom(0),
-        valid_types: NUMERIC_TYPES,
+        valid_types: MAYBE_NUMBER,
     },
     ArgRule {
         position: ArgPos::Index(0),
-        valid_types: NUMERIC_TYPES,
+        valid_types: MAYBE_NUMBER,
     },
     ArgRule {
         position: ArgPos::Index(1),
-        valid_types: NUMERIC_TYPES,
+        valid_types: MAYBE_NUMBER,
     },
 ];
 
-async fn take_if_var(
+/// If value is var label replaces it with it's actual inner value and returns label + var entry otherwise returns None
+pub async fn take_if_var(
     value: &mut Value,
     data: Arc<InterpreterData>,
 ) -> Result<Option<(String, VarEntry)>, ExecutionError> {
@@ -128,16 +136,18 @@ async fn take_if_var(
     }
 }
 
-fn update_if_var(
+/// If value is var updates var entry and returns Value::Var otherwise returns value that was passed in
+pub fn update_if_var(
     var: Option<(String, VarEntry)>,
     value: Value,
     data: Arc<InterpreterData>,
-) -> Result<(), ValueError> {
+) -> Result<Value, ValueError> {
     if let Some((label, mut var_entry)) = var {
         var_entry.value = value;
-        data.vars.insert_entry(label, var_entry)?;
+        data.vars.insert_entry(label.clone(), var_entry)?;
+        return Ok(Value::Var(label));
     }
-    Ok(())
+    Ok(value)
 }
 
 #[async_recursion]
@@ -267,9 +277,9 @@ pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Val
 }
 
 pub const CLAMP_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(2), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(2), MAYBE_NUMBER),
 ];
 pub const CLAMP: &str = "clamp";
 pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -277,17 +287,17 @@ pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let arg_0 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NUMERIC_TYPES)
+        .as_raw(data.clone(), MAYBE_NUMBER)
         .await?;
     let arg_1 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NUMERIC_TYPES)
+        .as_raw(data.clone(), MAYBE_NUMBER)
         .await?;
     let arg_2 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NUMERIC_TYPES)
+        .as_raw(data.clone(), MAYBE_NUMBER)
         .await?;
 
     if arg_0.is_type(FslType::Float) {
@@ -313,8 +323,8 @@ pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value
     }
 }
 pub const CLAMP_MIN_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const CLAMP_MIN: &str = "clamp_min";
 pub async fn clamp_min(
@@ -325,12 +335,12 @@ pub async fn clamp_min(
     let arg_0 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NUMERIC_TYPES)
+        .as_raw(data.clone(), MAYBE_NUMBER)
         .await?;
     let arg_1 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NUMERIC_TYPES)
+        .as_raw(data.clone(), MAYBE_NUMBER)
         .await?;
 
     if arg_0.is_type(FslType::Float) {
@@ -355,8 +365,8 @@ pub async fn clamp_min(
 }
 
 pub const CLAMP_MAX_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const CLAMP_MAX: &str = "clamp_max";
 pub async fn clamp_max(
@@ -367,12 +377,12 @@ pub async fn clamp_max(
     let arg_0 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NUMERIC_TYPES)
+        .as_raw(data.clone(), MAYBE_NUMBER)
         .await?;
     let arg_1 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NUMERIC_TYPES)
+        .as_raw(data.clone(), MAYBE_NUMBER)
         .await?;
 
     if arg_0.is_type(FslType::Float) {
@@ -397,7 +407,7 @@ pub async fn clamp_max(
 }
 
 pub const PRECISION_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
     ArgRule::new(ArgPos::Index(1), &[FslType::Int]),
 ];
 pub const PRECISION: &str = "precision";
@@ -416,8 +426,8 @@ pub async fn precision(
 }
 
 pub const STORE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), STORABLE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const STORE: &str = "store";
 pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -430,7 +440,7 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let value_to_store = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), LITERAL_VALUES)
+        .as_raw(data.clone(), LITERAL)
         .await?;
     let var_label = &var;
 
@@ -441,8 +451,8 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
 }
 
 pub const LOCAL_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), STORABLE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const LOCAL: &str = "local";
 pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -455,17 +465,15 @@ pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let value_to_store = values.pop_front().unwrap();
     let var_label = &var;
 
-    data.vars.insert_mut_var(
-        var_label,
-        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
-    )?;
+    data.vars
+        .insert_mut_var(var_label, value_to_store.as_raw(data.clone(), ANY).await?)?;
 
     Ok(data.vars.get_var_value(var_label)?)
 }
 
 pub const UPDATE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), STORABLE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const UPDATE: &str = "update";
 pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -478,17 +486,15 @@ pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let value_to_store = values.pop_front().unwrap();
     let var_label = &var;
 
-    data.vars.update_var(
-        var_label,
-        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
-    )?;
+    data.vars
+        .update_var(var_label, value_to_store.as_raw(data.clone(), ANY).await?)?;
 
     Ok(data.vars.get_var_value(var_label)?)
 }
 
 pub const CONST_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), VAR_VALUES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), STORABLE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const CONST: &str = "const";
 pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -501,19 +507,17 @@ pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let value_to_store = values.pop_front().unwrap();
     let var_label = &var;
 
-    data.vars.insert_const_var(
-        var_label,
-        value_to_store.as_raw(data.clone(), ALL_TYPES).await?,
-    )?;
+    data.vars
+        .insert_const_var(var_label, value_to_store.as_raw(data.clone(), ANY).await?)?;
 
     Ok(data.vars.get_var_value(var_label)?)
 }
 
-pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
 pub const CLONE: &str = "clone";
 pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let value = command.take_args().pop_front().unwrap();
-    Ok(value.as_raw(data, ALL_TYPES).await?)
+    Ok(value.as_raw(data, ANY).await?)
 }
 
 pub const FREE: &str = "free";
@@ -527,7 +531,7 @@ pub async fn free(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 }
 
-pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
+pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const PRINT: &str = "print";
 pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
@@ -552,7 +556,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
     Ok(Value::None)
 }
 
-pub const DEBUG_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
+pub const DEBUG_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const DEBUG: &str = "debug";
 pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
@@ -582,8 +586,8 @@ pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value
 }
 
 pub const EQ_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NON_NONE_VALUES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), NOT_NONE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const EQ: &str = "eq";
 pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -591,20 +595,20 @@ pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
     let a = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), ALL_TYPES)
+        .as_raw(data.clone(), ANY)
         .await?;
     let b = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), ALL_TYPES)
+        .as_raw(data.clone(), ANY)
         .await?;
 
     Ok(Value::Bool(a.eq(&b)?))
 }
 
 pub const GT_RULES: &[ArgRule; 2] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const GT: &str = "gt";
 pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -623,8 +627,8 @@ pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
 }
 
 pub const GTOE_RULES: &[ArgRule; 2] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const GTOE: &str = "gtoe";
 pub async fn gtoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -643,8 +647,8 @@ pub async fn gtoe(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 }
 
 pub const LT_RULES: &[ArgRule; 2] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const LT: &str = "lt";
 pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -663,8 +667,8 @@ pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
 }
 
 pub const LTOE_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const LTOE: &str = "ltoe";
 pub async fn ltoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -683,7 +687,7 @@ pub async fn ltoe(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 }
 
-pub const NOT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LOGIC_TYPES)];
+pub const NOT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_BOOL)];
 pub const NOT: &str = "not";
 pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
@@ -691,7 +695,7 @@ pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     Ok((!a).into())
 }
 
-pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), LOGIC_TYPES)];
+pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_BOOL)];
 pub const AND: &str = "and";
 pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
@@ -702,7 +706,7 @@ pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     Ok(arg_0.into())
 }
 
-pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), LOGIC_TYPES)];
+pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_BOOL)];
 pub const OR: &str = "or";
 pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
@@ -714,7 +718,7 @@ pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
 }
 
 pub const IF_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_BOOL),
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const IF: &str = "if";
@@ -781,22 +785,22 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 }
 
-pub const THEN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ALL_TYPES)];
+pub const THEN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub const THEN: &str = "then";
 pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
     let mut return_value = Value::None;
     for value in values {
-        return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+        return_value = value.as_raw(data.clone(), ANY).await?;
     }
 
     Ok(return_value)
 }
 
 pub const ELSE_IF_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::AnyFrom(1), ALL_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_BOOL),
+    ArgRule::new(ArgPos::AnyFrom(1), ANY),
 ];
 pub const ELSE_IF: &str = "else_if";
 pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -806,7 +810,7 @@ pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Val
     if arg_0.as_bool(data.clone()).await? {
         let mut return_value = Value::None;
         for value in values {
-            return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+            return_value = value.as_raw(data.clone(), ANY).await?;
         }
         return Ok(return_value);
     } else {
@@ -814,14 +818,14 @@ pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Val
     }
 }
 
-pub const ELSE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ALL_TYPES)];
+pub const ELSE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub const ELSE: &str = "else";
 pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
     let mut return_value = Value::None;
     for value in values {
-        return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+        return_value = value.as_raw(data.clone(), ANY).await?;
     }
 
     Ok(return_value)
@@ -863,8 +867,8 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 }
 
 pub const CASE_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
-    ArgRule::new(ArgPos::AnyFrom(1), ALL_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_BOOL),
+    ArgRule::new(ArgPos::AnyFrom(1), ANY),
 ];
 pub const CASE: &str = "case";
 pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -874,7 +878,7 @@ pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     if arg_0.as_bool(data.clone()).await? {
         let mut return_value = Value::None;
         for value in values {
-            return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+            return_value = value.as_raw(data.clone(), ANY).await?;
         }
         return Ok(return_value);
     } else {
@@ -882,21 +886,21 @@ pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 }
 
-pub const FALLBACK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ALL_TYPES)];
+pub const FALLBACK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub const FALLBACK: &str = "fallback";
 pub async fn fallback(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
     let mut return_value = Value::None;
     for value in values {
-        return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
+        return_value = value.as_raw(data.clone(), ANY).await?;
     }
 
     Ok(return_value)
 }
 
 pub const WHILE_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), LOGIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_BOOL),
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const WHILE_LOOP: &str = "while";
@@ -936,7 +940,7 @@ pub async fn while_command(
 }
 
 pub const REPEAT_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const REPEAT: &str = "repeat";
@@ -968,66 +972,6 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     data.loop_depth.fetch_sub(1, Ordering::Relaxed);
 
     Ok(final_value)
-}
-
-/// Performs operation L or T depending on if array Value is List or Text
-/// If manipulator returns None returns altered array that was passed in
-/// If manipulator returns Some returns the specificed value in the manipulator closure
-async fn manipulate_array<L, T>(
-    array: Value,
-    data: Arc<InterpreterData>,
-    list_manipulator: L,
-    text_manipulator: T,
-) -> Result<Value, CommandError>
-where
-    L: AsyncFnOnce(&mut Vec<Value>) -> Result<Option<Value>, CommandError>,
-    T: AsyncFnOnce(&mut String) -> Result<Option<Value>, CommandError>,
-{
-    let var_label = if let Ok(label) = array.get_var_label() {
-        Some(label.to_string())
-    } else {
-        None
-    };
-
-    let raw = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
-        .await?;
-
-    if raw.is_type(FslType::List) {
-        let mut list = raw.as_list(data.clone()).await?;
-
-        let return_value = list_manipulator(&mut list).await?;
-
-        let list = Value::List(list);
-
-        if let Some(label) = var_label {
-            data.vars.update_var(&label, list.clone())?;
-        }
-
-        if let Some(return_value) = return_value {
-            Ok(return_value)
-        } else {
-            Ok(list)
-        }
-    } else if raw.is_type(FslType::Text) {
-        let mut text = raw.as_text(data.clone()).await?;
-
-        let return_value = text_manipulator(&mut text).await?;
-
-        let text = Value::Text(text);
-
-        if let Some(label) = var_label {
-            data.vars.update_var(&label, text.clone())?;
-        }
-
-        if let Some(return_value) = return_value {
-            Ok(return_value)
-        } else {
-            Ok(text)
-        }
-    } else {
-        unreachable!("command arg validation should have handled incorrect arg types")
-    }
 }
 
 #[async_recursion]
@@ -1163,8 +1107,8 @@ async fn insert_at_index(
 }
 
 pub const INDEX_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
-    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
 ];
 pub const INDEX: &str = "index";
 pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1172,29 +1116,23 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
-    let array = arg_0.as_raw(data.clone(), ARRAY_TYPES).await?;
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
-    if array.is_type(FslType::List) {
-        let list = array.as_list(data.clone()).await?;
-
-        let accesor = arg_1
-            .as_raw(data.clone(), &[FslType::List, FslType::Int])
-            .await?;
-
-        let indices = if accesor.is_type(FslType::List) {
-            accesor.as_list(data.clone()).await?
-        } else {
-            vec![accesor]
-        };
-
-        get_index(&list, &indices, data).await
-    } else {
-        let text = array.as_text(data.clone()).await?;
-        let i = arg_1.as_usize(data).await?;
-        match text.chars().nth(i) {
-            Some(char) => Ok(char.into()),
-            None => Err(CommandError::IndexOutOfBounds),
+    match array {
+        Value::Text(text) => {
+            let i = arg_1.as_usize(data).await?;
+            match text.chars().nth(i) {
+                Some(char) => Ok(char.into()),
+                None => Err(CommandError::IndexOutOfBounds),
+            }
         }
+        Value::List(list) => {
+            let key = arg_1.as_key(data.clone(), MAYBE_LIST_KEY).await?;
+            get_index(&list, &key, data).await
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
@@ -1230,8 +1168,8 @@ async fn get_nested(
 }
 
 pub const GET_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAP_TYPES),
-    ArgRule::new(ArgPos::Index(1), KEY_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_MAP),
+    ArgRule::new(ArgPos::Index(1), MAYBE_MAP_KEY),
 ];
 pub const GET: &str = "get";
 pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1239,19 +1177,10 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
-    let accesor = arg_1
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
-        .await?;
-
-    let keys = if accesor.is_type(FslType::List) {
-        accesor.as_list(data.clone()).await?
-    } else {
-        vec![accesor]
-    };
-
+    let key = arg_1.as_key(data.clone(), MAP_KEY).await?;
     let map = arg_0.as_map(data.clone()).await?;
 
-    get_nested(&map, &keys, data).await
+    get_nested(&map, &key, data).await
 }
 
 #[async_recursion]
@@ -1287,9 +1216,9 @@ async fn set_nested(
 }
 
 pub const SET_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAP_TYPES),
-    ArgRule::new(ArgPos::Index(1), KEY_TYPES),
-    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_MAP),
+    ArgRule::new(ArgPos::Index(1), MAYBE_MAP_KEY),
+    ArgRule::new(ArgPos::Index(2), NOT_NONE),
 ];
 pub const SET: &str = "set";
 pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1298,22 +1227,15 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
-    let accesor = arg_1
-        .as_raw(data.clone(), &[FslType::Text, FslType::List])
-        .await?;
-    let keys = if accesor.is_type(FslType::List) {
-        accesor.as_list(data.clone()).await?
-    } else {
-        vec![accesor]
-    };
+    let key = arg_1.as_key(data.clone(), MAP_KEY).await?;
 
-    let replacement_value = arg_2.as_raw(data.clone(), NON_NONE_VALUES).await?;
+    let replacement_value = arg_2.as_raw(data.clone(), NOT_NONE).await?;
 
     if arg_0.is_type(FslType::Var) {
         let var = take_if_var(&mut arg_0, data.clone()).await?;
         let mut map = arg_0.as_map(data.clone()).await?;
 
-        let return_value = set_nested(&mut map, &keys, replacement_value, data.clone()).await?;
+        let return_value = set_nested(&mut map, &key, replacement_value, data.clone()).await?;
 
         update_if_var(var, Value::Map(map), data)?;
 
@@ -1321,33 +1243,31 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     } else {
         let mut map = arg_0.as_map(data.clone()).await?;
 
-        let return_value = set_nested(&mut map, &keys, replacement_value, data.clone()).await?;
+        let return_value = set_nested(&mut map, &key, replacement_value, data.clone()).await?;
         Ok(return_value)
     }
 }
 
-pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
+pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
 pub const LENGTH: &str = "length";
 pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let array = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), ARRAY_TYPES)
+        .as_raw(data.clone(), INDEXABLE)
         .await?;
 
-    if array.is_type(FslType::List) {
-        let list = array.as_list(data).await?;
-        Ok((list.len() as i64).into())
-    } else {
-        let text = array.as_text(data).await?;
-        Ok((text.len() as i64).into())
+    match array {
+        Value::Text(text) => Ok(Value::Int(text.len() as i64)),
+        Value::List(list) => Ok(Value::Int(list.len() as i64)),
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
 pub const REMOVE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
-    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
 ];
 pub const REMOVE: &str = "remove";
 pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1355,104 +1275,116 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
-    if arg_0.as_literal_type(data.clone()) == FslType::List {
-        let accesor = arg_1
-            .as_raw(data.clone(), &[FslType::List, FslType::Int])
-            .await?;
+    let key = arg_1.as_key(data.clone(), LIST_KEY).await?;
 
-        let indices = if accesor.is_type(FslType::List) {
-            accesor.as_list(data.clone()).await?
-        } else {
-            vec![accesor]
-        };
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut list = arg_0.as_list(data.clone()).await?;
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
-        let return_value = remove_index(&mut list, &indices, data.clone()).await;
-
-        update_if_var(var, Value::List(list), data)?;
-
-        return_value
-    } else {
-        let i = arg_1.as_usize(data.clone()).await?;
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut text = arg_0.as_text(data.clone()).await?;
-        match text.chars().nth(i) {
-            Some(_) => {
-                let return_value = text.remove(i).to_string();
-
-                update_if_var(var, Value::Text(text), data)?;
-
-                Ok(Value::Text(return_value))
+    match array {
+        Value::Text(mut text) => {
+            let mut key = key;
+            if key.len() > 1 {
+                return Err(CommandError::IndexOutOfBounds);
             }
-            None => Err(CommandError::IndexOutOfBounds),
+            let Some(i) = key.pop() else {
+                return Err(CommandError::IndexOutOfBounds);
+            };
+            let i = i.as_usize(data.clone()).await?;
+
+            match text.chars().nth(i) {
+                Some(_) => {
+                    let return_value = text.remove(i).to_string();
+
+                    update_if_var(var, Value::Text(text), data)?;
+
+                    Ok(Value::Text(return_value))
+                }
+                None => Err(CommandError::IndexOutOfBounds),
+            }
         }
+        Value::List(mut list) => {
+            let return_value = remove_index(&mut list, &key, data.clone()).await;
+
+            update_if_var(var, Value::List(list), data)?;
+
+            return_value
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
+// TODO allow this to swap matrix values
 pub const SWAP_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
-    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
-    ArgRule::new(ArgPos::Index(2), INDEX_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
+    ArgRule::new(ArgPos::Index(2), MAYBE_LIST_KEY),
 ];
 pub const SWAP: &str = "swap";
 pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let mut arg_0 = values.pop_front().unwrap();
+
     let arg_1 = values.pop_front().unwrap().as_int(data.clone()).await?;
     let arg_2 = values.pop_front().unwrap().as_int(data.clone()).await?;
 
-    if arg_0.as_literal_type(data.clone()) == FslType::List {
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut list = arg_0.as_list(data.clone()).await?;
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-        let a_value = get_index(&list, &[Value::Int(arg_1)], data.clone()).await?;
-        let b_value = get_index(&list, &[Value::Int(arg_2)], data.clone()).await?;
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
-        let tmp = get_mut_index(&mut list, &[Value::Int(arg_1)], data.clone()).await?;
-        match tmp {
-            Some(tmp) => {
-                *tmp = b_value;
+    match array {
+        Value::Text(text) => {
+            let a = arg_1 as usize;
+            let b = arg_2 as usize;
+
+            let mut chars: Vec<char> = text.chars().collect();
+
+            if a < chars.len() && b < chars.len() {
+                chars.swap(a, b);
+                let text = chars.iter().collect();
+                update_if_var(var, Value::Text(text), data)?;
+                Ok(Value::None)
+            } else {
+                Err(CommandError::IndexOutOfBounds)
             }
-            None => return Err(CommandError::IndexOutOfBounds),
         }
+        Value::List(mut list) => {
+            let a_value = get_index(&list, &[Value::Int(arg_1)], data.clone()).await?;
+            let b_value = get_index(&list, &[Value::Int(arg_2)], data.clone()).await?;
 
-        let tmp = get_mut_index(&mut list, &[Value::Int(arg_2)], data.clone()).await?;
-        match tmp {
-            Some(tmp) => {
-                *tmp = a_value;
+            let tmp = get_mut_index(&mut list, &[Value::Int(arg_1)], data.clone()).await?;
+            match tmp {
+                Some(tmp) => {
+                    *tmp = b_value;
+                }
+                None => return Err(CommandError::IndexOutOfBounds),
             }
-            None => return Err(CommandError::IndexOutOfBounds),
-        }
 
-        update_if_var(var, Value::List(list), data)?;
+            let tmp = get_mut_index(&mut list, &[Value::Int(arg_2)], data.clone()).await?;
+            match tmp {
+                Some(tmp) => {
+                    *tmp = a_value;
+                }
+                None => return Err(CommandError::IndexOutOfBounds),
+            }
 
-        Ok(Value::None)
-    } else {
-        let a = arg_1 as usize;
-        let b = arg_2 as usize;
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let text = arg_0.as_text(data.clone()).await?;
+            update_if_var(var, Value::List(list), data)?;
 
-        let mut chars: Vec<char> = text.chars().collect();
-
-        if a < chars.len() && b < chars.len() {
-            chars.swap(a, b);
-            let text = chars.iter().collect();
-            update_if_var(var, Value::Text(text), data)?;
             Ok(Value::None)
-        } else {
-            Err(CommandError::IndexOutOfBounds)
         }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
 pub const REPLACE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
-    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
-    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
+    ArgRule::new(ArgPos::Index(2), NOT_NONE),
 ];
 pub const REPLACE: &str = "replace";
 pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1462,65 +1394,68 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
-    if arg_0.as_literal_type(data.clone()) == FslType::List {
-        let accesor = arg_1
-            .as_raw(data.clone(), &[FslType::List, FslType::Int])
-            .await?;
+    let key = arg_1.as_key(data.clone(), LIST_KEY).await?;
 
-        let indices = if accesor.is_type(FslType::List) {
-            accesor.as_list(data.clone()).await?
-        } else {
-            vec![accesor]
-        };
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-        let new_value = arg_2.as_raw(data.clone(), NON_NONE_VALUES).await?;
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-
-        let mut list = arg_0.as_list(data.clone()).await?;
-
-        let old_value = get_mut_index(&mut list, &indices, data.clone()).await?;
-
-        let return_value = match old_value {
-            Some(old_value) => {
-                let return_value = old_value.clone();
-                *old_value = new_value;
-                return_value
+    match array {
+        Value::Text(text) => {
+            let mut key = key;
+            if key.len() > 1 {
+                return Err(CommandError::IndexOutOfBounds);
             }
-            None => return Err(CommandError::IndexOutOfBounds),
-        };
+            let Some(i) = key.pop() else {
+                return Err(CommandError::IndexOutOfBounds);
+            };
+            let i = i.as_usize(data.clone()).await?;
+            let new_ch = arg_2.as_text(data.clone()).await?;
 
-        update_if_var(var, Value::List(list), data.clone())?;
+            let mut chars: Vec<char> = text.chars().collect();
+            let old_ch;
+            match chars.get_mut(i) {
+                Some(ch) => {
+                    old_ch = ch.clone();
+                    *ch = new_ch.chars().nth(0).ok_or(CommandError::InvalidArgument(
+                        "text replacement value must be a single character".to_string(),
+                    ))?;
 
-        Ok(return_value)
-    } else {
-        let i = arg_1.as_usize(data.clone()).await?;
-        let new_ch = arg_2.as_text(data.clone()).await?;
-
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let text = arg_0.as_text(data.clone()).await?;
-        let mut chars: Vec<char> = text.chars().collect();
-        let old_ch;
-        match chars.get_mut(i) {
-            Some(ch) => {
-                old_ch = ch.clone();
-                *ch = new_ch.chars().nth(0).ok_or(CommandError::InvalidArgument(
-                    "text replacement value must be a single character".to_string(),
-                ))?;
-
-                let text = chars.iter().collect();
-                update_if_var(var, Value::Text(text), data)?;
-                Ok(Value::Text(old_ch.to_string()))
+                    let text = chars.iter().collect();
+                    update_if_var(var, Value::Text(text), data)?;
+                    Ok(Value::Text(old_ch.to_string()))
+                }
+                None => Err(CommandError::IndexOutOfBounds),
             }
-            None => Err(CommandError::IndexOutOfBounds),
         }
+        Value::List(mut list) => {
+            let new_value = arg_2.as_raw(data.clone(), NOT_NONE).await?;
+
+            let old_value = get_mut_index(&mut list, &key, data.clone()).await?;
+
+            let return_value = match old_value {
+                Some(old_value) => {
+                    let return_value = old_value.clone();
+                    *old_value = new_value;
+                    return_value
+                }
+                None => return Err(CommandError::IndexOutOfBounds),
+            };
+
+            update_if_var(var, Value::List(list), data.clone())?;
+
+            Ok(return_value)
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
 pub const INSERT_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
-    ArgRule::new(ArgPos::Index(1), INDEX_TYPES),
-    ArgRule::new(ArgPos::Index(2), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
+    ArgRule::new(ArgPos::Index(2), NOT_NONE),
 ];
 pub const INSERT: &str = "insert";
 pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1530,51 +1465,53 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
-    if arg_0.as_literal_type(data.clone()) == FslType::List {
-        let accesor = arg_1
-            .as_raw(data.clone(), &[FslType::List, FslType::Int])
-            .await?;
+    let key = arg_1.as_key(data.clone(), LIST_KEY).await?;
 
-        let indices = if accesor.is_type(FslType::List) {
-            accesor.as_list(data.clone()).await?
-        } else {
-            vec![accesor]
-        };
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-        let value_to_insert = arg_2.as_raw(data.clone(), NON_NONE_VALUES).await?;
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
+    match array {
+        Value::Text(mut text) => {
+            let mut key = key;
+            if key.len() > 1 {
+                return Err(CommandError::IndexOutOfBounds);
+            }
+            let Some(i) = key.pop() else {
+                return Err(CommandError::IndexOutOfBounds);
+            };
+            let i = i.as_usize(data.clone()).await?;
 
-        let mut list = arg_0.as_list(data.clone()).await?;
+            let text_to_insert = arg_2.as_text(data.clone()).await?;
 
-        insert_at_index(&mut list, &indices, value_to_insert, data.clone()).await?;
+            if i <= text.len() {
+                text.insert_str(i, &text_to_insert);
+            } else {
+                return Err(CommandError::IndexOutOfBounds);
+            }
 
-        update_if_var(var, Value::List(list), data)?;
+            let return_value = update_if_var(var, Value::Text(text), data)?;
 
-        Ok(Value::None)
-    } else {
-        let i = arg_1.as_usize(data.clone()).await?;
-        let text_to_insert = arg_2.as_text(data.clone()).await?;
-
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-
-        let mut text = arg_0.as_text(data.clone()).await?;
-
-        if i <= text.len() {
-            text.insert_str(i, &text_to_insert);
-        } else {
-            return Err(CommandError::IndexOutOfBounds);
+            Ok(return_value)
         }
+        Value::List(mut list) => {
+            let value_to_insert = arg_2.as_raw(data.clone(), NOT_NONE).await?;
 
-        update_if_var(var, Value::Text(text), data)?;
+            insert_at_index(&mut list, &key, value_to_insert, data.clone()).await?;
 
-        Ok(Value::None)
+            let return_value = update_if_var(var, Value::List(list), data)?;
+
+            Ok(return_value)
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
 pub const PUSH_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const PUSH: &str = "push";
 pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1584,54 +1521,68 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let arg_1 = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NON_NONE_VALUES)
+        .as_raw(data.clone(), NOT_NONE)
         .await?;
 
-    if arg_0.as_literal_type(data.clone()) == FslType::List {
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut list = arg_0.as_list(data.clone()).await?;
-        list.push(arg_1);
-        update_if_var(var, Value::List(list), data)?;
-        Ok(Value::None)
-    } else {
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut text = arg_0.as_text(data.clone()).await?;
-        let text_to_push = arg_1.as_text(data.clone()).await?;
-        text.push_str(&text_to_push);
-        update_if_var(var, Value::Text(text), data)?;
-        Ok(Value::None)
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
+
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
+
+    match array {
+        Value::Text(mut text) => {
+            let text_to_push = arg_1.as_text(data.clone()).await?;
+            text.push_str(&text_to_push);
+
+            update_if_var(var, Value::Text(text), data)?;
+            Ok(Value::None)
+        }
+        Value::List(mut list) => {
+            list.push(arg_1);
+
+            update_if_var(var, Value::List(list), data)?;
+            Ok(Value::None)
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
-pub const POP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
+pub const POP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
 pub const POP: &str = "pop";
 pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
     let mut arg_0 = values.pop_front().unwrap();
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
-    if arg_0.as_literal_type(data.clone()) == FslType::List {
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut list = arg_0.as_list(data.clone()).await?;
-        let return_value = list.pop().unwrap_or(Value::None);
-        update_if_var(var, Value::List(list), data)?;
-        Ok(return_value)
-    } else {
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut text = arg_0.as_text(data.clone()).await?;
-        let return_value = text
-            .pop()
-            .map(|c| Value::Text(c.to_string()))
-            .unwrap_or(Value::None);
-        update_if_var(var, Value::Text(text), data)?;
-        Ok(return_value)
+    match array {
+        Value::Text(mut text) => {
+            let popped_text = text
+                .pop()
+                .map(|c| Value::Text(c.to_string()))
+                .unwrap_or(Value::None);
+
+            update_if_var(var, Value::Text(text), data)?;
+            Ok(popped_text)
+        }
+        Value::List(mut list) => {
+            let popped_value = list.pop().unwrap_or(Value::None);
+
+            update_if_var(var, Value::List(list), data)?;
+            Ok(popped_value)
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
     }
 }
 
 pub const SEARCH_REPLACE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
-    ArgRule::new(ArgPos::Index(1), TEXT_TYPES),
-    ArgRule::new(ArgPos::Index(2), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
+    ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
+    ArgRule::new(ArgPos::Index(2), MAYBE_TEXT),
 ];
 pub const SEARCH_REPLACE: &str = "search_replace";
 pub async fn search_replace(
@@ -1650,18 +1601,14 @@ pub async fn search_replace(
 
     let input = input.replace(&from, &to);
 
-    if var.is_none() {
-        Ok(Value::Text(input))
-    } else {
-        update_if_var(var, Value::Text(input), data)?;
-        Ok(Value::None)
-    }
+    let return_value = update_if_var(var, Value::Text(input), data)?;
+    Ok(return_value)
 }
 
 pub const SLICE_REPLACE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
-    ArgRule::new(ArgPos::Index(1), LIST_TYPES),
-    ArgRule::new(ArgPos::Index(2), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
+    ArgRule::new(ArgPos::Index(1), MAYBE_LIST),
+    ArgRule::new(ArgPos::Index(2), MAYBE_TEXT),
 ];
 pub const SLICE_REPLACE: &str = "slice_replace";
 pub async fn slice_replace(
@@ -1697,44 +1644,41 @@ pub async fn slice_replace(
 
     input.replace_range(from..to, &with);
 
-    if var.is_none() {
-        Ok(Value::Text(input))
-    } else {
-        update_if_var(var, Value::Text(input), data)?;
-        Ok(Value::None)
-    }
+    let return_value = update_if_var(var, Value::Text(input), data)?;
+    Ok(return_value)
 }
 
-pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ARRAY_TYPES)];
+pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
 pub const REVERSE: &str = "reverse";
 pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
-    let array = values.pop_front().unwrap();
+    let mut arg_0 = values.pop_front().unwrap();
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
+    let array = arg_0
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
 
-    let return_value = manipulate_array(
-        array,
-        data.clone(),
-        async |list| {
+    match array {
+        Value::Text(text) => {
+            let text = text.chars().rev().collect();
+
+            let return_value = update_if_var(var, Value::Text(text), data)?;
+            Ok(return_value)
+        }
+        Value::List(mut list) => {
             list.reverse();
-            Ok(None)
-        },
-        async |text| {
-            let mut chars = text.chars().collect::<Vec<char>>();
-            chars.reverse();
-            text.clear();
-            text.push_str(&chars.iter().collect::<String>());
-            Ok(None)
-        },
-    )
-    .await?;
 
-    Ok(return_value)
+            let return_value = update_if_var(var, Value::List(list), data)?;
+            Ok(return_value)
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
+    }
 }
 
 pub const INC_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::Var]),
-    ArgRule::new(ArgPos::OptionalIndex(1), WHOLE_NUMBER_TYPES),
+    ArgRule::new(ArgPos::OptionalIndex(1), MAYBE_INT),
 ];
 pub const INC: &str = "inc";
 pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1762,7 +1706,7 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const DEC_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), &[FslType::Var]),
-    ArgRule::new(ArgPos::OptionalIndex(1), WHOLE_NUMBER_TYPES),
+    ArgRule::new(ArgPos::OptionalIndex(1), MAYBE_INT),
 ];
 pub const DEC: &str = "dec";
 pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1789,8 +1733,8 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const CONTAINS_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), ARRAY_TYPES),
-    ArgRule::new(ArgPos::Index(1), NON_NONE_VALUES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const CONTAINS: &str = "contains";
 pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1798,16 +1742,17 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let array = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NON_NONE_VALUES)
+        .as_raw(data.clone(), NOT_NONE)
         .await?;
     let item = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NON_NONE_VALUES)
+        .as_raw(data.clone(), NOT_NONE)
         .await?;
+
     if let Value::List(list) = array {
         for value in list {
-            let raw_value = value.as_raw(data.clone(), NON_NONE_VALUES).await?;
+            let raw_value = value.as_raw(data.clone(), NOT_NONE).await?;
             if let Ok(is_eq) = raw_value.eq(&item)
                 && is_eq
             {
@@ -1822,7 +1767,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
 }
 
 pub const STARTS_WITH_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const STARTS_WITH: &str = "starts_with";
@@ -1837,7 +1782,7 @@ pub async fn starts_with(
 }
 
 pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const ENDS_WITH: &str = "ends_with";
@@ -1851,7 +1796,7 @@ pub async fn ends_with(
     Ok(arg_0.ends_with(&arg_1).into())
 }
 
-pub const CONCAT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
+pub const CONCAT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const CONCAT: &str = "concat";
 pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
@@ -1865,7 +1810,7 @@ pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     Ok(cat_string.into())
 }
 
-pub const CAPITALIZE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const CAPITALIZE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const CAPITALIZE: &str = "capitalize";
 pub async fn capitalize(
     command: Command,
@@ -1883,7 +1828,7 @@ pub async fn capitalize(
     }
 }
 
-pub const UPPERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const UPPERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const UPPERCASE: &str = "uppercase";
 pub async fn uppercase(
     command: Command,
@@ -1894,7 +1839,7 @@ pub async fn uppercase(
     Ok(text.to_uppercase().into())
 }
 
-pub const LOWERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const LOWERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const LOWERCASE: &str = "lowercase";
 pub async fn lowercase(
     command: Command,
@@ -1906,8 +1851,8 @@ pub async fn lowercase(
 }
 
 pub const TRIM_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
-    ArgRule::new(ArgPos::Index(1), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
+    ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const TRIM: &str = "trim";
 pub async fn trim(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
@@ -1918,7 +1863,7 @@ pub async fn trim(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     Ok(text.trim_matches(chars.as_slice()).into())
 }
 
-pub const IS_NUMBER_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const IS_NUMBER_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
 pub const IS_NUMBER: &str = "is_number";
 pub async fn is_number(
     command: Command,
@@ -1931,19 +1876,19 @@ pub async fn is_number(
     Ok(Value::Bool(is_int || is_float))
 }
 
-pub const IS_NONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ALL_TYPES)];
+pub const IS_NONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
 pub const IS_NONE: &str = "is_none";
 pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let value = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), ALL_TYPES)
+        .as_raw(data.clone(), ANY)
         .await?;
     Ok(Value::Bool(value.is_type(FslType::None)))
 }
 
-pub const IS_ALPHA_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const IS_ALPHA_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const IS_ALPHA: &str = "is_alpha";
 pub async fn is_alpha(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
@@ -1957,7 +1902,7 @@ pub async fn is_alpha(command: Command, data: Arc<InterpreterData>) -> Result<Va
     }
 }
 
-pub const IS_ALPHA_EN_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const IS_ALPHA_EN_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const IS_ALPHA_EN: &str = "is_alpha_en";
 pub async fn is_alpha_en(
     command: Command,
@@ -1981,7 +1926,7 @@ pub async fn is_alpha_en(
     }
 }
 
-pub const IS_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const IS_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const IS_WHITESPACE: &str = "is_whitespace";
 pub async fn is_whitespace(
     command: Command,
@@ -1998,7 +1943,7 @@ pub async fn is_whitespace(
     }
 }
 
-pub const REMOVE_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), TEXT_TYPES)];
+pub const REMOVE_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
 pub async fn remove_whitespace(
     command: Command,
@@ -2010,7 +1955,7 @@ pub async fn remove_whitespace(
 }
 
 pub const SPLIT_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), TEXT_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
     ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
 ];
 pub const SPLIT: &str = "split";
@@ -2029,8 +1974,8 @@ pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value
 }
 
 pub const RANDOM_RANGE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES),
-    ArgRule::new(ArgPos::Index(1), NUMERIC_TYPES),
+    ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER),
+    ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const RANDOM_RANGE: &str = "random_range";
 pub async fn random_range(
@@ -2061,7 +2006,7 @@ pub async fn random_range(
 }
 
 pub const SLEEP: &str = "sleep";
-pub const SLEEP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), NUMERIC_TYPES)];
+pub const SLEEP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER)];
 pub async fn sleep(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
     let delay = values.pop_front().unwrap().as_float(data).await?;
@@ -2084,7 +2029,7 @@ pub async fn sleep(command: Command, data: Arc<InterpreterData>) -> Result<Value
     }
 }
 
-pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LIST_TYPES)];
+pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_LIST)];
 pub const RANDOM_ENTRY: &str = "random_entry";
 pub async fn random_entry(
     command: Command,
@@ -2100,7 +2045,7 @@ pub async fn random_entry(
     }
 }
 
-pub const SHUFFLE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), LIST_TYPES)];
+pub const SHUFFLE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_LIST)];
 pub const SHUFFLE: &str = "shuffle";
 pub async fn shuffle(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
@@ -2226,7 +2171,7 @@ fn substitute_args(
     Ok(())
 }
 
-pub const RUN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NON_NONE_VALUES)];
+pub const RUN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
 
@@ -2263,7 +2208,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
             | FslType::None
             | FslType::Var => {}
             FslType::List | FslType::Map | FslType::Command => {
-                value = value.as_raw(data.clone(), NON_NONE_VALUES).await?;
+                value = value.as_raw(data.clone(), NOT_NONE).await?;
             }
         }
         var_map.insert(var_labels.pop_front().unwrap(), value);
@@ -2305,14 +2250,14 @@ pub async fn r#continue(_: Command, data: Arc<InterpreterData>) -> Result<Value,
     Ok(Value::None)
 }
 
-pub const RETURN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::OptionalIndex(0), ALL_TYPES)];
+pub const RETURN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::OptionalIndex(0), ANY)];
 pub const RETURN: &str = "return";
 pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let return_value = command.take_args().pop_front();
 
     match return_value {
         Some(value) => {
-            let value = value.as_raw(data.clone(), LITERAL_VALUES).await?;
+            let value = value.as_raw(data.clone(), LITERAL).await?;
             data.flags.return_flag.store(true, Ordering::Relaxed);
             Ok(value)
         }
@@ -3141,6 +3086,15 @@ pub mod tests {
     #[tokio::test]
     async fn reverse_text() {
         test_interpreter(r#"print("hello".reverse())"#, "olleh").await;
+    }
+
+    #[tokio::test]
+    async fn reverse_var() {
+        test_interpreter(
+            r#"hello.store("hello") print(hello.reverse()) print(hello)"#,
+            "olleholleh",
+        )
+        .await;
     }
 
     #[tokio::test]
