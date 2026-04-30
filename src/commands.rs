@@ -749,13 +749,10 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         return Err(CommandError::ElseIfMustBePairedWithElse);
     }
 
+    data.flags.if_flag.store(true, Ordering::Relaxed);
     if condition.as_bool(data.clone()).await? == true {
-        data.flags.if_flag.store(true, Ordering::Relaxed);
-
         return then_command.as_command()?.execute(data.clone()).await;
     } else {
-        data.flags.if_flag.store(true, Ordering::Relaxed);
-
         for else_if_command in else_if_commands {
             let result = else_if_command.as_command()?.execute(data.clone()).await;
             if let Ok(result) = result {
@@ -788,8 +785,6 @@ pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         return Err(CommandError::ThenOutsideIf);
     }
 
-    data.flags.if_flag.store(false, Ordering::Relaxed);
-
     let mut return_value = Value::None;
     for value in values {
         return_value = value.as_raw(data.clone(), ALL_TYPES).await?;
@@ -813,8 +808,6 @@ pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Val
         return Err(CommandError::ElseIfOutsideIf);
     }
 
-    data.flags.if_flag.store(false, Ordering::Relaxed);
-
     if arg_0.as_bool(data.clone()).await? {
         let mut return_value = Value::None;
         for value in values {
@@ -836,8 +829,6 @@ pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     if !in_if {
         return Err(CommandError::ElseOutsideIf);
     }
-
-    data.flags.if_flag.store(false, Ordering::Relaxed);
 
     let mut return_value = Value::None;
     for value in values {
@@ -4150,6 +4141,60 @@ pub mod tests {
                     )
                 "#,
             "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn nested_if_else() {
+        test_interpreter(
+            r#"
+            if(true,
+                then(
+                    if(false,
+                        then(
+                            print("false")
+                        )
+                        else(
+                            print("true")
+                        )
+                    )
+                )
+            )
+            "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn nested_if_else_2() {
+        test_interpreter(
+            r#"
+            secret_number.store(5)
+		    guess.store(5)
+		    if(guess.is_number()
+		    	then(
+		    		if(guess.lt(secret_number)
+		    			then(
+		    				print("Too low, guess again.")
+		    			)
+		    			else_if(guess.gt(secret_number)
+		    			    debug("shouldn't be here")
+		    				print("Too high, guess again.")
+		    			)
+		    			else(
+		    				print("You win")
+		    				exit()
+		    			)
+		    		)
+		    	)
+		    	else(
+		    		print("That's not a valid number")
+		    	)
+		    )
+            "#,
+            "You win",
         )
         .await;
     }
