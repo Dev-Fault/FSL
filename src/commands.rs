@@ -731,7 +731,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             }
             ELSE_IF => {
                 requires_else = true;
-                else_if_commands.push_front(command);
+                else_if_commands.push_back(command);
             }
             ELSE => {
                 if else_command.is_some() {
@@ -739,7 +739,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
                 }
                 else_command = Some(command)
             }
-            _ => return Err(CommandError::DivisionByZero),
+            _ => return Err(CommandError::InvalidCommandInIf),
         }
     }
 
@@ -749,10 +749,15 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         return Err(CommandError::ElseIfMustBePairedWithElse);
     }
 
-    data.flags.if_flag.store(true, Ordering::Relaxed);
     if condition.as_bool(data.clone()).await? == true {
-        return then_command.as_command()?.execute(data.clone()).await;
+        // if_flag must be set AFTER condition is evaluated (could be command containing it's own ifs)
+        data.flags.if_flag.store(true, Ordering::Relaxed);
+        let result = then_command.as_command()?.execute(data.clone()).await;
+        data.flags.if_flag.store(false, Ordering::Relaxed);
+        return result;
     } else {
+        data.flags.if_flag.store(true, Ordering::Relaxed);
+
         for else_if_command in else_if_commands {
             let result = else_if_command.as_command()?.execute(data.clone()).await;
             if let Ok(result) = result {
@@ -4195,6 +4200,153 @@ pub mod tests {
 		    )
             "#,
             "You win",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn nested_if_2() {
+        test_interpreter(
+            r#"
+        test.def(
+            if(true,
+                then(
+                    print("test")
+                )
+            )
+        )
+
+        while(true,
+            if(true,
+                then(
+                    if(true,
+                        then(
+                            test()
+                        )
+                    )
+                )
+            )
+            exit()
+        )
+        "#,
+            "test",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn nested_else_if_chain() {
+        test_interpreter(
+            r#"
+            if(false,
+                then(print("if"))
+                else_if(false,
+                    print("else_if_1")
+                )
+                else_if(false,
+                    print("else_if_2")
+                )
+                else_if(true,
+                    print("else_if_3")
+                )
+                else_if(false,
+                    print("else_if_4")
+                )
+                else(print("else"))
+            )
+        "#,
+            "else_if_3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn nested_if_else_if_chain() {
+        test_interpreter(
+            r#"
+            if(false,
+                then(print("outer_if"))
+                else_if(false,
+                    if(false,
+                        then(print("wrong"))
+                        else_if(true,
+                            print("inner_else_if")
+                        )
+                        else(print("wrong"))
+                    )
+                )
+                else_if(true,
+                    if(false,
+                        then(print("wrong"))
+                        else_if(false,
+                            print("wrong")
+                        )
+                        else_if(true,
+                            print("correct")
+                        )
+                        else(print("wrong"))
+                    )
+                )
+                else(print("wrong"))
+            )
+        "#,
+            "correct",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn else_if_chain_first_true() {
+        test_interpreter(
+            r#"
+            if(false,
+                then(print("wrong"))
+                else_if(true,
+                    print("else_if_1")
+                )
+                else_if(true,
+                    print("else_if_2")
+                )
+                else_if(true,
+                    print("else_if_3")
+                )
+                else(print("wrong"))
+            )
+        "#,
+            "else_if_1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn lone_then_after_if() {
+        let err = test_interpreter_err_type(
+            r#"
+            if(true,
+                then(print("a"))
+            )
+            then(print("b"))
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterErrorType::Command(CommandError::ThenOutsideIf)
+        ))
+    }
+
+    #[tokio::test]
+    async fn sequential_ifs_after_false() {
+        test_interpreter(
+            r#"
+            if(false,
+                then(print("wrong"))
+            )
+            if(true,
+                then(print("correct"))
+            )
+        "#,
+            "correct",
         )
         .await;
     }
