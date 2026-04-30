@@ -92,16 +92,11 @@ pub enum CommandError {
     Custom(String),
     SwitchMustHaveSingleFallbackCommand,
     ConditionFalse,
-    CaseOutsideOfSwitch,
-    FallbackOutsideOfSwitch,
     MultipleThenCommandsInIf,
     MultipleElseCommandsInIf,
     InvalidCommandInIf,
     IfMustContainThen,
     ElseIfMustBePairedWithElse,
-    ThenOutsideIf,
-    ElseIfOutsideIf,
-    ElseOutsideIf,
     InvalidArgument(String),
 }
 
@@ -127,10 +122,6 @@ impl std::fmt::Display for CommandError {
                 "switch statement must have single fallback command"
             }
             CommandError::ConditionFalse => "",
-            CommandError::CaseOutsideOfSwitch => "case can only be called inside switch command",
-            CommandError::FallbackOutsideOfSwitch => {
-                "fallback can only be called inside switch command"
-            }
             CommandError::MultipleThenCommandsInIf => "if can only contain one then command",
             CommandError::MultipleElseCommandsInIf => "if can only contain one else command",
             CommandError::InvalidCommandInIf => {
@@ -140,9 +131,6 @@ impl std::fmt::Display for CommandError {
             CommandError::ElseIfMustBePairedWithElse => {
                 "else if command(s) must be paired with else command"
             }
-            CommandError::ThenOutsideIf => "then can only be called in if command",
-            CommandError::ElseIfOutsideIf => "else_if can only be called in if command",
-            CommandError::ElseOutsideIf => "else can only be called in if command",
             CommandError::InvalidArgument(error_text) => error_text,
             CommandError::OutputLimitExceeded => "memory limit for print exceeded",
         };

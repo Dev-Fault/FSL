@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 
 pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
@@ -18,8 +21,6 @@ pub struct InterpreterFlags {
     pub break_flag: AtomicBool,
     pub continue_flag: AtomicBool,
     pub return_flag: AtomicBool,
-    pub if_flag: AtomicBool,
-    pub switch_flag: AtomicBool,
 }
 
 impl Default for InterpreterFlags {
@@ -28,15 +29,13 @@ impl Default for InterpreterFlags {
             break_flag: Default::default(),
             continue_flag: Default::default(),
             return_flag: Default::default(),
-            if_flag: Default::default(),
-            switch_flag: Default::default(),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct InterpreterData {
-    pub(crate) call_stack: tokio::sync::Mutex<Vec<String>>,
+    pub(crate) call_stack: tokio::sync::Mutex<Vec<Arc<str>>>,
 
     pub output_limit: Option<usize>,
     pub output: tokio::sync::Mutex<String>,
@@ -95,9 +94,9 @@ impl InterpreterData {
         }
     }
 
-    pub async fn push_call(&self, command_label: &str) {
+    pub async fn push_call(&self, command_label: Arc<str>) {
         let mut call_stack = self.call_stack.lock().await;
-        call_stack.push(command_label.to_string());
+        call_stack.push(command_label.clone());
     }
 
     pub async fn pop_call(&self) {

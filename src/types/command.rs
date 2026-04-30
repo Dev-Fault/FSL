@@ -267,7 +267,7 @@ impl Command {
             return Ok(Value::None);
         }
 
-        data.push_call(&self.label).await;
+        data.push_call(self.label.clone()).await;
 
         let handler = self.handler.clone();
         match handler.handle(self, data.clone()).await {

@@ -571,11 +571,14 @@ pub const SCOPE_RULES: &'static [ArgRule] =
 pub const SCOPE: &str = "";
 pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
+    data.vars.push();
+    let mut return_value = Value::None;
     for value in values {
-        value.as_command()?.execute(data.clone()).await?;
+        return_value = value.as_command()?.execute(data.clone()).await?;
     }
+    data.vars.pop();
 
-    Ok(Value::None)
+    Ok(return_value)
 }
 
 pub const EQ_RULES: &'static [ArgRule] = &[
@@ -755,14 +758,9 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 
     if condition.as_bool(data.clone()).await? == true {
-        // if_flag must be set AFTER condition is evaluated (could be command containing it's own ifs)
-        data.flags.if_flag.store(true, Ordering::Relaxed);
         let result = then_command.as_command()?.execute(data.clone()).await;
-        data.flags.if_flag.store(false, Ordering::Relaxed);
         return result;
     } else {
-        data.flags.if_flag.store(true, Ordering::Relaxed);
-
         for else_if_command in else_if_commands {
             let result = else_if_command.as_command()?.execute(data.clone()).await;
             if let Ok(result) = result {
@@ -779,7 +777,6 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             return else_command.as_command()?.execute(data.clone()).await;
         }
 
-        data.flags.if_flag.store(false, Ordering::Relaxed);
         return Ok(Value::None);
     }
 }
@@ -788,12 +785,6 @@ pub const THEN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), AL
 pub const THEN: &str = "then";
 pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
-
-    let in_if = data.flags.if_flag.load(Ordering::Relaxed);
-
-    if !in_if {
-        return Err(CommandError::ThenOutsideIf);
-    }
 
     let mut return_value = Value::None;
     for value in values {
@@ -812,12 +803,6 @@ pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
 
-    let in_if = data.flags.if_flag.load(Ordering::Relaxed);
-
-    if !in_if {
-        return Err(CommandError::ElseIfOutsideIf);
-    }
-
     if arg_0.as_bool(data.clone()).await? {
         let mut return_value = Value::None;
         for value in values {
@@ -833,12 +818,6 @@ pub const ELSE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), AL
 pub const ELSE: &str = "else";
 pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
-
-    let in_if = data.flags.if_flag.load(Ordering::Relaxed);
-
-    if !in_if {
-        return Err(CommandError::ElseOutsideIf);
-    }
 
     let mut return_value = Value::None;
     for value in values {
@@ -860,8 +839,6 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 .is_some_and(|label| label == CASE)
         });
 
-    data.flags.switch_flag.store(true, Ordering::Relaxed);
-
     if fallback.len() == 1
         && let Some(fallback) = fallback.pop_front()
     {
@@ -874,14 +851,10 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 continue;
             }
 
-            data.flags.switch_flag.store(false, Ordering::Relaxed);
-
             return result;
         }
 
         let result = fallback.as_command()?.execute(data.clone()).await;
-
-        data.flags.switch_flag.store(false, Ordering::Relaxed);
 
         return result;
     } else {
@@ -898,12 +871,6 @@ pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap();
 
-    let in_switch = data.flags.switch_flag.load(Ordering::Relaxed);
-
-    if !in_switch {
-        return Err(CommandError::CaseOutsideOfSwitch);
-    }
-
     if arg_0.as_bool(data.clone()).await? {
         let mut return_value = Value::None;
         for value in values {
@@ -919,12 +886,6 @@ pub const FALLBACK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0)
 pub const FALLBACK: &str = "fallback";
 pub async fn fallback(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
-
-    let in_switch = data.flags.switch_flag.load(Ordering::Relaxed);
-
-    if !in_switch {
-        return Err(CommandError::FallbackOutsideOfSwitch);
-    }
 
     let mut return_value = Value::None;
     for value in values {
@@ -4091,45 +4052,39 @@ pub mod tests {
 
     #[tokio::test]
     async fn then_outside_if() {
-        assert!(
-            interpreter_throws_err(
-                r#"
-                    then(
-                        print(true)
-                    )
-                "#,
-                InterpreterErrorType::Command(CommandError::ThenOutsideIf).into()
-            )
-            .await
-        );
+        test_interpreter(
+            r#"
+                then(
+                    print(true)
+                )
+            "#,
+            "true",
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn else_if_outside_if() {
-        assert!(
-            interpreter_throws_err(
-                r#"
-                    else_if(true,
-                        print(true)
-                    )
-                "#,
-                InterpreterErrorType::Command(CommandError::ElseIfOutsideIf).into()
-            )
-            .await
-        );
+        test_interpreter(
+            r#"
+                else_if(true,
+                    print(true)
+                )
+            "#,
+            "true",
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn else_outside_if() {
-        assert!(
-            interpreter_throws_err(
-                r#"
-                    else(print(true))
-                "#,
-                InterpreterErrorType::Command(CommandError::ElseOutsideIf).into()
-            )
-            .await
-        );
+        test_interpreter(
+            r#"
+                else(print(true))
+            "#,
+            "true",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -4325,19 +4280,16 @@ pub mod tests {
 
     #[tokio::test]
     async fn lone_then_after_if() {
-        let err = test_interpreter_err_type(
+        test_interpreter(
             r#"
             if(true,
                 then(print("a"))
             )
             then(print("b"))
             "#,
+            "ab",
         )
         .await;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::ThenOutsideIf)
-        ))
     }
 
     #[tokio::test]
@@ -4483,33 +4435,27 @@ pub mod tests {
 
     #[tokio::test]
     async fn case_outside_switch() {
-        let err = test_interpreter_err_type(
+        test_interpreter(
             r#"
                 case(true,
                     print(0)
                 )
             "#,
+            "0",
         )
         .await;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::CaseOutsideOfSwitch)
-        ))
     }
 
     #[tokio::test]
     async fn fallback_oustide_of_switch() {
-        let err = test_interpreter_err_type(
+        test_interpreter(
             r#"
                 fallback(
                     print(0)
                 )
             "#,
+            "0",
         )
         .await;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::FallbackOutsideOfSwitch)
-        ))
     }
 }
