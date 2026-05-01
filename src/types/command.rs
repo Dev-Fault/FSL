@@ -140,6 +140,10 @@ impl Command {
         self.args
     }
 
+    pub fn pop_front_arg(&mut self) -> Option<Value> {
+        self.args.pop_front()
+    }
+
     pub fn get_args(&self) -> &VecDeque<Value> {
         &self.args
     }

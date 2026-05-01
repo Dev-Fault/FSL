@@ -726,7 +726,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let condition = values.pop_front().unwrap();
 
     let mut then_command: Option<Value> = None;
-    let mut else_if_commands: VecDeque<Value> = VecDeque::new();
+    let mut else_ifs: VecDeque<Value> = VecDeque::new();
     let mut else_command: Option<Value> = None;
 
     let mut requires_else = false;
@@ -742,7 +742,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             }
             ELSE_IF => {
                 requires_else = true;
-                else_if_commands.push_back(command);
+                else_ifs.push_back(command);
             }
             ELSE => {
                 if else_command.is_some() {
@@ -764,14 +764,15 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         let result = then_command.as_command()?.execute(data.clone()).await;
         return result;
     } else {
-        for else_if_command in else_if_commands {
-            let result = else_if_command.as_command()?.execute(data.clone()).await;
-            if let Ok(result) = result {
-                return Ok(result);
-            } else if let Err(CommandError::ConditionFalse) = result {
-                continue;
+        for else_if in else_ifs {
+            let mut else_if = else_if.as_command()?;
+            let condition = else_if.pop_front_arg().unwrap();
+            let condition = condition.as_bool(data.clone()).await?;
+
+            if condition == true {
+                return else_if.execute(data.clone()).await;
             } else {
-                return result;
+                continue;
             }
         }
 
@@ -784,57 +785,17 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 }
 
-pub const THEN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
-pub const THEN: &str = "then";
-pub async fn then(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let values = command.take_args();
-
-    let mut return_value = Value::None;
-    for value in values {
-        return_value = value.as_raw(data.clone(), ANY).await?;
-    }
-
-    Ok(return_value)
-}
-
-pub const ELSE_IF_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAYBE_BOOL),
-    ArgRule::new(ArgPos::AnyFrom(1), ANY),
+pub const SWITCH_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), ANY),
+    ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
-pub const ELSE_IF: &str = "else_if";
-pub async fn else_if(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
-
-    if arg_0.as_bool(data.clone()).await? {
-        let mut return_value = Value::None;
-        for value in values {
-            return_value = value.as_raw(data.clone(), ANY).await?;
-        }
-        return Ok(return_value);
-    } else {
-        Err(CommandError::ConditionFalse)
-    }
-}
-
-pub const ELSE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
-pub const ELSE: &str = "else";
-pub async fn r#else(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let values = command.take_args();
-
-    let mut return_value = Value::None;
-    for value in values {
-        return_value = value.as_raw(data.clone(), ANY).await?;
-    }
-
-    Ok(return_value)
-}
-
-pub const SWITCH_RULES: &'static [ArgRule] =
-    &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
 pub const SWITCH: &str = "switch";
 pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let commands = command.take_args();
+    let mut args = command.take_args();
+    let expression = args.pop_front().unwrap();
+    let expression = expression.as_raw(data.clone(), ANY).await?;
+    let commands = args;
+
     let (cases, mut fallback): (VecDeque<Value>, VecDeque<Value>) =
         commands.into_iter().partition(|statement| {
             statement
@@ -846,15 +807,15 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         && let Some(fallback) = fallback.pop_front()
     {
         for case in cases {
-            let result = case.as_command()?.execute(data.clone()).await;
-            if let Ok(result) = result {
-                return Ok(result);
-            }
-            if let Err(CommandError::ConditionFalse) = result {
+            let mut case = case.as_command()?;
+            let value = case.pop_front_arg().unwrap();
+            let value = value.as_raw(data.clone(), ANY).await?;
+
+            if value == expression {
+                return case.execute(data.clone()).await;
+            } else {
                 continue;
             }
-
-            return result;
         }
 
         let result = fallback.as_command()?.execute(data.clone()).await;
@@ -865,37 +826,20 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     }
 }
 
-pub const CASE_RULES: &'static [ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAYBE_BOOL),
-    ArgRule::new(ArgPos::AnyFrom(1), ANY),
-];
+pub const BLOCK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub const CASE: &str = "case";
-pub async fn case(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    let arg_0 = values.pop_front().unwrap();
-
-    if arg_0.as_bool(data.clone()).await? {
-        let mut return_value = Value::None;
-        for value in values {
-            return_value = value.as_raw(data.clone(), ANY).await?;
-        }
-        return Ok(return_value);
-    } else {
-        Err(CommandError::ConditionFalse)
-    }
-}
-
-pub const FALLBACK_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub const FALLBACK: &str = "fallback";
-pub async fn fallback(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+pub const THEN: &str = "then";
+pub const ELSE_IF: &str = "else_if";
+pub const ELSE: &str = "else";
+pub async fn block(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let values = command.take_args();
 
     let mut return_value = Value::None;
     for value in values {
         return_value = value.as_raw(data.clone(), ANY).await?;
     }
-
-    Ok(return_value)
+    return Ok(return_value);
 }
 
 pub const WHILE_RULES: &'static [ArgRule] = &[
@@ -4286,11 +4230,11 @@ pub mod tests {
     async fn switch_statement() {
         test_interpreter(
             r#"
-                switch(
-                    case(true,
+                switch("hello".index(1),
+                    case("h",
                         print(0)
                     )
-                    case(false,
+                    case("e",
                         print(1)
                     )
                     fallback(
@@ -4298,7 +4242,7 @@ pub mod tests {
                     )
                 )
             "#,
-            "0",
+            "1",
         )
         .await;
     }
@@ -4308,14 +4252,14 @@ pub mod tests {
         test_interpreter(
             r#"
                 print(
-                    switch(
-                        case(true,
+                    switch(0,
+                        case(0,
                             print(0)
                             print(1)
                             print(2)
                             3
                         )
-                        case(false,
+                        case(1,
                             print(1)
                         )
                         fallback(
@@ -4333,11 +4277,11 @@ pub mod tests {
     async fn switch_statement_second_case() {
         test_interpreter(
             r#"
-                switch(
-                    case(false,
+                switch(add(1,1),
+                    case(1,
                         print(0)
                     )
-                    case(true,
+                    case(2,
                         print(1)
                     )
                     fallback(
@@ -4354,7 +4298,7 @@ pub mod tests {
     async fn switch_statement_fallback() {
         test_interpreter(
             r#"
-                switch(
+                switch(true,
                     case(false,
                         print(0)
                     )
@@ -4375,7 +4319,7 @@ pub mod tests {
     async fn switch_statement_no_fallback() {
         let err = test_interpreter_err_type(
             r#"
-                switch(
+                switch(true,
                     case(false,
                         print(0)
                     )
@@ -4396,7 +4340,7 @@ pub mod tests {
     async fn switch_statement_no_case() {
         test_interpreter(
             r#"
-                switch(
+                switch(true,
                     fallback(
                         print(0)
                     )
@@ -4405,6 +4349,42 @@ pub mod tests {
             "0",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn nested_switch() {
+        test_interpreter(
+            r#"
+                switch(
+                    switch(true,
+                        case(true, 1)
+                        fallback(2)
+                    ),
+                    case(1, print("correct"))
+                    fallback(print("wrong"))
+                )
+            "#,
+            "correct",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn switch_multiple_fallbacks() {
+        let err = test_interpreter_err_type(
+            r#"
+                switch(true,
+                    case(false, print("wrong"))
+                    fallback(print("first"))
+                    fallback(print("second"))
+                )
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterErrorType::Command(CommandError::SwitchMustHaveSingleFallbackCommand)
+        ))
     }
 
     #[tokio::test]
