@@ -1314,7 +1314,6 @@ pub const REMOVE_RULES: &[ArgRule] = &[
 pub const REMOVE: &str = "remove";
 pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    dbg!(&values);
     let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
@@ -1804,7 +1803,6 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
         .unwrap()
         .as_raw(data.clone(), NOT_NONE)
         .await?;
-    dbg!(&item);
 
     match collection {
         Value::Text(text) => {
