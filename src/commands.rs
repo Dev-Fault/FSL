@@ -445,9 +445,9 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let var_label = &var;
 
     data.vars
-        .update_or_create_mut_var(var_label, value_to_store.clone())?;
+        .update_or_create_mut_var(var_label, value_to_store)?;
 
-    Ok(value_to_store)
+    Ok(data.vars.get_var_value(&var_label)?)
 }
 
 pub const LOCAL_RULES: &[ArgRule] = &[
@@ -457,16 +457,14 @@ pub const LOCAL_RULES: &[ArgRule] = &[
 pub const LOCAL: &str = "local";
 pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let var = values
-        .pop_front()
-        .unwrap()
-        .as_var_label(data.clone())
-        .await?;
+    let var = values.pop_front().unwrap();
+    let var = var.as_var_label(data.clone()).await?;
+
     let value_to_store = values.pop_front().unwrap();
+    let value_to_store = value_to_store.as_raw(data.clone(), ANY).await?;
     let var_label = &var;
 
-    data.vars
-        .insert_mut_var(var_label, value_to_store.as_raw(data.clone(), ANY).await?)?;
+    data.vars.insert_mut_var(var_label, value_to_store)?;
 
     Ok(data.vars.get_var_value(var_label)?)
 }
@@ -478,16 +476,14 @@ pub const UPDATE_RULES: &[ArgRule] = &[
 pub const UPDATE: &str = "update";
 pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let var = values
-        .pop_front()
-        .unwrap()
-        .as_var_label(data.clone())
-        .await?;
+    let var = values.pop_front().unwrap();
+    let var = var.as_var_label(data.clone()).await?;
+
     let value_to_store = values.pop_front().unwrap();
+    let value_to_store = value_to_store.as_raw(data.clone(), ANY).await?;
     let var_label = &var;
 
-    data.vars
-        .update_var(var_label, value_to_store.as_raw(data.clone(), ANY).await?)?;
+    data.vars.update_var(var_label, value_to_store)?;
 
     Ok(data.vars.get_var_value(var_label)?)
 }
@@ -499,16 +495,14 @@ pub const CONST_RULES: &[ArgRule] = &[
 pub const CONST: &str = "const";
 pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let var = values
-        .pop_front()
-        .unwrap()
-        .as_var_label(data.clone())
-        .await?;
+    let var = values.pop_front().unwrap();
+    let var = var.as_var_label(data.clone()).await?;
+
     let value_to_store = values.pop_front().unwrap();
+    let value_to_store = value_to_store.as_raw(data.clone(), ANY).await?;
     let var_label = &var;
 
-    data.vars
-        .insert_const_var(var_label, value_to_store.as_raw(data.clone(), ANY).await?)?;
+    data.vars.insert_const_var(var_label, value_to_store)?;
 
     Ok(data.vars.get_var_value(var_label)?)
 }
@@ -566,7 +560,7 @@ pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value
         output.push_str(&value.as_text(data.clone()).await?);
     }
 
-    println!("{}", output);
+    dbg!("{}", output);
     Ok(Value::None)
 }
 
@@ -3432,6 +3426,27 @@ pub mod tests {
             test()
             i.print()
             "#,
+            "13\n0",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn store_before_local() {
+        test_interpreter(
+            r#"
+            i.store(0)
+
+            test.def(
+                i.store(12)
+                i.local(10)
+                i.inc()
+                i.print("\n")
+            )
+
+            test()
+            i.print()
+            "#,
             "11\n12",
         )
         .await;
@@ -3502,7 +3517,10 @@ pub mod tests {
             "#,
         )
         .await;
-        assert!(matches!(err, InterpreterErrorType::Command(_)))
+        assert!(matches!(
+            err,
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_)))
+        ))
     }
 
     #[tokio::test]
@@ -4435,6 +4453,23 @@ pub mod tests {
         assert!(matches!(
             err,
             InterpreterErrorType::Command(CommandError::ValueError(ValueError::FailedParse(_))),
+        ))
+    }
+
+    #[tokio::test]
+    async fn out_of_scope_var() {
+        let err = test_interpreter_err_type(
+            r#"
+                (
+                    test.store("stuff")
+                )
+                test.print()
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_))),
         ))
     }
 }

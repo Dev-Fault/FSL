@@ -321,11 +321,11 @@ impl VarStack {
         )))
     }
 
-    /// Updates or creates a var preffering outer scope
+    /// Updates the nearest matching variable searching from local to global scope, or creates it locally if no match is found.
     pub fn update_or_create_mut_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
         let stack = self.stack.lock().unwrap();
         let value_size = value.mem_size();
-        for var_map in stack.iter() {
+        for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {
                 self.deallocate_mem(var_map.get_var_size(label));
                 var_map.insert_mut_value(label, value)?;
