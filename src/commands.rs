@@ -7,6 +7,7 @@ use std::{
 
 use async_recursion::async_recursion;
 use rand::seq::SliceRandom;
+use tokio_stream::StreamExt;
 
 use crate::{
     InterpreterData,
@@ -69,6 +70,8 @@ pub const MAYBE_NUMBER: &[FslType] = &[
     FslType::Var,
     FslType::Text,
 ];
+
+pub const NUMBER: &[FslType] = &[FslType::Int, FslType::Float, FslType::Text];
 
 pub const MAYBE_INT: &[FslType] = &[FslType::Int, FslType::Command, FslType::Var, FslType::Text];
 
@@ -150,51 +153,29 @@ pub fn update_if_var(
     Ok(value)
 }
 
-#[async_recursion]
-async fn contains_float(
-    values: &VecDeque<Value>,
-    data: Arc<InterpreterData>,
-) -> Result<bool, CommandError> {
-    for value in values {
-        match value {
-            Value::Float(_) => return Ok(true),
-            Value::Text(text) => {
-                if text.contains('.') {
-                    match text.parse::<f64>() {
-                        Ok(_) => return Ok(true),
-                        Err(_) => continue,
-                    }
-                }
-            }
-            Value::Var(var) => {
-                if data.clone().vars.get_var_type(&var) == FslType::Float {
-                    return Ok(true);
-                }
-            }
-            Value::Command(command) => {
-                return Ok(contains_float(command.get_args(), data).await?);
-            }
-            _ => {
-                continue;
-            }
-        }
-    }
-    Ok(false)
+fn contains_float(values: &[Value]) -> bool {
+    values.iter().any(|v| v.is_type(FslType::Float))
 }
 
 pub const ADD: &str = "add";
 pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let values = command.take_args();
-    if contains_float(&values, data.clone()).await? {
+    let values = tokio_stream::iter(command.take_args());
+    let values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    if contains_float(&values) {
         let mut sum: f64 = 0.0;
         for value in values {
-            sum = sum + value.as_float(data.clone()).await?;
+            let value = value.as_float(data.clone()).await?;
+            sum = sum + value;
         }
         Ok(Value::Float(sum))
     } else {
         let mut sum: i64 = 0;
         for value in values {
-            sum = sum + value.as_int(data.clone()).await?;
+            let value = value.as_int(data.clone()).await?;
+            sum = sum.checked_add(value).ok_or(CommandError::Overflow)?;
         }
         Ok(Value::Int(sum))
     }
@@ -202,17 +183,24 @@ pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const SUB: &str = "sub";
 pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    if contains_float(&values, data.clone()).await? {
-        let mut diff = values.pop_front().unwrap().as_float(data.clone()).await?;
-        while let Some(value) = values.pop_front() {
+    let values = tokio_stream::iter(command.take_args());
+    let values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    let contains_float = contains_float(&values);
+    let mut iter = values.into_iter();
+    if contains_float {
+        let mut diff = iter.next().unwrap().as_float(data.clone()).await?;
+        for value in iter {
             diff = diff - value.as_float(data.clone()).await?;
         }
         Ok(Value::Float(diff))
     } else {
-        let mut diff = values.pop_front().unwrap().as_int(data.clone()).await?;
-        while let Some(value) = values.pop_front() {
-            diff = diff - value.as_int(data.clone()).await?;
+        let mut diff = iter.next().unwrap().as_int(data.clone()).await?;
+        for value in iter {
+            let value = value.as_int(data.clone()).await?;
+            diff = diff.checked_sub(value).ok_or(CommandError::Overflow)?;
         }
         Ok(Value::Int(diff))
     }
@@ -220,17 +208,24 @@ pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const MUL: &str = "mul";
 pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    if contains_float(&values, data.clone()).await? {
-        let mut product = values.pop_front().unwrap().as_float(data.clone()).await?;
-        while let Some(value) = values.pop_front() {
+    let values = tokio_stream::iter(command.take_args());
+    let values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    let contains_float = contains_float(&values);
+    let mut iter = values.into_iter();
+    if contains_float {
+        let mut product = iter.next().unwrap().as_float(data.clone()).await?;
+        for value in iter {
             product = product * value.as_float(data.clone()).await?;
         }
         Ok(Value::Float(product))
     } else {
-        let mut product = values.pop_front().unwrap().as_int(data.clone()).await?;
-        while let Some(value) = values.pop_front() {
-            product = product * value.as_int(data.clone()).await?;
+        let mut product = iter.next().unwrap().as_int(data.clone()).await?;
+        for value in iter {
+            let value = value.as_int(data.clone()).await?;
+            product = product.checked_mul(value).ok_or(CommandError::Overflow)?;
         }
         Ok(Value::Int(product))
     }
@@ -238,10 +233,16 @@ pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const DIV: &str = "div";
 pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    if contains_float(&values, data.clone()).await? {
-        let mut quotient = values.pop_front().unwrap().as_float(data.clone()).await?;
-        while let Some(value) = values.pop_front() {
+    let values = tokio_stream::iter(command.take_args());
+    let values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    let contains_float = contains_float(&values);
+    let mut iter = values.into_iter();
+    if contains_float {
+        let mut quotient = iter.next().unwrap().as_float(data.clone()).await?;
+        for value in iter {
             let value = value.as_float(data.clone()).await?;
             if value == 0.0 {
                 return Err(CommandError::DivisionByZero);
@@ -250,13 +251,13 @@ pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         }
         Ok(Value::Float(quotient))
     } else {
-        let mut quotient = values.pop_front().unwrap().as_int(data.clone()).await?;
-        while let Some(value) = values.pop_front() {
+        let mut quotient = iter.next().unwrap().as_int(data.clone()).await?;
+        for value in iter {
             let value = value.as_int(data.clone()).await?;
             if value == 0 {
                 return Err(CommandError::DivisionByZero);
             };
-            quotient = quotient / value;
+            quotient = quotient.checked_div(value).ok_or(CommandError::Overflow)?;
         }
         Ok(Value::Int(quotient))
     }
@@ -605,15 +606,19 @@ pub const GT_RULES: &[ArgRule; 2] = &[
 ];
 pub const GT: &str = "gt";
 pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    if contains_float(&values, data.clone()).await? {
-        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+    let values = tokio_stream::iter(command.take_args());
+    let mut values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    if contains_float(&values) {
+        let b = values.pop().unwrap().as_float(data.clone()).await?;
+        let a = values.pop().unwrap().as_float(data.clone()).await?;
 
         Ok(Value::Bool(a > b))
     } else {
-        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop().unwrap().as_int(data.clone()).await?;
+        let a = values.pop().unwrap().as_int(data.clone()).await?;
 
         Ok(Value::Bool(a > b))
     }
@@ -625,15 +630,19 @@ pub const GTOE_RULES: &[ArgRule; 2] = &[
 ];
 pub const GTOE: &str = "gtoe";
 pub async fn gtoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    if contains_float(&values, data.clone()).await? {
-        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+    let values = tokio_stream::iter(command.take_args());
+    let mut values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    if contains_float(&values) {
+        let b = values.pop().unwrap().as_float(data.clone()).await?;
+        let a = values.pop().unwrap().as_float(data.clone()).await?;
 
         Ok(Value::Bool(a >= b))
     } else {
-        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop().unwrap().as_int(data.clone()).await?;
+        let a = values.pop().unwrap().as_int(data.clone()).await?;
 
         Ok(Value::Bool(a >= b))
     }
@@ -645,15 +654,19 @@ pub const LT_RULES: &[ArgRule; 2] = &[
 ];
 pub const LT: &str = "lt";
 pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-    if contains_float(&values, data.clone()).await? {
-        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+    let values = tokio_stream::iter(command.take_args());
+    let mut values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    if contains_float(&values) {
+        let b = values.pop().unwrap().as_float(data.clone()).await?;
+        let a = values.pop().unwrap().as_float(data.clone()).await?;
 
         Ok(Value::Bool(a < b))
     } else {
-        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop().unwrap().as_int(data.clone()).await?;
+        let a = values.pop().unwrap().as_int(data.clone()).await?;
 
         Ok(Value::Bool(a < b))
     }
@@ -665,16 +678,19 @@ pub const LTOE_RULES: &'static [ArgRule] = &[
 ];
 pub const LTOE: &str = "ltoe";
 pub async fn ltoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
-
-    if contains_float(&values, data.clone()).await? {
-        let a = values.pop_front().unwrap().as_float(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_float(data.clone()).await?;
+    let values = tokio_stream::iter(command.take_args());
+    let mut values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
+    if contains_float(&values) {
+        let b = values.pop().unwrap().as_float(data.clone()).await?;
+        let a = values.pop().unwrap().as_float(data.clone()).await?;
 
         Ok(Value::Bool(a <= b))
     } else {
-        let a = values.pop_front().unwrap().as_int(data.clone()).await?;
-        let b = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let b = values.pop().unwrap().as_int(data.clone()).await?;
+        let a = values.pop().unwrap().as_int(data.clone()).await?;
 
         Ok(Value::Bool(a <= b))
     }
@@ -1919,11 +1935,15 @@ pub async fn random_range(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, CommandError> {
-    let mut values = command.take_args();
+    let values = tokio_stream::iter(command.take_args());
+    let mut values = values
+        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .collect::<Result<Vec<Value>, _>>()
+        .await?;
 
-    if contains_float(&values, data.clone()).await? {
-        let min = values.pop_front().unwrap().as_float(data.clone()).await?;
-        let max = values.pop_front().unwrap().as_float(data.clone()).await?;
+    if contains_float(&values) {
+        let max = values.pop().unwrap().as_float(data.clone()).await?;
+        let min = values.pop().unwrap().as_float(data.clone()).await?;
         if min >= max {
             Err(CommandError::InvalidRange)
         } else if !min.is_finite() || !max.is_finite() {
@@ -1932,8 +1952,8 @@ pub async fn random_range(
             Ok(rand::random_range(min..=max).into())
         }
     } else {
-        let min = values.pop_front().unwrap().as_int(data.clone()).await?;
-        let max = values.pop_front().unwrap().as_int(data.clone()).await?;
+        let max = values.pop().unwrap().as_int(data.clone()).await?;
+        let min = values.pop().unwrap().as_int(data.clone()).await?;
         if min >= max {
             Err(CommandError::InvalidRange)
         } else {
@@ -2345,6 +2365,19 @@ pub mod tests {
     async fn mod_float_and_int() {
         test_interpreter("print(mod(4, 2.0))", "0").await;
         test_interpreter("print(mod(4.0, 2))", "0").await;
+    }
+
+    #[tokio::test]
+    async fn ambiguous_add() {
+        test_interpreter(
+            r#"
+                two.def(return(2))
+                three_point_four.def(return(3.4))
+                print(add(two(), three_point_four()))
+            "#,
+            "5.4",
+        )
+        .await;
     }
 
     #[tokio::test]

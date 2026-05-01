@@ -98,6 +98,7 @@ pub enum CommandError {
     IfMustContainThen,
     ElseIfMustBePairedWithElse,
     InvalidArgument(String),
+    Overflow,
 }
 
 impl std::fmt::Display for CommandError {
@@ -133,6 +134,7 @@ impl std::fmt::Display for CommandError {
             }
             CommandError::InvalidArgument(error_text) => error_text,
             CommandError::OutputLimitExceeded => "memory limit for print exceeded",
+            CommandError::Overflow => "calculation resulted in overflow",
         };
 
         write!(f, "{}", output)
