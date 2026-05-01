@@ -75,6 +75,16 @@ pub const NUMBER: &[FslType] = &[FslType::Int, FslType::Float, FslType::Text];
 
 pub const MAYBE_INT: &[FslType] = &[FslType::Int, FslType::Command, FslType::Var, FslType::Text];
 
+pub const MAYBE_KEY: &[FslType] = &[
+    FslType::List,
+    FslType::Int,
+    FslType::Command,
+    FslType::Var,
+    FslType::Text,
+];
+
+pub const KEY: &[FslType] = &[FslType::List, FslType::Int, FslType::Text];
+
 pub const MAYBE_LIST_KEY: &[FslType] = &[
     FslType::List,
     FslType::Int,
@@ -98,6 +108,16 @@ pub const INDEXABLE: &[FslType] = &[FslType::List, FslType::Text];
 pub const MAYBE_LIST: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
 
 pub const MAYBE_MAP: &[FslType] = &[FslType::Map, FslType::Command, FslType::Var];
+
+pub const MAYBE_COLLECTION: &[FslType] = &[
+    FslType::Map,
+    FslType::List,
+    FslType::Text,
+    FslType::Command,
+    FslType::Var,
+];
+
+pub const COLLECTION: &[FslType] = &[FslType::Map, FslType::List, FslType::Text];
 
 pub const MAYBE_TEXT: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
 
@@ -1149,13 +1169,82 @@ async fn set_nested(
         ))),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
+            if let Some(_) = map.get(&key) {
+                let return_value = map.insert(key, value);
+                Ok(return_value.unwrap_or(Value::None))
+            } else {
+                Err(CommandError::ValueError(ValueError::NonExistantKey(
+                    format!("non existant key \"{}\" in map", key),
+                )))
+            }
+        }
+        [key, rest @ ..] => {
+            let key = key.clone().as_text(data.clone()).await?;
+            match map.get_mut(&key) {
+                Some(Value::Map(inner_map)) => set_nested(inner_map, rest, value, data).await,
+                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                    "Can't use key \"{}\" to access a value that is not a map",
+                    key
+                )))),
+                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
+                    format!("non existant key \"{}\" in map", key),
+                ))),
+            }
+        }
+    }
+}
+
+#[async_recursion]
+async fn remove_nested(
+    map: &mut HashMap<String, Value>,
+    keys: &[Value],
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
+    match keys {
+        [] => Err(CommandError::ValueError(ValueError::NotAMap(
+            "".to_string(),
+        ))),
+        [key] => {
+            let key = key.clone().as_text(data.clone()).await?;
+            let return_value = map.remove(&key);
+            Ok(return_value.unwrap_or(Value::None))
+        }
+        [key, rest @ ..] => {
+            let key = key.clone().as_text(data.clone()).await?;
+            match map.get_mut(&key) {
+                Some(Value::Map(inner_map)) => remove_nested(inner_map, rest, data).await,
+                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                    "Can't use key \"{}\" to access a value that is not a map",
+                    key
+                )))),
+                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
+                    format!("non existant key \"{}\" in map", key),
+                ))),
+            }
+        }
+    }
+}
+
+#[async_recursion]
+async fn insert_nested(
+    map: &mut HashMap<String, Value>,
+    keys: &[Value],
+    value: Value,
+    data: Arc<InterpreterData>,
+) -> Result<Value, CommandError> {
+    match keys {
+        [] => Err(CommandError::ValueError(ValueError::NotAMap(
+            "".to_string(),
+        ))),
+        [key] => {
+            let key = key.clone().as_text(data.clone()).await?;
             let return_value = map.insert(key, value);
             Ok(return_value.unwrap_or(Value::None))
         }
         [key, rest @ ..] => {
             let key = key.clone().as_text(data.clone()).await?;
             match map.get_mut(&key) {
-                Some(Value::Map(inner_map)) => set_nested(inner_map, rest, value, data).await,
+                Some(Value::Map(inner_map)) => insert_nested(inner_map, rest, value, data).await,
                 Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
                     key
@@ -1219,22 +1308,21 @@ pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 }
 
 pub const REMOVE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(0), MAYBE_COLLECTION),
     ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
 ];
 pub const REMOVE: &str = "remove";
 pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
+    dbg!(&values);
     let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
 
-    let key = arg_1.as_key(data.clone(), LIST_KEY).await?;
+    let key = arg_1.as_key(data.clone(), KEY).await?;
 
     let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-    let array = arg_0
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
-        .await?;
+    let array = arg_0.as_raw(data.clone(), COLLECTION).await?;
 
     match array {
         Value::Text(mut text) => {
@@ -1262,6 +1350,13 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             let return_value = remove_index(&mut list, &key, data.clone()).await;
 
             update_if_var(var, Value::List(list), data)?;
+
+            return_value
+        }
+        Value::Map(mut map) => {
+            let return_value = remove_nested(&mut map, &key, data.clone()).await;
+
+            update_if_var(var, Value::Map(map), data)?;
 
             return_value
         }
@@ -1406,8 +1501,8 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
 }
 
 pub const INSERT_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
-    ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
+    ArgRule::new(ArgPos::Index(0), MAYBE_COLLECTION),
+    ArgRule::new(ArgPos::Index(1), MAYBE_KEY),
     ArgRule::new(ArgPos::Index(2), NOT_NONE),
 ];
 pub const INSERT: &str = "insert";
@@ -1418,13 +1513,11 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
 
-    let key = arg_1.as_key(data.clone(), LIST_KEY).await?;
+    let key = arg_1.as_key(data.clone(), KEY).await?;
 
     let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-    let array = arg_0
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
-        .await?;
+    let array = arg_0.as_raw(data.clone(), COLLECTION).await?;
 
     match array {
         Value::Text(mut text) => {
@@ -1455,6 +1548,15 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             insert_at_index(&mut list, &key, value_to_insert, data.clone()).await?;
 
             let return_value = update_if_var(var, Value::List(list), data)?;
+
+            Ok(return_value)
+        }
+        Value::Map(mut map) => {
+            let value_to_insert = arg_2.as_raw(data.clone(), NOT_NONE).await?;
+
+            insert_nested(&mut map, &key, value_to_insert, data.clone()).await?;
+
+            let return_value = update_if_var(var, Value::Map(map), data)?;
 
             Ok(return_value)
         }
@@ -1686,36 +1788,42 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const CONTAINS_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(0), MAYBE_COLLECTION),
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const CONTAINS: &str = "contains";
 pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut values = command.take_args();
-    let array = values
+    let collection = values
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NOT_NONE)
+        .as_raw(data.clone(), COLLECTION)
         .await?;
     let item = values
         .pop_front()
         .unwrap()
         .as_raw(data.clone(), NOT_NONE)
         .await?;
+    dbg!(&item);
 
-    if let Value::List(list) = array {
-        for value in list {
-            let raw_value = value.as_raw(data.clone(), NOT_NONE).await?;
-            if let Ok(is_eq) = raw_value.eq(&item)
-                && is_eq
-            {
-                return Ok(Value::Bool(true));
-            }
+    match collection {
+        Value::Text(text) => {
+            let item = &item.as_text(data).await?;
+            Ok(Value::Bool(text.contains(item)))
         }
-        return Ok(Value::Bool(false));
-    } else {
-        let text = array.as_text(data.clone()).await?;
-        return Ok(Value::Bool(text.contains(&item.as_text(data).await?)));
+        Value::List(list) => {
+            let iter = tokio_stream::iter(list.into_iter());
+            let list = iter
+                .then(|v| v.as_raw(data.clone(), NOT_NONE))
+                .collect::<Result<Vec<_>, _>>()
+                .await?;
+            Ok(Value::Bool(list.contains(&item)))
+        }
+        Value::Map(map) => {
+            let key = item.as_text(data).await?;
+            Ok(Value::Bool(map.contains_key(&key)))
+        }
+        _ => unreachable!("as_raw should enforce type"),
     }
 }
 
@@ -2627,6 +2735,16 @@ pub mod tests {
     async fn remove() {
         test_interpreter(r#"nums.store([1, 2, 3]) nums.remove(1).print()"#, "2").await;
         test_interpreter(r#"text.store("text") text.remove(1).print()"#, "e").await;
+        test_interpreter(
+            r#"player.store([name: "player", health: 100]) player.remove("name").print()"#,
+            "player",
+        )
+        .await;
+        test_interpreter(
+            r#"player.store([name: "player", health: 100, weapons: [sword: [name: "sword"] ] ]) player.weapons.sword.remove().name.get().print()"#,
+            "sword",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -2756,6 +2874,16 @@ pub mod tests {
         test_interpreter(r#"nums.store([1, 2, 3]) nums.contains(4).print()"#, "false").await;
         test_interpreter(r#"nums.store("123") nums.contains("2").print()"#, "true").await;
         test_interpreter(r#"nums.store("123") nums.contains("0").print()"#, "false").await;
+        test_interpreter(
+            r#"player.store([name: "player", health: 100]) player.contains("name").print()"#,
+            "true",
+        )
+        .await;
+        test_interpreter(
+            r#"player.store([name: "player", health: 100]) player.contains("weapon").print()"#,
+            "false",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -3664,6 +3792,44 @@ pub mod tests {
             "blah\nblah\njake",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn insert_map() {
+        test_interpreter(
+            r#"
+	            player.store([
+	                health: 100,
+	                dodge: 0,
+	                strength: 0
+	            ])
+	            player.insert("name", "player")
+	            player.get("name").print("\n")
+	            player.set("name", "jake").print("\n")
+	            player.get("name").print()
+            "#,
+            "player\nplayer\njake",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn set_none_map() {
+        let err = test_interpreter_err_type(
+            r#"
+	            player.store([
+	                health: 100,
+	                dodge: 0,
+	                strength: 0
+	            ])
+	            player.set("name", "jake").print("\n")
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            err,
+            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantKey(_)))
+        ))
     }
 
     #[tokio::test]
