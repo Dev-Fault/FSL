@@ -1,0 +1,12 @@
+[package]
+name = "fsl-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "fsl"
+path = "src/main.rs"
+
+[dependencies]
+fsl-core = { path = "../fsl-core"}
+
