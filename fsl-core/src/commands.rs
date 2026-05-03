@@ -1281,21 +1281,15 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let replacement_value = arg_2.as_raw(data.clone(), NOT_NONE).await?;
 
-    if arg_0.is_type(FslType::Var) {
-        let var = take_if_var(&mut arg_0, data.clone()).await?;
-        let mut map = arg_0.as_map(data.clone()).await?;
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-        let return_value = set_nested(&mut map, &key, replacement_value, data.clone()).await?;
+    let mut map = arg_0.as_map(data.clone()).await?;
 
-        update_if_var(var, Value::Map(map), data)?;
+    let return_value = set_nested(&mut map, &key, replacement_value, data.clone()).await?;
 
-        Ok(return_value)
-    } else {
-        let mut map = arg_0.as_map(data.clone()).await?;
+    update_if_var(var, Value::Map(map), data)?;
 
-        let return_value = set_nested(&mut map, &key, replacement_value, data.clone()).await?;
-        Ok(return_value)
-    }
+    Ok(return_value)
 }
 
 pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
