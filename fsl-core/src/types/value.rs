@@ -145,7 +145,7 @@ impl Value {
                     .as_int(data.clone())
                     .await
             }
-            Value::Text(value) => match value.parse::<i64>() {
+            Value::Text(value) => match value.trim().parse::<i64>() {
                 Ok(value) => Ok(value),
                 Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
             },

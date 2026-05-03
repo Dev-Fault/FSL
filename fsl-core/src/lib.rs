@@ -9,6 +9,10 @@ use crate::{
     commands::*,
     data::InterpreterData,
     error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
+    libraries::{
+        Library,
+        exec::{EXEC, EXEC_RULES, SH, SH_RULES},
+    },
     parser::{Expression, Parser},
     types::{
         command::{ArgRule, Command, CommandDefinition, Handler},
@@ -20,6 +24,7 @@ pub mod commands;
 pub mod data;
 pub mod error;
 mod lexer;
+pub mod libraries;
 mod parser;
 pub mod types;
 mod vars;
@@ -72,10 +77,25 @@ impl FslInterpreter {
         });
     }
 
+    pub async fn add_arg(&self, arg: String) {
+        let mut input = self.data.input.lock().await;
+        input.push(Value::Text(arg));
+    }
+
     /// Register command to interpreter allowing it to execute it, overwrites commands with same name if they exist
     pub fn register(&mut self, label: &'static str, rules: &'static [ArgRule], executor: Handler) {
         self.command_definitions
             .insert(label, CommandDefinition::new(label, rules, executor));
+    }
+
+    pub fn register_library(&mut self, library: Library) -> Result<(), InterpreterError> {
+        match library {
+            Library::Exec => {
+                self.register(EXEC, EXEC_RULES, Handler::from(libraries::exec::exec));
+                self.register(SH, SH_RULES, Handler::from(libraries::exec::sh));
+                Ok(())
+            }
+        }
     }
 
     /// Interprets plain fsl code
@@ -104,7 +124,6 @@ impl FslInterpreter {
                 } else {
                     match code_stack.pop() {
                         Some(code) => {
-                            self.reset_data();
                             match self.interpret(&code).await {
                                 Ok(eval) => match code_stack.last_mut() {
                                     Some(code) => code.push_str(&eval),
@@ -115,6 +134,7 @@ impl FslInterpreter {
                         }
                         None => {}
                     }
+                    self.reset_data();
                 }
             } else if code_depth == 0 {
                 output.push(c);
@@ -310,6 +330,7 @@ impl FslInterpreter {
                 (CLONE, CLONE_RULES, commands::clone),
                 (FREE, FREE_RULES, commands::free),
                 (PRINT, PRINT_RULES, commands::print),
+                (ARGS, ARGS_RULES, commands::args),
                 (DEBUG, DEBUG_RULES, commands::debug),
                 (SCOPE, SCOPE_RULES, commands::scope),
                 (EQ, EQ_RULES, commands::eq),

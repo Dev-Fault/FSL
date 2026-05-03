@@ -8,9 +8,11 @@ use std::{
 
 pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
 
+use tokio::sync::Mutex;
+
 use crate::{
     error::CommandError,
-    types::command::UserCommand,
+    types::{command::UserCommand, value::Value},
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
 
@@ -35,14 +37,15 @@ impl Default for InterpreterFlags {
 
 #[derive(Debug)]
 pub struct InterpreterData {
-    pub(crate) call_stack: tokio::sync::Mutex<Vec<Arc<str>>>,
+    pub(crate) call_stack: Mutex<Vec<Arc<str>>>,
 
+    pub input: Mutex<Vec<Value>>,
     pub output_limit: Option<usize>,
-    pub output: tokio::sync::Mutex<String>,
+    pub output: Mutex<String>,
 
     pub vars: VarStack,
 
-    pub user_commands: tokio::sync::Mutex<UserCommands>,
+    pub user_commands: Mutex<UserCommands>,
 
     pub loop_limit: Option<usize>,
     pub total_loops: AtomicUsize,
@@ -54,10 +57,11 @@ pub struct InterpreterData {
 impl InterpreterData {
     pub fn new() -> Self {
         InterpreterData {
-            output: tokio::sync::Mutex::new(String::new()),
+            input: Mutex::new(Vec::new()),
+            output: Mutex::new(String::new()),
             vars: VarStack::new_bounded(DEFAULT_MEMORY_LIMIT),
-            user_commands: tokio::sync::Mutex::new(UserCommands::new()),
-            call_stack: tokio::sync::Mutex::new(Vec::new()),
+            user_commands: Mutex::new(UserCommands::new()),
+            call_stack: Mutex::new(Vec::new()),
             loop_limit: Some(u16::MAX as usize),
             total_loops: AtomicUsize::new(0),
             loop_depth: AtomicUsize::new(0),
@@ -68,10 +72,11 @@ impl InterpreterData {
 
     pub fn new_unbounded() -> Self {
         InterpreterData {
-            output: tokio::sync::Mutex::new(String::new()),
+            input: Mutex::new(Vec::new()),
+            output: Mutex::new(String::new()),
             vars: VarStack::new_unbounded(),
-            user_commands: tokio::sync::Mutex::new(UserCommands::new()),
-            call_stack: tokio::sync::Mutex::new(Vec::new()),
+            user_commands: Mutex::new(UserCommands::new()),
+            call_stack: Mutex::new(Vec::new()),
             loop_limit: None,
             total_loops: AtomicUsize::new(0),
             loop_depth: AtomicUsize::new(0),

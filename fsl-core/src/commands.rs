@@ -571,6 +571,14 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
     Ok(Value::None)
 }
 
+pub const ARGS_RULES: &'static [ArgRule] = NO_ARGS;
+pub const ARGS: &str = "args";
+pub async fn args(_: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    let input = data.input.lock().await;
+    let arg_list = Value::List(input.clone());
+    Ok(arg_list)
+}
+
 pub const DEBUG_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const DEBUG: &str = "debug";
 pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {

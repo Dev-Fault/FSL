@@ -6,6 +6,7 @@ pub enum InterpreterErrorType {
     Parse(String),
     Command(CommandError),
     Value(ValueError),
+    Import(String),
     UnmatchedCurlyBraces,
 }
 
@@ -17,6 +18,7 @@ impl std::fmt::Display for InterpreterErrorType {
             InterpreterErrorType::Command(command_error) => &command_error.to_string(),
             InterpreterErrorType::Value(value_error) => &value_error.to_string(),
             InterpreterErrorType::UnmatchedCurlyBraces => "unmatched curly braces",
+            InterpreterErrorType::Import(output) => output,
         };
         write!(f, "{}", output)
     }
