@@ -49,8 +49,8 @@ pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, C
         .map_err(|e| CommandError::Custom(e.to_string()))?;
 
     if !output.status.success() {
-        let output = String::from_utf8_lossy(&output.stderr);
-        return Err(CommandError::Custom(format!("{output}")));
+        let err = String::from_utf8_lossy(&output.stderr);
+        eprintln!("{err}");
     }
 
     let output = String::from_utf8_lossy(&output.stdout);
