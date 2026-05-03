@@ -1448,6 +1448,7 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
+    let arg_2 = arg_2.as_raw(data.clone(), ANY).await?;
 
     let key = arg_1.as_key(data.clone(), LIST_KEY).await?;
 
@@ -1519,6 +1520,7 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut arg_0 = values.pop_front().unwrap();
     let arg_1 = values.pop_front().unwrap();
     let arg_2 = values.pop_front().unwrap();
+    let arg_2 = arg_2.as_raw(data.clone(), ANY).await?;
 
     let key = arg_1.as_key(data.clone(), KEY).await?;
 
@@ -1654,10 +1656,10 @@ pub async fn search_replace(
     let mut values = command.take_args();
     let mut arg_0 = values.pop_front().unwrap();
 
-    let var = take_if_var(&mut arg_0, data.clone()).await?;
-
     let from = values.pop_front().unwrap().as_text(data.clone()).await?;
     let to = values.pop_front().unwrap().as_text(data.clone()).await?;
+
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
 
     let input = arg_0.as_text(data.clone()).await?;
 
@@ -1680,10 +1682,10 @@ pub async fn slice_replace(
     let mut values = command.take_args();
     let mut arg_0 = values.pop_front().unwrap();
 
-    let var = take_if_var(&mut arg_0, data.clone()).await?;
-
     let mut range = values.pop_front().unwrap().as_list(data.clone()).await?;
     let with = values.pop_front().unwrap().as_text(data.clone()).await?;
+
+    let var = take_if_var(&mut arg_0, data.clone()).await?;
 
     let mut input = arg_0.as_text(data.clone()).await?;
 
