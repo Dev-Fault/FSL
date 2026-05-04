@@ -22,9 +22,10 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         .then(|v| v.as_text(data.clone()))
         .collect::<Result<Vec<String>, _>>()
         .await?;
-    let output = std::process::Command::new(program)
+    let output = tokio::process::Command::new(program)
         .args(args)
         .output()
+        .await
         .map_err(|e| CommandError::Custom(e.to_string()))?;
 
     if !output.status.success() {
@@ -42,10 +43,11 @@ pub const SH: &str = "sh";
 pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
     let mut args = command.take_args();
     let script = args.pop_front().unwrap().as_text(data).await?;
-    let output = std::process::Command::new("sh")
+    let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(script)
         .output()
+        .await
         .map_err(|e| CommandError::Custom(e.to_string()))?;
 
     if !output.status.success() {
