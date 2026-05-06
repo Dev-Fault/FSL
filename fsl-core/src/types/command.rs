@@ -34,6 +34,12 @@ impl ArgRule {
             valid_types,
         }
     }
+    pub const fn none() -> Self {
+        Self {
+            position: ArgPos::None,
+            valid_types: &[],
+        }
+    }
 }
 
 pub type InterpreterFut =

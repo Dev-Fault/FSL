@@ -23,6 +23,10 @@ async fn main() {
         eprintln!("{e}");
         return;
     };
+    if let Err(e) = interpreter.register_library(Library::Io) {
+        eprintln!("{e}");
+        return;
+    };
 
     let stdin = if io::stdin().is_terminal() {
         None

@@ -12,6 +12,7 @@ use crate::{
     libraries::{
         Library,
         exec::{EXEC, EXEC_RULES, SH, SH_RULES},
+        io::{ASK, ASK_RULES, SAY, SAY_RULES},
     },
     parser::{Expression, Parser},
     types::{
@@ -93,6 +94,11 @@ impl FslInterpreter {
             Library::Exec => {
                 self.register(EXEC, EXEC_RULES, Handler::from(libraries::exec::exec));
                 self.register(SH, SH_RULES, Handler::from(libraries::exec::sh));
+                Ok(())
+            }
+            Library::Io => {
+                self.register(SAY, SAY_RULES, Handler::from(libraries::io::say));
+                self.register(ASK, ASK_RULES, Handler::from(libraries::io::ask));
                 Ok(())
             }
         }

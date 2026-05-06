@@ -123,10 +123,7 @@ pub const MAYBE_TEXT: &[FslType] = &[FslType::Command, FslType::Var, FslType::Te
 
 pub const MAYBE_BOOL: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
 
-pub const NO_ARGS: &[ArgRule] = &[ArgRule {
-    position: ArgPos::None,
-    valid_types: &[],
-}];
+pub const NO_ARGS: &[ArgRule] = &[ArgRule::none()];
 
 pub const MATH_RULES: &[ArgRule] = &[
     ArgRule {
