@@ -14,7 +14,7 @@ use crate::{
         exec::{EXEC, EXEC_RULES, SH, SH_RULES},
         io::{ASK, ASK_RULES, SAY, SAY_RULES},
     },
-    parser::{Expression, Parser},
+    parser::{ArgType, Expression, Parser},
     types::{
         command::{ArgRule, Command, CommandDefinition, Handler},
         value::Value,
@@ -160,7 +160,7 @@ impl FslInterpreter {
     }
 
     async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, InterpreterError> {
-        let expressions = Parser::new().parse(code);
+        let expressions = Parser::new(code).parse();
         match expressions {
             Ok(expressions) => {
                 for expression in expressions {
@@ -212,12 +212,11 @@ impl FslInterpreter {
         output
     }
 
-    async fn parse_expression(&self, expression: Expression) -> Result<Value, InterpreterError> {
-        if let Some(command_def) = self
-            .command_definitions
-            .get(expression.name.as_str())
-            .cloned()
-        {
+    async fn parse_expression<'code>(
+        &self,
+        expression: Expression<'code>,
+    ) -> Result<Value, InterpreterError> {
+        if let Some(command_def) = self.command_definitions.get(expression.name).cloned() {
             let mut command = Command::from(command_def);
 
             let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
@@ -233,13 +232,16 @@ impl FslInterpreter {
             let user_command_label = {
                 let user_commands = self.data.user_commands.lock().await;
                 user_commands
-                    .get(expression.name.as_str())
+                    .get(expression.name)
                     .map(|uc| uc.label.clone())
             };
 
             if let Some(label) = user_command_label {
-                let mut command =
-                    Command::new(expression.name, RUN_RULES, Handler::from(commands::run));
+                let mut command = Command::new(
+                    expression.name.to_string(),
+                    RUN_RULES,
+                    Handler::from(commands::run),
+                );
 
                 let mut args = VecDeque::new();
                 args.push_back(Value::Var(label));
@@ -262,9 +264,12 @@ impl FslInterpreter {
     }
 
     #[async_recursion]
-    async fn parse_arg(&self, arg: parser::Arg) -> Result<Value, InterpreterError> {
+    async fn parse_arg<'code: 'async_recursion>(
+        &self,
+        arg: ArgType<'code>,
+    ) -> Result<Value, InterpreterError> {
         match arg {
-            parser::Arg::Number(number) => {
+            ArgType::Number(number) => {
                 if number.contains('.') {
                     match number.parse::<f64>() {
                         Ok(value) => Ok(Value::Float(value)),
@@ -288,13 +293,14 @@ impl FslInterpreter {
                     }
                 }
             }
-            parser::Arg::String(text) => Ok(Value::Text(text)),
-            parser::Arg::Keyword(keyword) => match keyword {
-                lexer::Keyword::True => Ok(Value::Bool(true)),
-                lexer::Keyword::False => Ok(Value::Bool(false)),
+            ArgType::String(cow) => Ok(Value::Text(cow.into_owned())),
+            ArgType::Keyword(keyword) => match keyword {
+                lexer::TRUE => Ok(Value::Bool(true)),
+                lexer::FALSE => Ok(Value::Bool(false)),
+                _ => unreachable!("parser should validate keywords"),
             },
-            parser::Arg::Var(var) => Ok(Value::Var(var)),
-            parser::Arg::List(args) => {
+            ArgType::Identifier(ident) => Ok(Value::Var(ident.to_string())),
+            ArgType::List(args) => {
                 let mut list: Vec<Value> = vec![];
                 for arg in args {
                     let parsed_arg = self.parse_arg(arg).await?;
@@ -302,17 +308,16 @@ impl FslInterpreter {
                 }
                 Ok(Value::List(list))
             }
-            parser::Arg::Expression(expression) => Ok(self.parse_expression(expression).await?),
-            parser::Arg::KeyValue(_, _) => unreachable!(),
-            parser::Arg::Map(map) => {
+            ArgType::Map(map) => {
                 let mut value_map = HashMap::new();
 
                 for (key, value) in map {
-                    value_map.insert(key, self.parse_arg(value).await?);
+                    value_map.insert(key.to_string(), self.parse_arg(value).await?);
                 }
 
                 Ok(Value::Map(value_map))
             }
+            ArgType::Expression(expression) => Ok(self.parse_expression(expression).await?),
         }
     }
 
@@ -454,7 +459,7 @@ mod interpreter {
         test_interpreter_not_err(
             "print(random_range(
             100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
-            100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+            123400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
             00000000000000000000000000000000000000000000000000000000000000000))",
         )
         .await;
@@ -1119,15 +1124,15 @@ mod interpreter {
     async fn chained_method_calls() {
         test_interpreter(
             r#"
-        text.store("  hello world  ")
-        result.store(
-            text
-                .remove_whitespace()
-                .uppercase()
-                .concat("!!!")
-        )
-        print(result)
-        "#,
+            text.store("  hello world  ")
+            result.store(
+                text
+                    .remove_whitespace()
+                    .uppercase()
+                    .concat("!!!")
+            )
+            print(result)
+            "#,
             "HELLOWORLD!!!",
         )
         .await;
@@ -1501,12 +1506,12 @@ mod interpreter {
     async fn zero_repetitions() {
         test_interpreter(
             r#"
-        counter.store(0)
-        repeat(0,
-            counter.store(add(counter, 1))
-        )
-        print(counter)
-        "#,
+            counter.store(0)
+            repeat(0,
+                counter.store(add(counter, 1))
+            )
+            print(counter)
+            "#,
             "0",
         )
         .await;
