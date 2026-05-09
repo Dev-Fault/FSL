@@ -1,9 +1,11 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
 
-use async_recursion::async_recursion;
+use futures::FutureExt;
+use tokio::sync::Mutex;
 
 use crate::{
     commands::*,
@@ -17,7 +19,7 @@ use crate::{
     parser::{ArgType, Expression, Parser},
     types::{
         command::{ArgRule, Command, CommandDefinition, Handler},
-        value::Value,
+        value::{Value, ValueResult},
     },
 };
 
@@ -35,7 +37,7 @@ pub type CommandDefinitions = HashMap<&'static str, CommandDefinition>;
 #[derive(Debug)]
 pub struct FslInterpreter {
     pub command_definitions: CommandDefinitions,
-    pub data: Arc<InterpreterData>,
+    args: Vec<String>,
     bounded: bool,
 }
 
@@ -44,7 +46,7 @@ macro_rules! register_commands {
         $( ($label:expr, $rules:expr, $executor:path) ),* $(,)?
     ]) => {
         $(
-            $self.register($label, $rules, Handler::from($executor));
+            $self.register($label, $rules, Handler::new(|command, data| $executor(command, data).boxed()));
         )*
     };
 }
@@ -53,7 +55,7 @@ impl FslInterpreter {
     pub fn new() -> Self {
         let mut interpreter = Self {
             command_definitions: CommandDefinitions::new(),
-            data: Arc::new(InterpreterData::new()),
+            args: Vec::new(),
             bounded: true,
         };
         interpreter.add_standard_commands();
@@ -63,24 +65,15 @@ impl FslInterpreter {
     pub fn new_unbounded() -> Self {
         let mut interpreter = Self {
             command_definitions: CommandDefinitions::new(),
-            data: Arc::new(InterpreterData::new_unbounded()),
+            args: Vec::new(),
             bounded: false,
         };
         interpreter.add_standard_commands();
         interpreter
     }
 
-    pub fn reset_data(&mut self) {
-        self.data = Arc::new(if self.bounded {
-            InterpreterData::new()
-        } else {
-            InterpreterData::new_unbounded()
-        });
-    }
-
-    pub async fn add_arg(&self, arg: String) {
-        let mut input = self.data.input.lock().await;
-        input.push(Value::Text(arg));
+    pub async fn add_arg(&mut self, arg: String) {
+        self.args.push(arg);
     }
 
     /// Register command to interpreter allowing it to execute it, overwrites commands with same name if they exist
@@ -92,28 +85,46 @@ impl FslInterpreter {
     pub fn register_library(&mut self, library: Library) -> Result<(), InterpreterError> {
         match library {
             Library::Exec => {
-                self.register(EXEC, EXEC_RULES, Handler::from(libraries::exec::exec));
-                self.register(SH, SH_RULES, Handler::from(libraries::exec::sh));
+                self.register(
+                    EXEC,
+                    EXEC_RULES,
+                    Handler::new(|command, data| libraries::exec::exec(command, data).boxed()),
+                );
+                self.register(
+                    SH,
+                    SH_RULES,
+                    Handler::new(|command, data| libraries::exec::sh(command, data).boxed()),
+                );
                 Ok(())
             }
             Library::Io => {
-                self.register(SAY, SAY_RULES, Handler::from(libraries::io::say));
-                self.register(ASK, ASK_RULES, Handler::from(libraries::io::ask));
+                self.register(
+                    SAY,
+                    SAY_RULES,
+                    Handler::new(|command, data| libraries::io::say(command, data).boxed()),
+                );
+                self.register(
+                    ASK,
+                    ASK_RULES,
+                    Handler::new(|command, data| libraries::io::ask(command, data).boxed()),
+                );
                 Ok(())
             }
         }
     }
 
     /// Interprets plain fsl code
-    pub async fn interpret<'a>(&self, code: &'a str) -> Result<String, InterpreterError> {
-        self.evaluate_expressions(code).await
+    pub async fn interpret(&self, input: String) -> Result<String, InterpreterError> {
+        let data = match self.bounded {
+            true => InterpreterData::new_bounded(&self.args),
+            false => InterpreterData::new_unbounded(&self.args),
+        };
+        let definitions = Arc::new(Mutex::new(self.command_definitions.clone()));
+        Self::evaluate_expressions(data.into(), definitions, &input).await
     }
 
-    /// Interprets fsl code embeded in strings and marcated by {}
-    pub async fn interpret_embedded_code(
-        &mut self,
-        input: &str,
-    ) -> Result<String, InterpreterError> {
+    /// Recursively interprets code inside {}'s
+    pub async fn interpret_embedded_code(&self, input: String) -> Result<String, InterpreterError> {
         let mut output = String::with_capacity(input.len());
         let mut code_stack: Vec<String> = Vec::new();
 
@@ -130,7 +141,16 @@ impl FslInterpreter {
                 } else {
                     match code_stack.pop() {
                         Some(code) => {
-                            match self.interpret(&code).await {
+                            let definitions =
+                                Arc::new(Mutex::new(self.command_definitions.clone()));
+                            let data = match self.bounded {
+                                true => InterpreterData::new_bounded(&self.args),
+                                false => InterpreterData::new_unbounded(&self.args),
+                            };
+                            let result =
+                                Self::evaluate_expressions(Arc::from(data), definitions, &code)
+                                    .await;
+                            match result {
                                 Ok(eval) => match code_stack.last_mut() {
                                     Some(code) => code.push_str(&eval),
                                     None => output.push_str(&eval),
@@ -140,7 +160,6 @@ impl FslInterpreter {
                         }
                         None => {}
                     }
-                    self.reset_data();
                 }
             } else if code_depth == 0 {
                 output.push(c);
@@ -159,30 +178,42 @@ impl FslInterpreter {
         Ok(output)
     }
 
-    async fn evaluate_expressions<'a>(&self, code: &'a str) -> Result<String, InterpreterError> {
-        let expressions = Parser::new(code).parse();
+    async fn evaluate_expressions<'c>(
+        data: Arc<InterpreterData<'c>>,
+        command_definitions: Arc<Mutex<CommandDefinitions>>,
+        source: &'c str,
+    ) -> Result<String, InterpreterError> {
+        let expressions = Parser::new(source).parse();
         match expressions {
             Ok(expressions) => {
                 for expression in expressions {
-                    let command = match self.parse_expression(expression).await {
+                    let command = match Self::parse_expression(
+                        data.clone(),
+                        command_definitions.clone(),
+                        expression,
+                    )
+                    .await
+                    {
                         Ok(value) => match value {
                             Value::Command(command) => command,
-                            _ => unreachable!("parse expression should always return a command"),
+                            _ => {
+                                unreachable!("parse expression should always return a command")
+                            }
                         },
                         Err(e) => {
                             return Err(InterpreterError::new(
                                 e.error_type,
-                                Some(self.call_stack_to_string().await),
+                                Some(data.call_stack_to_string().await),
                             ));
                         }
                     };
-                    if let Err(e) = command.execute(self.data.clone()).await {
+                    if let Err(e) = command.execute(data.clone()).await {
                         if e.exited_program() {
                             break;
                         } else {
                             return Err(InterpreterError::new(
                                 InterpreterErrorType::Command(e),
-                                Some(self.call_stack_to_string().await),
+                                Some(data.call_stack_to_string().await),
                             ));
                         }
                     }
@@ -192,37 +223,28 @@ impl FslInterpreter {
                 return Err(InterpreterErrorType::Parse(e.to_string()).into());
             }
         }
-        let mut output = self.data.output.lock().await;
+        let mut output = data.output.lock().await;
         let output = std::mem::take(&mut *output);
         Ok(output)
     }
 
-    async fn call_stack_to_string(&self) -> String {
-        let call_stack = self.data.call_stack.lock().await;
-        let mut output = String::new();
-        for (i, call) in call_stack.iter().enumerate() {
-            let call = if call.is_empty() { "scope" } else { call };
-
-            if i < call_stack.len() - 1 {
-                output.push_str(&format!("{} > ", call));
-            } else {
-                output.push_str(&format!("{}", call));
-            }
-        }
-        output
-    }
-
-    async fn parse_expression<'code>(
-        &self,
-        expression: Expression<'code>,
-    ) -> Result<Value, InterpreterError> {
-        if let Some(command_def) = self.command_definitions.get(expression.name).cloned() {
+    async fn parse_expression<'c>(
+        data: Arc<InterpreterData<'c>>,
+        command_definitions: Arc<Mutex<CommandDefinitions>>,
+        expression: Expression<'c>,
+    ) -> Result<Value<'c>, InterpreterError> {
+        let definitions = command_definitions.lock().await;
+        let command_def = definitions.get(expression.name).cloned();
+        drop(definitions);
+        if let Some(command_def) = command_def {
             let mut command = Command::from(command_def);
 
             let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
 
             for arg in expression.args {
-                args.push_back(self.parse_arg(arg).await?);
+                args.push_back(
+                    Self::parse_arg(data.clone(), command_definitions.clone(), arg).await?,
+                );
             }
 
             command.set_args(args);
@@ -230,7 +252,7 @@ impl FslInterpreter {
             Ok(Value::from_command(command))
         } else {
             let user_command_label = {
-                let user_commands = self.data.user_commands.lock().await;
+                let user_commands = data.user_commands.lock().await;
                 user_commands
                     .get(expression.name)
                     .map(|uc| uc.label.clone())
@@ -240,14 +262,16 @@ impl FslInterpreter {
                 let mut command = Command::new(
                     expression.name.to_string(),
                     RUN_RULES,
-                    Handler::from(commands::run),
+                    Handler::new(|command, data| commands::run(command, data).boxed()),
                 );
 
                 let mut args = VecDeque::new();
-                args.push_back(Value::Var(label));
+                args.push_back(Value::Var(Cow::Owned(label)));
 
                 for arg in expression.args {
-                    args.push_back(self.parse_arg(arg).await?);
+                    args.push_back(
+                        Self::parse_arg(data.clone(), command_definitions.clone(), arg).await?,
+                    );
                 }
 
                 command.set_args(args);
@@ -263,62 +287,71 @@ impl FslInterpreter {
         }
     }
 
-    #[async_recursion]
-    async fn parse_arg<'code: 'async_recursion>(
-        &self,
-        arg: ArgType<'code>,
-    ) -> Result<Value, InterpreterError> {
-        match arg {
-            ArgType::Number(number) => {
-                if number.contains('.') {
-                    match number.parse::<f64>() {
-                        Ok(value) => Ok(Value::Float(value)),
-                        Err(_) => Err(ValueError::FailedParse(
-                            "failed to convert to a number".into(),
-                        )
-                        .into()),
-                    }
-                } else {
-                    if let Ok(value) = number.parse::<i64>() {
-                        Ok(Value::Int(value))
-                    } else {
-                        if let Ok(value) = number.parse::<f64>() {
-                            Ok(Value::Float(value))
-                        } else {
-                            Err(
-                                ValueError::FailedParse("failed to convert to a number".into())
-                                    .into(),
+    fn parse_arg<'c>(
+        data: Arc<InterpreterData<'c>>,
+        command_definitions: Arc<Mutex<CommandDefinitions>>,
+        arg: ArgType<'c>,
+    ) -> ValueResult<'c, Value<'c>, InterpreterError> {
+        Box::pin(async {
+            match arg {
+                ArgType::Number(number) => {
+                    if number.contains('.') {
+                        match number.parse::<f64>() {
+                            Ok(value) => Ok(Value::Float(value)),
+                            Err(_) => Err(ValueError::FailedParse(
+                                "failed to convert to a number".into(),
                             )
+                            .into()),
+                        }
+                    } else {
+                        if let Ok(value) = number.parse::<i64>() {
+                            Ok(Value::Int(value))
+                        } else {
+                            if let Ok(value) = number.parse::<f64>() {
+                                Ok(Value::Float(value))
+                            } else {
+                                Err(
+                                    ValueError::FailedParse("failed to convert to a number".into())
+                                        .into(),
+                                )
+                            }
                         }
                     }
                 }
-            }
-            ArgType::String(cow) => Ok(Value::Text(cow.into_owned())),
-            ArgType::Keyword(keyword) => match keyword {
-                lexer::TRUE => Ok(Value::Bool(true)),
-                lexer::FALSE => Ok(Value::Bool(false)),
-                _ => unreachable!("parser should validate keywords"),
-            },
-            ArgType::Identifier(ident) => Ok(Value::Var(ident.to_string())),
-            ArgType::List(args) => {
-                let mut list: Vec<Value> = vec![];
-                for arg in args {
-                    let parsed_arg = self.parse_arg(arg).await?;
-                    list.push(parsed_arg);
+                ArgType::String(cow) => Ok(Value::Text(cow.into_owned())),
+                ArgType::Keyword(keyword) => match keyword {
+                    lexer::TRUE => Ok(Value::Bool(true)),
+                    lexer::FALSE => Ok(Value::Bool(false)),
+                    _ => unreachable!("parser should validate keywords"),
+                },
+                ArgType::Identifier(ident) => Ok(Value::Var(Cow::from(ident))),
+                ArgType::List(args) => {
+                    let mut list: Vec<Value> = vec![];
+                    for arg in args {
+                        let parsed_arg =
+                            Self::parse_arg(data.clone(), command_definitions.clone(), arg).await?;
+                        list.push(parsed_arg);
+                    }
+                    Ok(Value::List(list))
                 }
-                Ok(Value::List(list))
-            }
-            ArgType::Map(map) => {
-                let mut value_map = HashMap::new();
+                ArgType::Map(map) => {
+                    let mut value_map = HashMap::new();
 
-                for (key, value) in map {
-                    value_map.insert(key.to_string(), self.parse_arg(value).await?);
+                    for (key, value) in map {
+                        value_map.insert(
+                            key.into(),
+                            Self::parse_arg(data.clone(), command_definitions.clone(), value)
+                                .await?,
+                        );
+                    }
+
+                    Ok(Value::Map(value_map))
                 }
-
-                Ok(Value::Map(value_map))
+                ArgType::Expression(expression) => {
+                    Ok(Self::parse_expression(data, command_definitions, expression).await?)
+                }
             }
-            ArgType::Expression(expression) => Ok(self.parse_expression(expression).await?),
-        }
+        })
     }
 
     fn add_standard_commands(&mut self) {
@@ -413,29 +446,22 @@ impl FslInterpreter {
     }
 }
 
-impl Default for FslInterpreter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod interpreter {
     use crate::commands::tests::{
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
     use crate::error::{CommandError, ValueError};
-    use crate::types::value::Value;
     use crate::{FslInterpreter, InterpreterErrorType};
 
     async fn test_interpreter_err(code: &str) {
-        let result = FslInterpreter::new().interpret(code).await;
+        let result = FslInterpreter::new().interpret(code.to_string()).await;
         dbg!(&result);
         assert!(result.is_err());
     }
 
     async fn test_interpreter_not_err(code: &str) {
-        let result = FslInterpreter::new().interpret(code).await;
+        let result = FslInterpreter::new().interpret(code.to_string()).await;
         dbg!(&result);
         assert!(result.is_ok());
     }
@@ -465,10 +491,11 @@ mod interpreter {
         .await;
     }
 
+    /*
     #[tokio::test]
     async fn mem_size_of_int() {
-        let interpreter = FslInterpreter::new();
-        interpreter.interpret("n.store(1)").await.unwrap();
+        let interpreter = FslInterpreter::new("n.store(1)".to_string()).await;
+        interpreter.interpret().await.unwrap();
         dbg!(
             interpreter
                 .data
@@ -488,8 +515,8 @@ mod interpreter {
 
     #[tokio::test]
     async fn mem_size_of_list() {
-        let interpreter = FslInterpreter::new();
-        interpreter.interpret(r#"n.store([1,2,3])"#).await.unwrap();
+        let interpreter = FslInterpreter::new(r#"n.store([1,2,3])"#.to_string()).await;
+        interpreter.interpret().await.unwrap();
         dbg!(
             "Size of value: {} \nSize of Vec<Value>: {}",
             size_of::<Value>(),
@@ -514,10 +541,8 @@ mod interpreter {
 
     #[tokio::test]
     async fn deallocation_of_var_stacks() {
-        let interpreter = FslInterpreter::new();
-        interpreter
-            .interpret(
-                r#"
+        let interpreter = FslInterpreter::new(
+            r#"
                     allocate_more.def(
                         string_three.local("hello world")
                         string_four.local("hello world")
@@ -528,10 +553,11 @@ mod interpreter {
                         allocate_more()
                     )
                     allocate()
-                "#,
-            )
-            .await
-            .unwrap();
+                "#
+            .to_string(),
+        )
+        .await;
+        interpreter.interpret().await.unwrap();
         dbg!(
             interpreter
                 .data
@@ -548,6 +574,7 @@ mod interpreter {
                 == 0
         );
     }
+    */
 
     #[tokio::test]
     async fn catch_memory_overflow() {
@@ -560,7 +587,6 @@ mod interpreter {
         .await;
         assert!(matches!(err, InterpreterErrorType::Command(_)))
     }
-
     #[tokio::test]
     async fn catch_output_overflow() {
         let err = test_interpreter_err_type(

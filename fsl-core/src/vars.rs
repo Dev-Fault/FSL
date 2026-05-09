@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     mem,
     sync::{
@@ -16,12 +17,12 @@ const MEGABYTE: usize = 1024 * 1024;
 pub const DEFAULT_MEMORY_LIMIT: usize = 5 * MEGABYTE;
 
 #[derive(Debug, Clone)]
-pub struct VarEntry {
-    pub value: Value,
+pub struct VarEntry<'c> {
+    pub value: Value<'c>,
     pub constant: bool,
 }
 
-impl Default for VarEntry {
+impl<'c> Default for VarEntry<'c> {
     fn default() -> Self {
         Self {
             value: Default::default(),
@@ -30,7 +31,7 @@ impl Default for VarEntry {
     }
 }
 
-impl VarEntry {
+impl<'c> VarEntry<'c> {
     fn new_mut(value: Value) -> VarEntry {
         VarEntry {
             value: value,
@@ -47,18 +48,22 @@ impl VarEntry {
 }
 
 #[derive(Debug)]
-pub struct VarMap {
-    map: Mutex<HashMap<String, VarEntry>>,
+pub struct VarMap<'c> {
+    map: Mutex<HashMap<Cow<'c, str>, VarEntry<'c>>>,
 }
 
-impl VarMap {
+impl<'c> VarMap<'c> {
     pub fn new() -> Self {
         Self {
             map: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn insert_mut_value(&self, label: &str, value: Value) -> Result<(), ValueError> {
+    pub fn insert_mut_value(
+        &self,
+        label: Cow<'c, str>,
+        value: Value<'c>,
+    ) -> Result<(), ValueError> {
         match value {
             Value::Var(_) => {
                 return Err(ValueError::InvalidVarValue(
@@ -73,7 +78,7 @@ impl VarMap {
             _ => {
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
-                if let Some(prev_entry) = map.get(label) {
+                if let Some(prev_entry) = map.get(&label) {
                     if prev_entry.constant {
                         return Err(ValueError::AttemptToOverwriteConstant(format!(
                             "cannot overwrite constant var {}",
@@ -81,13 +86,17 @@ impl VarMap {
                         )));
                     }
                 }
-                map.insert(label.to_string(), VarEntry::new_mut(value));
+                map.insert(label, VarEntry::new_mut(value));
                 Ok(())
             }
         }
     }
 
-    pub fn insert_const_value(&self, label: &str, value: Value) -> Result<(), ValueError> {
+    pub fn insert_const_value(
+        &self,
+        label: Cow<'c, str>,
+        value: Value<'c>,
+    ) -> Result<(), ValueError> {
         match value {
             Value::Var(_) => {
                 return Err(ValueError::InvalidVarValue(
@@ -102,7 +111,7 @@ impl VarMap {
             _ => {
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
-                if let Some(prev_entry) = map.get(label) {
+                if let Some(prev_entry) = map.get(&label) {
                     if prev_entry.constant {
                         return Err(ValueError::AttemptToOverwriteConstant(format!(
                             "cannot overwrite constant var {}",
@@ -110,13 +119,13 @@ impl VarMap {
                         )));
                     }
                 }
-                map.insert(label.to_string(), VarEntry::new_const(value));
+                map.insert(label, VarEntry::new_const(value));
                 Ok(())
             }
         }
     }
 
-    pub fn remove_value(&self, label: &str) -> Result<Option<Value>, ValueError> {
+    pub fn remove_value(&self, label: &str) -> Result<Option<Value<'c>>, ValueError> {
         let lock = self.map.lock();
         let mut map = lock.unwrap();
 
@@ -131,7 +140,7 @@ impl VarMap {
         Ok(map.remove(label).map(|entry| entry.value))
     }
 
-    pub fn clone_value(&self, label: &str) -> Result<Value, ValueError> {
+    pub fn clone_value(&self, label: &str) -> Result<Value<'c>, ValueError> {
         let var_entry = self.map.lock().unwrap().get(label).cloned();
 
         match var_entry {
@@ -149,7 +158,7 @@ impl VarMap {
         }
     }
 
-    pub fn take_entry(&self, label: &str) -> Result<VarEntry, ValueError> {
+    pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, ValueError> {
         let mut vars = self.map.lock().unwrap();
         let var_entry = vars.get_mut(label);
 
@@ -171,7 +180,7 @@ impl VarMap {
         }
     }
 
-    pub fn insert_entry(&self, label: String, var_entry: VarEntry) {
+    pub fn insert_entry(&self, label: Cow<'c, str>, var_entry: VarEntry<'c>) {
         let mut vars = self.map.lock().unwrap();
         vars.insert(label, var_entry);
     }
@@ -181,7 +190,7 @@ impl VarMap {
         var_map.contains_key(label)
     }
 
-    pub fn get_var_size(&self, label: &str) -> usize {
+    pub fn get_var_size(&self, label: &Cow<'c, str>) -> usize {
         let var_map = self.map.lock().unwrap();
         var_map
             .get(label)
@@ -224,14 +233,14 @@ impl VarMap {
 const VAR_STACK_EXPECT: &str = "Var stack should always at least have global scope var map";
 
 #[derive(Debug)]
-pub struct VarStack {
-    stack: Mutex<Vec<VarMap>>,
+pub struct VarStack<'c> {
+    stack: Mutex<Vec<VarMap<'c>>>,
     mem_limit: Option<usize>,
     pub(crate) allocated_mem: AtomicUsize,
 }
 
-impl VarStack {
-    pub fn new_unbounded() -> VarStack {
+impl<'c> VarStack<'c> {
+    pub fn new_unbounded() -> VarStack<'c> {
         VarStack {
             stack: Mutex::new(vec![(VarMap::new())]),
             mem_limit: None,
@@ -239,7 +248,7 @@ impl VarStack {
         }
     }
 
-    pub fn new_bounded(byte_limit: usize) -> VarStack {
+    pub fn new_bounded(byte_limit: usize) -> VarStack<'c> {
         VarStack {
             stack: Mutex::new(vec![(VarMap::new())]),
             mem_limit: Some(byte_limit),
@@ -291,26 +300,26 @@ impl VarStack {
     }
 
     /// Inserts a variable in the current scope, overwrites it if it already exists
-    pub fn insert_mut_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+    pub fn insert_mut_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
         let stack = self.stack.lock().unwrap();
         let var_map = stack
             .last()
             .expect("Var stack should always at least have global scope var map");
-        self.deallocate_mem(var_map.get_var_size(label));
+        self.deallocate_mem(var_map.get_var_size(&label));
         let value_size = value.mem_size();
-        var_map.insert_mut_value(label, value)?;
+        var_map.insert_mut_value(label.clone(), value)?;
         self.allocate_mem(value_size)?;
         Ok(())
     }
 
     /// Updates var in current scope will throw error if no scopes contain var
-    pub fn update_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+    pub fn update_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
         let stack = self.stack.lock().unwrap();
         let value_size = value.mem_size();
         for var_map in stack.iter().rev() {
-            if var_map.has_entry(label) {
-                self.deallocate_mem(var_map.get_var_size(label));
-                var_map.insert_mut_value(label, value)?;
+            if var_map.has_entry(&label) {
+                self.deallocate_mem(var_map.get_var_size(&label));
+                var_map.insert_mut_value(label.clone(), value)?;
                 self.allocate_mem(value_size)?;
                 return Ok(());
             }
@@ -322,45 +331,53 @@ impl VarStack {
     }
 
     /// Updates the nearest matching variable searching from local to global scope, or creates it locally if no match is found.
-    pub fn update_or_create_mut_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+    pub fn update_or_create_mut_var(
+        &self,
+        label: &Cow<'c, str>,
+        value: Value<'c>,
+    ) -> Result<(), ValueError> {
         let stack = self.stack.lock().unwrap();
         let value_size = value.mem_size();
         for var_map in stack.iter().rev() {
-            if var_map.has_entry(label) {
-                self.deallocate_mem(var_map.get_var_size(label));
-                var_map.insert_mut_value(label, value)?;
+            if var_map.has_entry(&label) {
+                self.deallocate_mem(var_map.get_var_size(&label));
+                var_map.insert_mut_value(label.clone(), value)?;
                 self.allocate_mem(value_size)?;
                 return Ok(());
             }
         }
         let var_map = stack.last().expect(VAR_STACK_EXPECT);
-        self.deallocate_mem(var_map.get_var_size(label));
-        var_map.insert_mut_value(label, value)?;
+        self.deallocate_mem(var_map.get_var_size(&label));
+        var_map.insert_mut_value(label.clone(), value)?;
         self.allocate_mem(value_size)?;
         Ok(())
     }
 
     /// Inserts a constant var, will error if constant already exists
-    pub fn insert_const_var(&self, label: &str, value: Value) -> Result<(), ValueError> {
+    pub fn insert_const_var(
+        &self,
+        label: &Cow<'c, str>,
+        value: Value<'c>,
+    ) -> Result<(), ValueError> {
         let stack = self.stack.lock().unwrap();
         let value_size = value.mem_size();
         let var_map = stack.last().expect(VAR_STACK_EXPECT);
         self.allocate_mem(value_size)?;
-        var_map.insert_const_value(label, value)
+        var_map.insert_const_value(label.clone(), value)
     }
 
     /// Removes a var from the most local scope, throws error if var is constant
-    pub fn remove_var(&self, label: &str) -> Result<Option<Value>, ValueError> {
+    pub fn remove_var(&self, label: &Cow<'c, str>) -> Result<Option<Value<'c>>, ValueError> {
         let stack = self.stack.lock().unwrap();
         let var_map = stack.last().expect(VAR_STACK_EXPECT);
-        let value_size = var_map.get_var_size(label);
-        let return_value = var_map.remove_value(label)?;
+        let value_size = var_map.get_var_size(&label);
+        let return_value = var_map.remove_value(&label)?;
         self.deallocate_mem(value_size);
         Ok(return_value)
     }
 
     /// Gets value of var in most local scope, throws error if it doesn't exist
-    pub fn get_var_value(&self, label: &str) -> Result<Value, ValueError> {
+    pub fn get_var_value(&self, label: &str) -> Result<Value<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {
@@ -374,7 +391,7 @@ impl VarStack {
     }
 
     /// Does mem::take on var entry in the current local scope
-    pub fn take_entry(&self, label: &str) -> Result<VarEntry, ValueError> {
+    pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {
@@ -388,7 +405,11 @@ impl VarStack {
     }
 
     /// Inserts var entry into most local var map (intended to be used with take_entry)
-    pub fn insert_entry(&self, label: String, var_entry: VarEntry) -> Result<(), ValueError> {
+    pub fn insert_entry(
+        &self,
+        label: Cow<'c, str>,
+        var_entry: VarEntry<'c>,
+    ) -> Result<(), ValueError> {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(&label) {
@@ -403,7 +424,7 @@ impl VarStack {
     }
 
     /// Gets value of var in most local scope, throws error if it doesn't exist
-    pub fn get_mut_var_value(&self, label: &str) -> Result<Value, ValueError> {
+    pub fn get_mut_var_value(&self, label: &str) -> Result<Value<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {

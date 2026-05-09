@@ -18,15 +18,6 @@ pub struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let mut interpreter = FslInterpreter::new_unbounded();
-    if let Err(e) = interpreter.register_library(Library::Exec) {
-        eprintln!("{e}");
-        return;
-    };
-    if let Err(e) = interpreter.register_library(Library::Io) {
-        eprintln!("{e}");
-        return;
-    };
 
     let stdin = if io::stdin().is_terminal() {
         None
@@ -37,10 +28,6 @@ async fn main() {
     };
 
     let input = args.input.or(stdin);
-
-    if let Some(input) = input {
-        interpreter.add_arg(input).await;
-    }
 
     let script = if args.file {
         match std::fs::read_to_string(args.script) {
@@ -54,10 +41,25 @@ async fn main() {
         args.script
     };
 
+    let mut interpreter = FslInterpreter::new_unbounded();
+
+    if let Some(input) = input {
+        interpreter.add_arg(input).await;
+    }
+
+    if let Err(e) = interpreter.register_library(Library::Exec) {
+        eprintln!("{e}");
+        return;
+    };
+    if let Err(e) = interpreter.register_library(Library::Io) {
+        eprintln!("{e}");
+        return;
+    };
+
     let result = if args.embeded {
-        interpreter.interpret_embedded_code(&script).await
+        interpreter.interpret_embedded_code(script).await
     } else {
-        interpreter.interpret(&script).await
+        interpreter.interpret(script).await
     };
 
     match result {

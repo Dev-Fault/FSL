@@ -14,7 +14,10 @@ use crate::{
 
 pub const EXEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_TEXT)];
 pub const EXEC: &str = "exec";
-pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+pub async fn exec<'c>(
+    command: Command<'c>,
+    data: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, CommandError> {
     let mut args = command.take_args();
     let program = args.pop_front().unwrap().as_text(data.clone()).await?;
     let args = tokio_stream::iter(args.into_iter());
@@ -40,7 +43,10 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
 pub const SH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const SH: &str = "sh";
-pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+pub async fn sh<'c>(
+    command: Command<'c>,
+    data: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, CommandError> {
     let mut args = command.take_args();
     let script = args.pop_front().unwrap().as_text(data).await?;
     let output = tokio::process::Command::new("sh")

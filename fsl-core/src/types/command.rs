@@ -1,10 +1,12 @@
 use core::fmt;
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     ops::Range,
-    pin::Pin,
     sync::{Arc, atomic::Ordering},
 };
+
+use futures::future::BoxFuture;
 
 use crate::{
     InterpreterData,
@@ -42,30 +44,31 @@ impl ArgRule {
     }
 }
 
-pub type InterpreterFut =
-    Pin<Box<dyn Future<Output = Result<Value, CommandError>> + Send + 'static>>;
+pub type InterpreterFut<'c> = BoxFuture<'c, Result<Value<'c>, CommandError>>;
 
-pub type InterpeterFn =
-    Arc<dyn Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync + 'static>;
+pub type InterpreterFn =
+    Arc<dyn for<'c> Fn(Command<'c>, Arc<InterpreterData<'c>>) -> InterpreterFut<'c> + Send + Sync>;
 
 #[derive(Clone)]
-pub struct Handler(InterpeterFn);
-
-impl<F, Fut> From<F> for Handler
-where
-    F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<Value, CommandError>> + Send + 'static,
-{
-    fn from(func: F) -> Self {
-        Self(Arc::new(move |command: Command, vars| {
-            Box::pin(func(command, vars))
-        }))
-    }
-}
+pub struct Handler(InterpreterFn);
 
 impl Handler {
-    pub fn handle(&self, command: Command, data: Arc<InterpreterData>) -> InterpreterFut {
-        self.0(command, data)
+    pub fn new<F>(func: F) -> Self
+    where
+        F: for<'c> Fn(Command<'c>, Arc<InterpreterData<'c>>) -> InterpreterFut<'c>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self(Arc::new(func))
+    }
+
+    pub fn handle<'c>(
+        &self,
+        command: Command<'c>,
+        data: Arc<InterpreterData<'c>>,
+    ) -> InterpreterFut<'c> {
+        (self.0)(command, data)
     }
 }
 
@@ -94,14 +97,14 @@ impl CommandDefinition {
     }
 }
 
-pub struct Command {
+pub struct Command<'c> {
     label: Arc<str>,
     arg_rules: &'static [ArgRule],
-    args: VecDeque<Value>,
+    args: VecDeque<Value<'c>>,
     handler: Handler,
 }
 
-impl From<CommandDefinition> for Command {
+impl<'c> From<CommandDefinition> for Command<'c> {
     fn from(value: CommandDefinition) -> Self {
         Self {
             label: Arc::from(value.label),
@@ -112,7 +115,7 @@ impl From<CommandDefinition> for Command {
     }
 }
 
-impl Command {
+impl<'c> Command<'c> {
     pub fn mem_size(&self) -> Option<usize> {
         let mut size = size_of::<Command>();
         for arg in &self.args {
@@ -138,23 +141,23 @@ impl Command {
         self.arg_rules
     }
 
-    pub fn set_args(&mut self, args: VecDeque<Value>) {
+    pub fn set_args(&mut self, args: VecDeque<Value<'c>>) {
         self.args = args;
     }
 
-    pub fn take_args(self) -> VecDeque<Value> {
+    pub fn take_args(self) -> VecDeque<Value<'c>> {
         self.args
     }
 
-    pub fn pop_front_arg(&mut self) -> Option<Value> {
+    pub fn pop_front_arg(&mut self) -> Option<Value<'c>> {
         self.args.pop_front()
     }
 
-    pub fn get_args(&self) -> &VecDeque<Value> {
+    pub fn get_args(&self) -> &VecDeque<Value<'c>> {
         &self.args
     }
 
-    pub fn get_args_mut(&mut self) -> &mut VecDeque<Value> {
+    pub fn get_args_mut(&mut self) -> &mut VecDeque<Value<'c>> {
         &mut self.args
     }
 
@@ -266,7 +269,7 @@ impl Command {
         Ok(())
     }
 
-    pub async fn execute(self, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+    pub async fn execute(self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, CommandError> {
         self.validate_args()?;
 
         let return_flag = data.flags.return_flag.load(Ordering::Relaxed);
@@ -290,13 +293,13 @@ impl Command {
     }
 }
 
-impl PartialEq for Command {
+impl<'c> PartialEq for Command<'c> {
     fn eq(&self, other: &Self) -> bool {
         self.get_label() == other.get_label()
     }
 }
 
-impl fmt::Debug for Command {
+impl<'c> fmt::Debug for Command<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Command")
             .field("label", &self.get_label())
@@ -304,7 +307,7 @@ impl fmt::Debug for Command {
     }
 }
 
-impl Clone for Command {
+impl<'c> Clone for Command<'c> {
     fn clone(&self) -> Self {
         Self {
             args: self.args.clone(),
@@ -316,8 +319,8 @@ impl Clone for Command {
 }
 
 #[derive(Debug, Clone)]
-pub struct UserCommand {
+pub struct UserCommand<'c> {
     pub label: String,
-    pub parameters: VecDeque<String>,
-    pub commands: Vec<Command>,
+    pub parameters: VecDeque<Cow<'c, str>>,
+    pub commands: Vec<Command<'c>>,
 }

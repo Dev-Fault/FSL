@@ -12,7 +12,10 @@ use crate::{
 
 pub const SAY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const SAY: &str = "say";
-pub async fn say(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+pub async fn say<'c>(
+    command: Command<'c>,
+    data: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, CommandError> {
     let values = command.take_args();
 
     let mut output = String::new();
@@ -28,7 +31,10 @@ pub async fn say(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
 pub const ASK_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const ASK: &str = "ask";
-pub async fn ask(command: Command, data: Arc<InterpreterData>) -> Result<Value, CommandError> {
+pub async fn ask<'c>(
+    command: Command<'c>,
+    data: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, CommandError> {
     let values = command.take_args();
 
     let mut output = String::new();

@@ -663,10 +663,13 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "print",
-            args: vec![ArgType::String(Cow::Borrowed("\"hello world\""))],
+            args: vec![ArgType::String(Cow::Borrowed("hello world"))],
         }];
+        println!("==GOT==\n");
         dbg!(&parsed);
-        dbg!(parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
+        assert!(expected == parsed);
     }
 
     #[test]

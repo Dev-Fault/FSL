@@ -1,38 +1,40 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     num::{ParseFloatError, ParseIntError},
+    pin::Pin,
     sync::Arc,
 };
-
-use async_recursion::async_recursion;
 
 use crate::{
     InterpreterData,
     error::{ExecutionError, ValueError},
     types::{FslType, command::Command},
 };
+pub type FslMap<'c> = HashMap<String, Value<'c>>;
+pub type ValueResult<'c, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'c>>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Value {
+pub enum Value<'c> {
     Int(i64),
     Float(f64),
     Bool(bool),
     Text(String),
-    List(Vec<Value>),
-    Map(HashMap<String, Value>),
-    Var(String),
-    Command(Box<Command>),
+    List(Vec<Value<'c>>),
+    Map(FslMap<'c>),
+    Var(Cow<'c, str>),
+    Command(Box<Command<'c>>),
     None,
 }
 
-impl Default for Value {
+impl<'c> Default for Value<'c> {
     fn default() -> Self {
         Self::None
     }
 }
 
-impl Value {
-    pub fn from_command(command: Command) -> Self {
+impl<'c> Value<'c> {
+    pub fn from_command(command: Command<'c>) -> Self {
         Self::Command(Box::new(command))
     }
 
@@ -92,7 +94,7 @@ impl Value {
                 }
                 Some(size)
             }
-            Value::Var(str) => Some(size_of::<Value>().checked_add(str.capacity())?),
+            Value::Var(_) => Some(size_of::<Value>().checked_add(size_of::<&str>())?),
             Value::Command(command) => Some(size_of::<Value>().checked_add(command.mem_size()?)?),
             Value::None => Some(size_of::<Value>()),
         }
@@ -131,32 +133,33 @@ impl Value {
         }
     }
 
-    #[async_recursion]
-    pub async fn as_int(self, data: Arc<InterpreterData>) -> Result<i64, ExecutionError> {
-        let to_type = FslType::Int;
-        match self {
-            Value::Int(value) => Ok(value),
-            Value::Float(value) => Ok(value as i64),
-            Value::Var(label) => data.vars.get_var_value(&label)?.as_int(data).await,
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_int(data.clone())
-                    .await
+    pub fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, ExecutionError> {
+        Box::pin(async {
+            let to_type = FslType::Int;
+            match self {
+                Value::Int(value) => Ok(value),
+                Value::Float(value) => Ok(value as i64),
+                Value::Var(label) => data.vars.get_var_value(&label)?.as_int(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_int(data.clone())
+                        .await
+                }
+                Value::Text(value) => match value.trim().parse::<i64>() {
+                    Ok(value) => Ok(value),
+                    Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
+                },
+                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
             }
-            Value::Text(value) => match value.trim().parse::<i64>() {
-                Ok(value) => Ok(value),
-                Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
-            },
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
-        }
+        })
     }
 
-    pub async fn as_usize(self, data: Arc<InterpreterData>) -> Result<usize, ExecutionError> {
+    pub async fn as_usize(self, data: Arc<InterpreterData<'c>>) -> Result<usize, ExecutionError> {
         let integer = self.as_int(data).await?;
         if integer < 0 {
             Err(
@@ -168,239 +171,255 @@ impl Value {
         }
     }
 
-    #[async_recursion]
-    pub async fn as_float(self, data: Arc<InterpreterData>) -> Result<f64, ExecutionError> {
-        let to_type = FslType::Float;
-        match self {
-            Value::Int(value) => Ok(value as f64),
-            Value::Float(value) => Ok(value),
-            Value::Var(label) => data.vars.get_var_value(&label)?.as_float(data).await,
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_float(data.clone())
-                    .await
+    pub fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, ExecutionError> {
+        Box::pin(async {
+            let to_type = FslType::Float;
+            match self {
+                Value::Int(value) => Ok(value as f64),
+                Value::Float(value) => Ok(value),
+                Value::Var(label) => data.vars.get_var_value(&label)?.as_float(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_float(data.clone())
+                        .await
+                }
+                Value::Text(value) => match value.parse::<f64>() {
+                    Ok(value) => Ok(value),
+                    Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
+                },
+                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
             }
-            Value::Text(value) => match value.parse::<f64>() {
-                Ok(value) => Ok(value),
-                Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
-            },
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
-        }
+        })
     }
 
-    #[async_recursion]
-    pub async fn as_bool(self, data: Arc<InterpreterData>) -> Result<bool, ExecutionError> {
-        let to_type = FslType::Bool;
-        match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Text(value) => match value.parse::<bool>() {
-                Ok(value) => Ok(value),
-                Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
-            },
-            Value::Bool(value) => Ok(value),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Var(label) => data.vars.get_var_value(&label)?.as_bool(data).await,
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_bool(data.clone())
-                    .await
+    pub fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, ExecutionError> {
+        Box::pin(async {
+            let to_type = FslType::Bool;
+            match self {
+                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Text(value) => match value.parse::<bool>() {
+                    Ok(value) => Ok(value),
+                    Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
+                },
+                Value::Bool(value) => Ok(value),
+                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Var(label) => data.vars.get_var_value(&label)?.as_bool(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_bool(data.clone())
+                        .await
+                }
+                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
             }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
-        }
+        })
     }
 
-    #[async_recursion]
-    pub async fn as_var_label(self, data: Arc<InterpreterData>) -> Result<String, ExecutionError> {
-        let to_type = FslType::Var;
-        match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Var(label) => Ok(label),
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_var_label(data.clone())
-                    .await
-            }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
-        }
-    }
-
-    #[async_recursion]
-    pub async fn as_text(self, data: Arc<InterpreterData>) -> Result<String, ExecutionError> {
-        match self {
-            Value::Int(value) => Ok(value.to_string()),
-            Value::Float(value) => Ok(value.to_string()),
-            Value::Text(value) => Ok(value),
-            Value::Bool(value) => Ok(value.to_string()),
-            Value::List(values) => {
-                let mut output = String::new();
-                output.push('[');
-                let empty = values.is_empty();
-                for value in values {
-                    output.push_str(&format!("{}, ", value.as_text(data.clone()).await?));
-                }
-                if !empty {
-                    output.pop();
-                    output.pop();
-                }
-                output.push(']');
-                Ok(output)
-            }
-            Value::Map(map) => {
-                let mut output = String::new();
-                output.push('[');
-                let empty = map.is_empty();
-                for (key, value) in map {
-                    output.push_str(&format!(
-                        "{}: {}, ",
-                        key,
-                        value.as_text(data.clone()).await?
-                    ));
-                }
-                if !empty {
-                    output.pop();
-                    output.pop();
-                }
-                output.push(']');
-                Ok(output)
-            }
-            Value::Var(label) => data.vars.get_var_value(&label)?.as_text(data).await,
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_text(data.clone())
-                    .await
-            }
-            Value::None => Err(self.gen_conversion_err_to_type(FslType::Text).into()),
-        }
-    }
-
-    #[async_recursion]
-    pub async fn as_list(self, data: Arc<InterpreterData>) -> Result<Vec<Value>, ExecutionError> {
-        let to_type = FslType::List;
-        match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::List(mut values) => {
-                for value in values.iter_mut() {
-                    if value.is_type(FslType::Command) {
-                        let new_value = std::mem::take(value)
-                            .as_command()?
-                            .execute(data.clone())
-                            .await?;
-                        *value = new_value
-                    }
-                }
-                Ok(values)
-            }
-            Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Var(label) => data.vars.get_var_value(&label)?.as_list(data).await,
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_list(data.clone())
-                    .await
-            }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
-        }
-    }
-
-    #[async_recursion]
-    pub async fn as_map(
+    pub fn as_var_label(
         self,
-        data: Arc<InterpreterData>,
-    ) -> Result<HashMap<String, Value>, ExecutionError> {
-        let to_type = FslType::Map;
-        match self {
-            Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-            Value::Map(mut map) => {
-                for (_, value) in map.iter_mut() {
-                    if value.is_type(FslType::Command) {
-                        let new_value = std::mem::take(value)
-                            .as_command()?
-                            .execute(data.clone())
-                            .await?;
-                        *value = new_value
-                    }
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Cow<'c, str>, ExecutionError> {
+        Box::pin(async move {
+            let to_type = FslType::Var;
+            match self {
+                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Var(label) => Ok(label),
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_var_label(data.clone())
+                        .await
                 }
-                Ok(map)
+                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
             }
-            Value::Var(label) => data.vars.get_var_value(&label)?.as_map(data).await,
-            Value::Command(command) => {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .as_map(data.clone())
-                    .await
-            }
-            Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
-        }
+        })
     }
 
-    #[async_recursion]
-    pub async fn as_raw(
+    pub fn as_text(
         self,
-        data: Arc<InterpreterData>,
-        valid_types: &[FslType],
-    ) -> Result<Value, ExecutionError> {
-        let value;
-        match self.as_type() {
-            FslType::Int => value = self,
-            FslType::Float => value = self,
-            FslType::Bool => value = self,
-            FslType::Text => value = self,
-            FslType::List => {
-                value = Value::List(self.as_list(data.clone()).await?);
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, String, ExecutionError> {
+        Box::pin(async {
+            match self {
+                Value::Int(value) => Ok(value.to_string()),
+                Value::Float(value) => Ok(value.to_string()),
+                Value::Text(value) => Ok(value),
+                Value::Bool(value) => Ok(value.to_string()),
+                Value::List(values) => {
+                    let mut output = String::new();
+                    output.push('[');
+                    let empty = values.is_empty();
+                    for value in values {
+                        output.push_str(&format!("{}, ", value.as_text(data.clone()).await?));
+                    }
+                    if !empty {
+                        output.pop();
+                        output.pop();
+                    }
+                    output.push(']');
+                    Ok(output)
+                }
+                Value::Map(map) => {
+                    let mut output = String::new();
+                    output.push('[');
+                    let empty = map.is_empty();
+                    for (key, value) in map {
+                        output.push_str(&format!(
+                            "{}: {}, ",
+                            key,
+                            value.as_text(data.clone()).await?
+                        ));
+                    }
+                    if !empty {
+                        output.pop();
+                        output.pop();
+                    }
+                    output.push(']');
+                    Ok(output)
+                }
+                Value::Var(label) => data.vars.get_var_value(&label)?.as_text(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_text(data.clone())
+                        .await
+                }
+                Value::None => Err(self.gen_conversion_err_to_type(FslType::Text).into()),
             }
-            FslType::Map => {
-                value = Value::Map(self.as_map(data.clone()).await?);
-            }
-            FslType::Var => {
-                value = self.get_var_value(data.clone())?;
-            }
-            FslType::Command => {
-                let result = self.as_command()?.execute(data.clone()).await?;
-                value = result.as_raw(data.clone(), valid_types).await?;
-            }
-            FslType::None => value = self,
-        }
+        })
+    }
 
-        if valid_types.contains(&value.as_type()) {
-            Ok(value)
-        } else {
-            Err(value.gen_conversion_err_to_types(valid_types).into())
-        }
+    pub fn as_list(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Vec<Value<'c>>, ExecutionError> {
+        Box::pin(async {
+            let to_type = FslType::List;
+            match self {
+                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::List(mut values) => {
+                    for value in values.iter_mut() {
+                        if value.is_type(FslType::Command) {
+                            let new_value = std::mem::take(value)
+                                .as_command()?
+                                .execute(data.clone())
+                                .await?;
+                            *value = new_value
+                        }
+                    }
+                    Ok(values)
+                }
+                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Var(label) => data.vars.get_var_value(&label)?.as_list(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_list(data.clone())
+                        .await
+                }
+                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+            }
+        })
+    }
+
+    pub fn as_map(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, HashMap<String, Value<'c>>, ExecutionError> {
+        Box::pin(async {
+            let to_type = FslType::Map;
+            match self {
+                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Map(mut map) => {
+                    for (_, value) in map.iter_mut() {
+                        if value.is_type(FslType::Command) {
+                            let new_value = std::mem::take(value)
+                                .as_command()?
+                                .execute(data.clone())
+                                .await?;
+                            *value = new_value
+                        }
+                    }
+                    Ok(map)
+                }
+                Value::Var(label) => data.vars.get_var_value(&label)?.as_map(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_map(data.clone())
+                        .await
+                }
+                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+            }
+        })
+    }
+
+    pub fn as_raw(
+        self,
+        data: Arc<InterpreterData<'c>>,
+        valid_types: &'static [FslType],
+    ) -> ValueResult<'c, Value<'c>, ExecutionError> {
+        Box::pin(async move {
+            let value;
+            match self.as_type() {
+                FslType::Int => value = self,
+                FslType::Float => value = self,
+                FslType::Bool => value = self,
+                FslType::Text => value = self,
+                FslType::List => {
+                    value = Value::List(self.as_list(data.clone()).await?);
+                }
+                FslType::Map => {
+                    value = Value::Map(self.as_map(data.clone()).await?);
+                }
+                FslType::Var => {
+                    value = self.get_var_value(data.clone())?;
+                }
+                FslType::Command => {
+                    let result = self.as_command()?.execute(data.clone()).await?;
+                    value = result.as_raw(data.clone(), valid_types).await?;
+                }
+                FslType::None => value = self,
+            }
+
+            if valid_types.contains(&value.as_type()) {
+                Ok(value)
+            } else {
+                Err(value.gen_conversion_err_to_types(valid_types).into())
+            }
+        })
     }
 
     // Attempts to convert value to a value that can be used to access indices in a map or list
     pub async fn as_key(
         self,
-        data: Arc<InterpreterData>,
-        key_types: &[FslType],
-    ) -> Result<Vec<Value>, ExecutionError> {
+        data: Arc<InterpreterData<'c>>,
+        key_types: &'static [FslType],
+    ) -> Result<Vec<Value<'c>>, ExecutionError> {
         let accesor = self.as_raw(data.clone(), key_types).await?;
 
         match accesor {
@@ -409,7 +428,7 @@ impl Value {
         }
     }
 
-    pub fn as_command(self) -> Result<Command, ValueError> {
+    pub fn as_command(self) -> Result<Command<'c>, ValueError> {
         if let Value::Command(command) = self {
             Ok(*command)
         } else {
@@ -419,9 +438,9 @@ impl Value {
         }
     }
 
-    pub fn get_var_label(&self) -> Result<&str, ValueError> {
+    pub fn get_var_label(&self) -> Result<Cow<'c, str>, ValueError> {
         if let Value::Var(label) = self {
-            Ok(label)
+            Ok(label.clone())
         } else {
             Err(ValueError::InvalidVarName(format!(
                 "{} is not a valid var name",
@@ -438,7 +457,7 @@ impl Value {
         }
     }
 
-    pub fn get_var_value(&self, data: Arc<InterpreterData>) -> Result<Value, ValueError> {
+    pub fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, ValueError> {
         if let Value::Var(label) = self {
             match data.vars.get_var_value(label) {
                 Ok(value) => match value {
@@ -474,7 +493,7 @@ impl Value {
     }
 }
 
-impl ToString for Value {
+impl<'c> ToString for Value<'c> {
     fn to_string(&self) -> String {
         match self {
             Value::Int(value) => value.to_string(),
@@ -490,50 +509,50 @@ impl ToString for Value {
     }
 }
 
-impl From<i64> for Value {
+impl<'c> From<i64> for Value<'c> {
     fn from(value: i64) -> Self {
         Value::Int(value)
     }
 }
 
-impl From<f64> for Value {
+impl<'c> From<f64> for Value<'c> {
     fn from(value: f64) -> Self {
         Value::Float(value)
     }
 }
 
-impl From<String> for Value {
+impl<'c> From<String> for Value<'c> {
     fn from(value: String) -> Self {
         Value::Text(value)
     }
 }
 
-impl From<&str> for Value {
+impl<'c> From<&str> for Value<'c> {
     fn from(value: &str) -> Self {
         Value::Text(value.to_string())
     }
 }
 
-impl From<char> for Value {
+impl<'c> From<char> for Value<'c> {
     fn from(value: char) -> Self {
         Value::Text(value.to_string())
     }
 }
 
-impl From<bool> for Value {
+impl<'c> From<bool> for Value<'c> {
     fn from(value: bool) -> Self {
         Value::Bool(value)
     }
 }
 
-impl From<Vec<Value>> for Value {
-    fn from(value: Vec<Value>) -> Self {
+impl<'c> From<Vec<Value<'c>>> for Value<'c> {
+    fn from(value: Vec<Value<'c>>) -> Self {
         Value::List(value)
     }
 }
 
-impl From<Command> for Value {
-    fn from(value: Command) -> Self {
+impl<'c> From<Command<'c>> for Value<'c> {
+    fn from(value: Command<'c>) -> Self {
         Value::Command(Box::new(value))
     }
 }
