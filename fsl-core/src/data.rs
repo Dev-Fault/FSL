@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     sync::{
         Arc,
@@ -16,7 +17,7 @@ use crate::{
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
 
-pub type UserCommands<'c> = HashMap<String, UserCommand<'c>>;
+pub type UserCommands<'c> = HashMap<Cow<'c, str>, UserCommand<'c>>;
 
 #[derive(Debug)]
 pub struct InterpreterFlags {
@@ -56,7 +57,7 @@ pub struct InterpreterData<'c> {
 
 impl<'c> InterpreterData<'c> {
     pub fn new_bounded(args: &Vec<String>) -> Self {
-        let args = args.iter().map(|s| Value::Text(s.clone())).collect();
+        let args = args.iter().map(|s| Value::from(s.to_owned())).collect();
         InterpreterData {
             args: Mutex::new(args),
             output: Mutex::new(String::new()),
@@ -72,7 +73,7 @@ impl<'c> InterpreterData<'c> {
     }
 
     pub fn new_unbounded(args: &Vec<String>) -> Self {
-        let args = args.iter().map(|s| Value::Text(s.clone())).collect();
+        let args = args.iter().map(|s| Value::from(s.to_owned())).collect();
         InterpreterData {
             args: Mutex::new(args),
             output: Mutex::new(String::new()),

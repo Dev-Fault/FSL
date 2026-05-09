@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use tokio_stream::StreamExt;
 
@@ -21,11 +21,12 @@ pub async fn exec<'c>(
     let mut args = command.take_args();
     let program = args.pop_front().unwrap().as_text(data.clone()).await?;
     let args = tokio_stream::iter(args.into_iter());
-    let args: Vec<String> = args
+    let args: Vec<Cow<'c, str>> = args
         .then(|v| v.as_text(data.clone()))
-        .collect::<Result<Vec<String>, _>>()
+        .collect::<Result<Vec<Cow<'c, str>>, _>>()
         .await?;
-    let output = tokio::process::Command::new(program)
+    let args: Vec<&str> = args.iter().map(|cs| &**cs).collect();
+    let output = tokio::process::Command::new(&*program)
         .args(args)
         .output()
         .await
@@ -38,7 +39,7 @@ pub async fn exec<'c>(
 
     let output = String::from_utf8_lossy(&output.stdout);
 
-    Ok(Value::Text(output.into_owned()))
+    Ok(Value::from(output.into_owned()))
 }
 
 pub const SH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
@@ -51,7 +52,7 @@ pub async fn sh<'c>(
     let script = args.pop_front().unwrap().as_text(data).await?;
     let output = tokio::process::Command::new("sh")
         .arg("-c")
-        .arg(script)
+        .arg(&*script)
         .output()
         .await
         .map_err(|e| CommandError::Custom(e.to_string()))?;
@@ -63,5 +64,5 @@ pub async fn sh<'c>(
 
     let output = String::from_utf8_lossy(&output.stdout);
 
-    Ok(Value::Text(output.into_owned()))
+    Ok(Value::from(output.into_owned()))
 }

@@ -320,7 +320,7 @@ impl<'c> Clone for Command<'c> {
 
 #[derive(Debug, Clone)]
 pub struct UserCommand<'c> {
-    pub label: String,
+    pub label: Cow<'c, str>,
     pub parameters: VecDeque<Cow<'c, str>>,
     pub commands: Vec<Command<'c>>,
 }

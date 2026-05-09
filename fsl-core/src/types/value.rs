@@ -11,7 +11,7 @@ use crate::{
     error::{ExecutionError, ValueError},
     types::{FslType, command::Command},
 };
-pub type FslMap<'c> = HashMap<String, Value<'c>>;
+pub type FslMap<'c> = HashMap<Cow<'c, str>, Value<'c>>;
 pub type ValueResult<'c, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'c>>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,7 +19,7 @@ pub enum Value<'c> {
     Int(i64),
     Float(f64),
     Bool(bool),
-    Text(String),
+    Text(Cow<'c, str>),
     List(Vec<Value<'c>>),
     Map(FslMap<'c>),
     Var(Cow<'c, str>),
@@ -75,7 +75,7 @@ impl<'c> Value<'c> {
             Value::Int(_) => Some(size_of::<Value>()),
             Value::Float(_) => Some(size_of::<Value>()),
             Value::Bool(_) => Some(size_of::<Value>()),
-            Value::Text(str) => Some(size_of::<Value>().checked_add(str.capacity())?),
+            Value::Text(str) => Some(size_of::<Value>().checked_add(str.len())?),
             Value::List(list) => {
                 let mut size: usize = size_of::<Value>().checked_add(size_of::<Vec<Value>>())?;
                 for element in list {
@@ -89,12 +89,12 @@ impl<'c> Value<'c> {
                 for key_value_pair in map {
                     let key = key_value_pair.0;
                     let value = key_value_pair.1;
-                    size = size.checked_add(key.capacity())?;
+                    size = size.checked_add(key.len())?;
                     size = size.checked_add(value.mem_size()?)?;
                 }
                 Some(size)
             }
-            Value::Var(_) => Some(size_of::<Value>().checked_add(size_of::<&str>())?),
+            Value::Var(var) => Some(size_of::<Value>().checked_add(var.len())?),
             Value::Command(command) => Some(size_of::<Value>().checked_add(command.mem_size()?)?),
             Value::None => Some(size_of::<Value>()),
         }
@@ -252,13 +252,13 @@ impl<'c> Value<'c> {
     pub fn as_text(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, String, ExecutionError> {
+    ) -> ValueResult<'c, Cow<'c, str>, ExecutionError> {
         Box::pin(async {
             match self {
-                Value::Int(value) => Ok(value.to_string()),
-                Value::Float(value) => Ok(value.to_string()),
+                Value::Int(value) => Ok(Cow::Owned(value.to_string())),
+                Value::Float(value) => Ok(Cow::Owned(value.to_string())),
                 Value::Text(value) => Ok(value),
-                Value::Bool(value) => Ok(value.to_string()),
+                Value::Bool(value) => Ok(Cow::Owned(value.to_string())),
                 Value::List(values) => {
                     let mut output = String::new();
                     output.push('[');
@@ -271,7 +271,7 @@ impl<'c> Value<'c> {
                         output.pop();
                     }
                     output.push(']');
-                    Ok(output)
+                    Ok(Cow::Owned(output))
                 }
                 Value::Map(map) => {
                     let mut output = String::new();
@@ -289,7 +289,7 @@ impl<'c> Value<'c> {
                         output.pop();
                     }
                     output.push(']');
-                    Ok(output)
+                    Ok(Cow::Owned(output))
                 }
                 Value::Var(label) => data.vars.get_var_value(&label)?.as_text(data).await,
                 Value::Command(command) => {
@@ -344,7 +344,7 @@ impl<'c> Value<'c> {
     pub fn as_map(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, HashMap<String, Value<'c>>, ExecutionError> {
+    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, ExecutionError> {
         Box::pin(async {
             let to_type = FslType::Map;
             match self {
@@ -523,19 +523,19 @@ impl<'c> From<f64> for Value<'c> {
 
 impl<'c> From<String> for Value<'c> {
     fn from(value: String) -> Self {
-        Value::Text(value)
+        Value::Text(Cow::Owned(value))
     }
 }
 
-impl<'c> From<&str> for Value<'c> {
-    fn from(value: &str) -> Self {
-        Value::Text(value.to_string())
+impl<'c> From<&'c str> for Value<'c> {
+    fn from(value: &'c str) -> Self {
+        Value::Text(Cow::Borrowed(value))
     }
 }
 
 impl<'c> From<char> for Value<'c> {
     fn from(value: char) -> Self {
-        Value::Text(value.to_string())
+        Value::Text(Cow::Owned(value.to_string()))
     }
 }
 

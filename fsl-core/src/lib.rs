@@ -266,7 +266,7 @@ impl FslInterpreter {
                 );
 
                 let mut args = VecDeque::new();
-                args.push_back(Value::Var(Cow::Owned(label)));
+                args.push_back(Value::Var(label));
 
                 for arg in expression.args {
                     args.push_back(
@@ -318,7 +318,7 @@ impl FslInterpreter {
                         }
                     }
                 }
-                ArgType::String(cow) => Ok(Value::Text(cow.into_owned())),
+                ArgType::String(cow) => Ok(Value::Text(cow)),
                 ArgType::Keyword(keyword) => match keyword {
                     lexer::TRUE => Ok(Value::Bool(true)),
                     lexer::FALSE => Ok(Value::Bool(false)),

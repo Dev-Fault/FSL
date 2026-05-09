@@ -459,7 +459,7 @@ pub async fn precision<'c>(
     let precision = arg_1.as_usize(data).await?;
     let formatted = format!("{:.prec$}", num, prec = precision);
 
-    Ok(Value::Text(formatted))
+    Ok(Value::Text(Cow::Owned(formatted)))
 }
 
 pub const STORE_RULES: &[ArgRule] = &[
@@ -1212,12 +1212,12 @@ async fn get_nested<'c>(
         ))),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
-            let return_value = map.get(&key).cloned();
+            let return_value = map.get(&*key).cloned();
             Ok(return_value.unwrap_or(Value::None))
         }
         [key, rest @ ..] => {
             let key = key.clone().as_text(data.clone()).await?;
-            match map.get(&key) {
+            match map.get(&*key) {
                 Some(Value::Map(inner_map)) => get_nested(inner_map, rest, data).await,
                 Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
@@ -1263,7 +1263,7 @@ async fn set_nested<'c>(
         ))),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
-            if let Some(_) = map.get(&key) {
+            if let Some(_) = map.get(&*key) {
                 let return_value = map.insert(key, value);
                 Ok(return_value.unwrap_or(Value::None))
             } else {
@@ -1274,7 +1274,7 @@ async fn set_nested<'c>(
         }
         [key, rest @ ..] => {
             let key = key.clone().as_text(data.clone()).await?;
-            match map.get_mut(&key) {
+            match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => set_nested(inner_map, rest, value, data).await,
                 Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
@@ -1300,12 +1300,12 @@ async fn remove_nested<'c>(
         ))),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
-            let return_value = map.remove(&key);
+            let return_value = map.remove(&*key);
             Ok(return_value.unwrap_or(Value::None))
         }
         [key, rest @ ..] => {
             let key = key.clone().as_text(data.clone()).await?;
-            match map.get_mut(&key) {
+            match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => remove_nested(inner_map, rest, data).await,
                 Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
@@ -1337,7 +1337,7 @@ async fn insert_nested<'c>(
         }
         [key, rest @ ..] => {
             let key = key.clone().as_text(data.clone()).await?;
-            match map.get_mut(&key) {
+            match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => insert_nested(inner_map, rest, value, data).await,
                 Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
@@ -1421,7 +1421,7 @@ pub async fn remove<'c>(
     let array = arg_0.as_raw(data.clone(), COLLECTION).await?;
 
     match array {
-        Value::Text(mut text) => {
+        Value::Text(text) => {
             let mut key = key;
             if key.len() > 1 {
                 return Err(CommandError::IndexOutOfBounds);
@@ -1433,11 +1433,14 @@ pub async fn remove<'c>(
 
             match text.chars().nth(i) {
                 Some(_) => {
+                    let mut text = text.into_owned();
                     let return_value = text.remove(i).to_string();
+                    // TODO shouldn't need to clone this if value is not var
+                    let text = Value::Text(Cow::Owned(text));
 
-                    update_if_var(var, Value::Text(text), data)?;
+                    update_if_var(var, text, data)?;
 
-                    Ok(Value::Text(return_value))
+                    Ok(Value::from(return_value))
                 }
                 None => Err(CommandError::IndexOutOfBounds),
             }
@@ -1493,8 +1496,8 @@ pub async fn swap<'c>(
 
             if a < chars.len() && b < chars.len() {
                 chars.swap(a, b);
-                let text = chars.iter().collect();
-                update_if_var(var, Value::Text(text), data)?;
+                let text: String = chars.iter().collect();
+                update_if_var(var, Value::from(text), data)?;
                 Ok(Value::None)
             } else {
                 Err(CommandError::IndexOutOfBounds)
@@ -1574,9 +1577,9 @@ pub async fn replace<'c>(
                         "text replacement value must be a single character".to_string(),
                     ))?;
 
-                    let text = chars.iter().collect();
-                    update_if_var(var, Value::Text(text), data)?;
-                    Ok(Value::Text(old_ch.to_string()))
+                    let text: String = chars.iter().collect();
+                    update_if_var(var, Value::from(text), data)?;
+                    Ok(Value::Text(Cow::Owned(old_ch.to_string())))
                 }
                 None => Err(CommandError::IndexOutOfBounds),
             }
@@ -1627,7 +1630,7 @@ pub async fn insert<'c>(
     let array = arg_0.as_raw(data.clone(), COLLECTION).await?;
 
     match array {
-        Value::Text(mut text) => {
+        Value::Text(text) => {
             let mut key = key;
             if key.len() > 1 {
                 return Err(CommandError::IndexOutOfBounds);
@@ -1639,13 +1642,15 @@ pub async fn insert<'c>(
 
             let text_to_insert = arg_2.as_text(data.clone()).await?;
 
+            let mut text = text.into_owned();
             if i <= text.len() {
                 text.insert_str(i, &text_to_insert);
             } else {
                 return Err(CommandError::IndexOutOfBounds);
             }
 
-            let return_value = update_if_var(var, Value::Text(text), data)?;
+            // TODO shouldn't need to clone Cow if value is not var
+            let return_value = update_if_var(var, Value::from(text), data)?;
 
             Ok(return_value)
         }
@@ -1696,11 +1701,12 @@ pub async fn push<'c>(
         .await?;
 
     match array {
-        Value::Text(mut text) => {
+        Value::Text(text) => {
             let text_to_push = arg_1.as_text(data.clone()).await?;
+            let mut text = text.into_owned();
             text.push_str(&text_to_push);
 
-            update_if_var(var, Value::Text(text), data)?;
+            update_if_var(var, Value::from(text), data)?;
             Ok(Value::None)
         }
         Value::List(mut list) => {
@@ -1728,13 +1734,14 @@ pub async fn pop<'c>(
         .await?;
 
     match array {
-        Value::Text(mut text) => {
+        Value::Text(text) => {
+            let mut text = text.into_owned();
             let popped_text = text
                 .pop()
-                .map(|c| Value::Text(c.to_string()))
+                .map(|c| Value::from(c.to_string()))
                 .unwrap_or(Value::None);
 
-            update_if_var(var, Value::Text(text), data)?;
+            update_if_var(var, Value::from(text), data)?;
             Ok(popped_text)
         }
         Value::List(mut list) => {
@@ -1767,9 +1774,9 @@ pub async fn search_replace<'c>(
 
     let input = arg_0.as_text(data.clone()).await?;
 
-    let input = input.replace(&from, &to);
+    let input = input.replace(&*from, &to);
 
-    let return_value = update_if_var(var, Value::Text(input), data)?;
+    let return_value = update_if_var(var, Value::from(input), data)?;
     Ok(return_value)
 }
 
@@ -1791,7 +1798,7 @@ pub async fn slice_replace<'c>(
 
     let var = take_if_var(&mut arg_0, data.clone()).await?;
 
-    let mut input = arg_0.as_text(data.clone()).await?;
+    let input = arg_0.as_text(data.clone()).await?;
 
     if range.len() != 2 {
         return Err(CommandError::IndexOutOfBounds);
@@ -1810,9 +1817,10 @@ pub async fn slice_replace<'c>(
         )));
     }
 
+    let mut input = input.into_owned();
     input.replace_range(from..to, &with);
 
-    let return_value = update_if_var(var, Value::Text(input), data)?;
+    let return_value = update_if_var(var, Value::from(input), data)?;
     Ok(return_value)
 }
 
@@ -1933,7 +1941,7 @@ pub async fn contains<'c>(
     match collection {
         Value::Text(text) => {
             let item = &item.as_text(data).await?;
-            Ok(Value::Bool(text.contains(item)))
+            Ok(Value::Bool(text.contains(&**item)))
         }
         Value::List(list) => {
             let iter = tokio_stream::iter(list.into_iter());
@@ -1945,7 +1953,7 @@ pub async fn contains<'c>(
         }
         Value::Map(map) => {
             let key = item.as_text(data).await?;
-            Ok(Value::Bool(map.contains_key(&key)))
+            Ok(Value::Bool(map.contains_key(&*key)))
         }
         _ => unreachable!("as_raw should enforce type"),
     }
@@ -1963,7 +1971,7 @@ pub async fn starts_with<'c>(
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap().as_text(data.clone()).await?;
     let arg_1 = values.pop_front().unwrap().as_text(data.clone()).await?;
-    Ok(arg_0.starts_with(&arg_1).into())
+    Ok(arg_0.starts_with(&*arg_1).into())
 }
 
 pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
@@ -1978,7 +1986,7 @@ pub async fn ends_with<'c>(
     let mut values = command.take_args();
     let arg_0 = values.pop_front().unwrap().as_text(data.clone()).await?;
     let arg_1 = values.pop_front().unwrap().as_text(data.clone()).await?;
-    Ok(arg_0.ends_with(&arg_1).into())
+    Ok(arg_0.ends_with(&*arg_1).into())
 }
 
 pub const CONCAT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
@@ -2005,13 +2013,16 @@ pub async fn capitalize<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     let mut values = command.take_args();
-    let mut text = values.pop_front().unwrap().as_text(data).await?;
+    let text = values.pop_front().unwrap().as_text(data).await?;
     if text.len() < 1 {
         Ok("".into())
     } else {
-        if let Some(ch) = text.get_mut(0..1) {
-            ch.make_ascii_uppercase();
-        }
+        let mut chars = text.chars();
+        let text = if let Some(ch) = chars.next() {
+            Cow::Owned(ch.to_uppercase().collect::<String>() + chars.as_str())
+        } else {
+            text
+        };
         Ok(Value::Text(text))
     }
 }
@@ -2051,7 +2062,8 @@ pub async fn trim<'c>(
     let text = values.pop_front().unwrap().as_text(data.clone()).await?;
     let pattern = values.pop_front().unwrap().as_text(data).await?;
     let chars: Vec<char> = pattern.chars().collect();
-    Ok(text.trim_matches(chars.as_slice()).into())
+    let text = text.trim_matches(chars.as_slice());
+    Ok(Value::from(text.to_string()))
 }
 
 pub const IS_NUMBER_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
@@ -2165,9 +2177,9 @@ pub async fn split<'c>(
     let pattern = values.pop_front().unwrap().as_text(data.clone()).await?;
     let mut list: Vec<Value> = Vec::new();
 
-    for split in text_to_split.split(&pattern) {
+    for split in text_to_split.split(&*pattern) {
         if !split.is_empty() {
-            list.push(Value::Text(split.to_string()));
+            list.push(Value::from(split.to_string()));
         }
     }
     Ok(Value::List(list))
@@ -2274,7 +2286,7 @@ pub async fn def<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     let mut values = command.take_args();
-    let label = values.pop_front().unwrap().get_var_label()?.to_string();
+    let label = values.pop_front().unwrap().get_var_label()?;
     let mut parameters: VecDeque<Cow<'c, str>> = VecDeque::new();
     let mut commands: Vec<Command> = Vec::new();
 
@@ -2391,7 +2403,7 @@ pub async fn run<'c>(
 ) -> Result<Value<'c>, CommandError> {
     let mut values = command.take_args();
 
-    let command_label = values.pop_front().unwrap().get_var_label()?.to_string();
+    let command_label = values.pop_front().unwrap().get_var_label()?;
 
     let commands_lock = data.user_commands.lock().await;
 
@@ -2562,6 +2574,12 @@ pub mod tests {
             dbg!(&e);
             e.error_type == err.error_type
         })
+    }
+
+    pub async fn interpreter_results_in_error(code: &str) -> bool {
+        let result = FslInterpreter::new().interpret(code.to_string()).await;
+        dbg!(&result);
+        result.is_err()
     }
 
     #[tokio::test]
@@ -3076,12 +3094,12 @@ pub mod tests {
     //ﬃ
     #[tokio::test]
     async fn capitalize_non_capitalizable_character() {
-        test_interpreter(r#"capitalize("ﬆ").print()"#, "ﬆ").await;
+        assert!(interpreter_results_in_error(r#"capitalize("ﬆ").print()"#).await == false)
     }
 
     #[tokio::test]
     async fn capitalize_expandable_character() {
-        test_interpreter(r#"capitalize("ﬃ").print()"#, "ﬃ").await;
+        assert!(interpreter_results_in_error(r#"capitalize("ﬃ").print()"#).await == false)
     }
 
     #[tokio::test]
