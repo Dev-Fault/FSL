@@ -837,59 +837,217 @@ mod tests {
 
     #[test]
     fn tokenize_many_escapes() {
-        let mut lexer = Lexer::new(r#"trim("\"hey\".", ".\"").print()"#);
-        while let Some(token) = lexer.next() {
-            dbg!(token.unwrap().token_type);
-        }
-        /*
+        let lexer = Lexer::new(r#"trim("\"hey\".", ".\"").print()"#);
         let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
         let expected = tokens![
+            (Command, "trim"),
+            (Symbol, "("),
+            (Symbol, "\""),
+            (String, "\\\"hey\\\"."),
+            (Symbol, "\""),
+            (Symbol, ","),
+            (Symbol, "\""),
+            (String, ".\\\""),
+            (Symbol, "\""),
+            (Symbol, ")"),
+            (Symbol, "."),
             (Command, "print"),
             (Symbol, "("),
-            (Command, "add"),
-            (Symbol, "("),
-            (Number, "1"),
-            (Symbol, ","),
-            (Number, "2"),
             (Symbol, ")"),
-            (Symbol, ")")
         ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
         assert!(tokens == expected);
-        */
     }
 
     #[test]
     fn tokenize_advanced_1() {
-        let mut lexer = Lexer::new(
+        let lexer = Lexer::new(
             r#"
-            text.store("  hello world  ")
-            result.store(
-                text
-                    .remove_whitespace()
-                    .uppercase()
-                    .concat("!!!")
-            )
-            print(result)
-            "#,
+        text.store("  hello world  ")
+        result.store(
+            text
+                .remove_whitespace()
+                .uppercase()
+                .concat("!!!")
+        )
+        print(result)
+        "#,
         );
-        while let Some(token) = lexer.next() {
-            dbg!(token.unwrap().token_type);
-        }
-        /*
         let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
-        dbg!(&tokens);
         let expected = tokens![
+            (Identifier, "text"),
+            (Symbol, "."),
+            (Command, "store"),
+            (Symbol, "("),
+            (Symbol, "\""),
+            (String, "  hello world  "),
+            (Symbol, "\""),
+            (Symbol, ")"),
+            (Identifier, "result"),
+            (Symbol, "."),
+            (Command, "store"),
+            (Symbol, "("),
+            (Identifier, "text"),
+            (Symbol, "."),
+            (Command, "remove_whitespace"),
+            (Symbol, "("),
+            (Symbol, ")"),
+            (Symbol, "."),
+            (Command, "uppercase"),
+            (Symbol, "("),
+            (Symbol, ")"),
+            (Symbol, "."),
+            (Command, "concat"),
+            (Symbol, "("),
+            (Symbol, "\""),
+            (String, "!!!"),
+            (Symbol, "\""),
+            (Symbol, ")"),
+            (Symbol, ")"),
             (Command, "print"),
             (Symbol, "("),
+            (Identifier, "result"),
+            (Symbol, ")"),
+        ];
+        assert!(tokens == expected);
+    }
+    #[test]
+    fn tokenize_integer() {
+        let lexer = Lexer::new("store(42)");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Command, "store"),
+            (Symbol, "("),
+            (Number, "42"),
+            (Symbol, ")")
+        ];
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_float_in_command() {
+        let lexer = Lexer::new("store(3.14)");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Command, "store"),
+            (Symbol, "("),
+            (Number, "3.14"),
+            (Symbol, ")")
+        ];
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_negative_integer() {
+        let lexer = Lexer::new("store(-42)");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Command, "store"),
+            (Symbol, "("),
+            (Number, "-42"),
+            (Symbol, ")")
+        ];
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_negative_float() {
+        let lexer = Lexer::new("store(-3.14)");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Command, "store"),
+            (Symbol, "("),
+            (Number, "-3.14"),
+            (Symbol, ")")
+        ];
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_float_method_chain() {
+        let lexer = Lexer::new("3.14.floor()");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Number, "3.14"),
+            (Symbol, "."),
+            (Command, "floor"),
+            (Symbol, "("),
+            (Symbol, ")")
+        ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_int_method_chain() {
+        let lexer = Lexer::new("42.add(1)");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Number, "42"),
+            (Symbol, "."),
+            (Command, "add"),
+            (Symbol, "("),
+            (Number, "1"),
+            (Symbol, ")")
+        ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_float_in_list() {
+        let lexer = Lexer::new("[1.5, 2.5, 3.5]");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Symbol, "["),
+            (Number, "1.5"),
+            (Symbol, ","),
+            (Number, "2.5"),
+            (Symbol, ","),
+            (Number, "3.5"),
+            (Symbol, "]")
+        ];
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_zero_float() {
+        let lexer = Lexer::new("store(0.0)");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Command, "store"),
+            (Symbol, "("),
+            (Number, "0.0"),
+            (Symbol, ")")
+        ];
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_multiple_numbers() {
+        let lexer = Lexer::new("add(1, 2.5, -3, -4.5)");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
             (Command, "add"),
             (Symbol, "("),
             (Number, "1"),
             (Symbol, ","),
-            (Number, "2"),
-            (Symbol, ")"),
+            (Number, "2.5"),
+            (Symbol, ","),
+            (Number, "-3"),
+            (Symbol, ","),
+            (Number, "-4.5"),
             (Symbol, ")")
         ];
         assert!(tokens == expected);
-        */
     }
 }

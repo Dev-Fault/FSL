@@ -2310,7 +2310,7 @@ pub async fn def<'c>(
 
     let mut user_commands = data.user_commands.lock().await;
     let user_command = UserCommand {
-        label: label.clone(),
+        label: label.clone(), // Clone should be cheap since Cow is usually &str
         parameters,
         commands: commands,
     };
@@ -2707,7 +2707,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn store_var_in_var() {
-        test_interpreter("a.store(1), b.store(a) print(b)", "1").await;
+        test_interpreter("a.store(1) b.store(a) print(b)", "1").await;
     }
 
     #[tokio::test]
@@ -2731,7 +2731,7 @@ pub mod tests {
     #[tokio::test]
     async fn print_values() {
         test_interpreter(
-            r#"a.store(1), print("1", " ", 1, " ", a, " ", [1])"#,
+            r#"a.store(1) print("1", " ", 1, " ", a, " ", [1])"#,
             "1 1 1 [1]",
         )
         .await;
@@ -2897,7 +2897,7 @@ pub mod tests {
     #[tokio::test]
     async fn while_loop() {
         test_interpreter(
-            r#"i.store(0), while(i.lt(3), print(i, " "), i.inc())"#,
+            r#"i.store(0) while(i.lt(3), print(i, " "), i.inc())"#,
             "0 1 2 ",
         )
         .await;
@@ -2905,7 +2905,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn repeat() {
-        test_interpreter(r#"i.store(0), repeat(3, print(i, " "), i.inc())"#, "0 1 2 ").await;
+        test_interpreter(r#"i.store(0) repeat(3, print(i, " "), i.inc())"#, "0 1 2 ").await;
     }
 
     #[tokio::test]

@@ -1,12 +1,8 @@
-use std::{
-    borrow::Cow,
-    collections::{HashMap, VecDeque},
-    fmt::Display,
-};
+use std::{borrow::Cow, collections::VecDeque, fmt::Display};
 
 use crate::lexer::{LexError, Lexer, Symbol, Token, TokenType};
 
-type Map<'code> = HashMap<&'code str, ArgType<'code>>;
+type Map<'code> = Vec<(&'code str, ArgType<'code>)>;
 type List<'code> = Vec<ArgType<'code>>;
 type Path<'code> = VecDeque<ArgType<'code>>;
 
@@ -149,6 +145,10 @@ impl<'code> Parser<'code> {
         }
     }
 
+    fn pend_map(&mut self, map: Map<'code>, token: Token<'code>) {
+        self.pending.push(Pending::new(PendingArg::Map(map), token));
+    }
+
     fn pend_map_with_value(
         &mut self,
         map: Map<'code>,
@@ -158,7 +158,7 @@ impl<'code> Parser<'code> {
     ) {
         let mut map = map;
         if let Some(value) = value {
-            map.insert(key, value);
+            map.push((key, value));
         }
         self.pending.push(Pending::new(PendingArg::Map(map), token));
     }
@@ -450,16 +450,27 @@ impl<'code> Parser<'code> {
                 None => Err(ParseError::OutOfPlaceSymbol(token)),
             },
             PendingArg::List(mut list) => match list.pop() {
-                Some(last_arg) => {
-                    self.pend_list(list, token);
-                    Ok(self.pend_dot_arg(last_arg, token))
-                }
+                Some(last_arg) => match last_arg {
+                    ArgType::Expression(_) => {
+                        self.pend_list(list, token);
+                        Ok(self.pend_dot_arg(last_arg, token))
+                    }
+                    _ => Err(ParseError::OutOfPlaceSymbol(token)),
+                },
                 None => Err(ParseError::OutOfPlaceSymbol(token)),
             },
-            PendingArg::Map(mut map) => {
-                /* TODO Cannot handle this case at the moment since HashMap is unordered */
-                Err(ParseError::OutOfPlaceSymbol(token))
-            }
+            PendingArg::Map(mut map) => match map.pop() {
+                Some((key, value)) => match value {
+                    ArgType::Expression(_) => {
+                        self.pend_map(map, token);
+                        self.pend_key(key, token);
+                        self.pend_dot_arg(value, token);
+                        Ok(())
+                    }
+                    _ => Err(ParseError::OutOfPlaceSymbol(token)),
+                },
+                None => Err(ParseError::OutOfPlaceSymbol(token)),
+            },
             _ => Err(ParseError::OutOfPlaceSymbol(token)),
         }
     }
@@ -487,13 +498,6 @@ impl<'code> Parser<'code> {
                         }
                     },
                     None => Ok(self.pend_dot_arg(arg, token)),
-                },
-                PendingArg::Expression(mut expr) => match expr.args.pop() {
-                    Some(last_arg) => {
-                        self.pend_expr(expr, token);
-                        Ok(self.pend_dot_arg(last_arg, token))
-                    }
-                    None => Err(ParseError::OutOfPlaceValue(pending.token)),
                 },
                 _ => self.try_find_last_expression(token, pending),
             },
@@ -526,9 +530,8 @@ impl<'code> Parser<'code> {
                         _ => Err(ParseError::OutOfPlaceValue(parent.token)),
                     },
                     None => {
-                        // No parent structure to place value, value can be placed back on pending stack
-                        self.pend_done(value, token);
-                        Ok(())
+                        // Top level commas not allowed
+                        Err(ParseError::OutOfPlaceSymbol(token))
                     }
                 },
                 _ => {
@@ -946,14 +949,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_advanced_1() {
+    fn command_as_structure() {
         let parser = Parser::new(
             r#"
-        counter.store(0)
-        repeat(0,
-            counter.store(add(counter, 1))
-        )
-        print(counter)
+            counter.store(0)
+            repeat(0,
+                counter.store(add(counter, 1))
+            )
+            print(counter)
         "#
             .trim_matches(|c: char| c.is_whitespace()),
         );
@@ -992,7 +995,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_advanced_2() {
+    fn large_chained_command() {
         let parser = Parser::new(
             r#"
                 text.remove_whitespace().uppercase().concat("!!!")
@@ -1021,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_advanced_3() {
+    fn command_with_large_chained_arg() {
         let parser = Parser::new(
             r#"
             text.store("  hello world  ")
@@ -1075,7 +1078,7 @@ mod tests {
         assert!(expected == parsed)
     }
     #[test]
-    fn parse_advanced_4() {
+    fn multiple_commands_mixed_values() {
         let parser = Parser::new(
             r#"
                 empty.store([])
@@ -1126,7 +1129,7 @@ mod tests {
         assert!(expected == parsed)
     }
     #[test]
-    fn parse_advanced_5() {
+    fn chained_command_with_list_with_command() {
         let parser = Parser::new(
             r#"
                 index([1, add(1, 1), 3], ["one"]).print()
@@ -1533,7 +1536,6 @@ mod tests {
         );
     }
 
-    //  let result = Parser::new("outer(inner2([c, [d]]))").parse();
     #[test]
     fn list_with_expressions() {
         let result = Parser::new("list.store([1, add(2, 3), 4])").parse();
@@ -1935,7 +1937,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_trailing_commas() {
+    fn multiple_trailing_commas_should_error() {
         let result = Parser::new("data.store([1, 2,,,,,])").parse();
         dbg!(&result);
         assert!(result.is_err());
@@ -2046,12 +2048,12 @@ mod tests {
                 name: "store",
                 args: vec![
                     ArgType::Identifier("player"),
-                    ArgType::Map(HashMap::from([
+                    ArgType::Map(vec![
                         ("name", ArgType::String(Cow::Borrowed("blah"))),
                         ("health", ArgType::Number("100")),
                         ("dodge", ArgType::Number("0")),
                         ("strength", ArgType::Number("0")),
-                    ]))
+                    ])
                 ]
             }]
         );
@@ -2076,7 +2078,7 @@ mod tests {
                 name: "store",
                 args: vec![
                     ArgType::Identifier("player"),
-                    ArgType::Map(HashMap::from([
+                    ArgType::Map(vec![
                         ("name", ArgType::String(Cow::Borrowed("blah"))),
                         (
                             "items",
@@ -2086,7 +2088,7 @@ mod tests {
                                 ArgType::Identifier("z"),
                             ])
                         ),
-                    ]))
+                    ])
                 ]
             }]
         );
@@ -2120,22 +2122,22 @@ mod tests {
                 name: "store",
                 args: vec![
                     ArgType::Identifier("player"),
-                    ArgType::Map(HashMap::from([
+                    ArgType::Map(vec![
                         ("name", ArgType::String(Cow::Borrowed("blah"))),
                         (
                             "inventory",
                             ArgType::List(vec![
-                                ArgType::Map(HashMap::from([
+                                ArgType::Map(vec![
                                     ("name", ArgType::String(Cow::Borrowed("sword"))),
                                     ("damage", ArgType::Number("10")),
-                                ])),
-                                ArgType::Map(HashMap::from([
+                                ]),
+                                ArgType::Map(vec![
                                     ("name", ArgType::String(Cow::Borrowed("shield"))),
                                     ("defense", ArgType::Number("5")),
-                                ])),
+                                ]),
                             ])
                         ),
-                    ]))
+                    ])
                 ]
             }]
         );
@@ -2163,16 +2165,16 @@ mod tests {
                 name: "store",
                 args: vec![
                     ArgType::Identifier("player"),
-                    ArgType::Map(HashMap::from([
+                    ArgType::Map(vec![
                         ("name", ArgType::String(Cow::Borrowed("blah"))),
                         (
                             "stats",
-                            ArgType::Map(HashMap::from([
+                            ArgType::Map(vec![
                                 ("health", ArgType::Number("100")),
                                 ("strength", ArgType::Number("10")),
-                            ]))
+                            ])
                         ),
-                    ]))
+                    ])
                 ]
             }]
         );
@@ -2202,19 +2204,19 @@ mod tests {
                 name: "store",
                 args: vec![
                     ArgType::Identifier("world"),
-                    ArgType::Map(HashMap::from([(
+                    ArgType::Map(vec![(
                         "player",
-                        ArgType::Map(HashMap::from([
+                        ArgType::Map(vec![
                             ("name", ArgType::String(Cow::Borrowed("blah"))),
                             (
                                 "location",
-                                ArgType::Map(HashMap::from([
+                                ArgType::Map(vec![
                                     ("x", ArgType::Number("0")),
                                     ("y", ArgType::Number("0")),
-                                ]))
+                                ])
                             ),
-                        ]))
-                    )]))
+                        ])
+                    )])
                 ]
             }]
         );
@@ -2236,7 +2238,7 @@ mod tests {
             name: "store",
             args: vec![
                 ArgType::Identifier("player"),
-                ArgType::Map(HashMap::from([
+                ArgType::Map(vec![
                     (
                         "name",
                         ArgType::Expression(Expression {
@@ -2251,7 +2253,7 @@ mod tests {
                             args: vec![ArgType::Number("50"), ArgType::Number("50")],
                         }),
                     ),
-                ])),
+                ]),
             ],
         }];
         println!("==GOT==\n");
@@ -2449,5 +2451,102 @@ mod tests {
         .parse();
         dbg!(&result);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn comma_outside_of_container() {
+        let result = Parser::new(
+            r#"
+            print("invalid"),
+            print("comma")
+            "#,
+        )
+        .parse();
+        dbg!(&result);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn map_dot_arg() {
+        let parsed = Parser::new(
+            r#"
+            player.store([
+                name: "blah",
+                weapon: "big".uppercase().concat(" ", "sword")
+            ])
+        "#,
+        )
+        .parse()
+        .unwrap();
+        let expected = vec![Expression {
+            name: "store",
+            args: vec![
+                ArgType::Identifier("player"),
+                ArgType::Map(vec![
+                    ("name", ArgType::String("blah".into())),
+                    (
+                        "weapon",
+                        ArgType::Expression(Expression {
+                            name: "concat",
+                            args: vec![
+                                ArgType::Expression(Expression {
+                                    name: "uppercase",
+                                    args: vec![ArgType::String("big".into())],
+                                }),
+                                ArgType::String(" ".into()),
+                                ArgType::String("sword".into()),
+                            ],
+                        }),
+                    ),
+                ]),
+            ],
+        }];
+        println!("==GOT==\n");
+        dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
+        assert!(parsed == expected);
+    }
+
+    #[test]
+    fn map_dot_arg_with_trailing_commas() {
+        let parsed = Parser::new(
+            r#"
+            player.store([
+                name: "blah",
+                weapon: "big".uppercase().concat(" ", "sword"),
+            ],)
+        "#,
+        )
+        .parse()
+        .unwrap();
+        let expected = vec![Expression {
+            name: "store",
+            args: vec![
+                ArgType::Identifier("player"),
+                ArgType::Map(vec![
+                    ("name", ArgType::String("blah".into())),
+                    (
+                        "weapon",
+                        ArgType::Expression(Expression {
+                            name: "concat",
+                            args: vec![
+                                ArgType::Expression(Expression {
+                                    name: "uppercase",
+                                    args: vec![ArgType::String("big".into())],
+                                }),
+                                ArgType::String(" ".into()),
+                                ArgType::String("sword".into()),
+                            ],
+                        }),
+                    ),
+                ]),
+            ],
+        }];
+        println!("==GOT==\n");
+        dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
+        assert!(parsed == expected);
     }
 }

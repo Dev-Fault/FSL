@@ -5,7 +5,6 @@ use std::{
 };
 
 use futures::FutureExt;
-use tokio::sync::Mutex;
 
 use crate::{
     commands::*,
@@ -41,6 +40,7 @@ pub struct FslInterpreter {
     bounded: bool,
 }
 
+// TODO make a companion macro to make creating handlers externally easy
 macro_rules! register_commands {
     ($self:expr, [
         $( ($label:expr, $rules:expr, $executor:path) ),* $(,)?
@@ -119,8 +119,8 @@ impl FslInterpreter {
             true => InterpreterData::new_bounded(&self.args),
             false => InterpreterData::new_unbounded(&self.args),
         };
-        let definitions = Arc::new(Mutex::new(self.command_definitions.clone()));
-        Self::evaluate_expressions(data.into(), definitions, &input).await
+        let definitions = Arc::new(self.command_definitions.clone());
+        Self::execute_expressions(data.into(), definitions, &input).await
     }
 
     /// Recursively interprets code inside {}'s
@@ -141,14 +141,13 @@ impl FslInterpreter {
                 } else {
                     match code_stack.pop() {
                         Some(code) => {
-                            let definitions =
-                                Arc::new(Mutex::new(self.command_definitions.clone()));
+                            let definitions = Arc::new(self.command_definitions.clone());
                             let data = match self.bounded {
                                 true => InterpreterData::new_bounded(&self.args),
                                 false => InterpreterData::new_unbounded(&self.args),
                             };
                             let result =
-                                Self::evaluate_expressions(Arc::from(data), definitions, &code)
+                                Self::execute_expressions(Arc::from(data), definitions, &code)
                                     .await;
                             match result {
                                 Ok(eval) => match code_stack.last_mut() {
@@ -178,24 +177,35 @@ impl FslInterpreter {
         Ok(output)
     }
 
-    async fn evaluate_expressions<'c>(
+    async fn execute_expressions<'c>(
         data: Arc<InterpreterData<'c>>,
-        command_definitions: Arc<Mutex<CommandDefinitions>>,
+        command_definitions: Arc<CommandDefinitions>,
         source: &'c str,
     ) -> Result<String, InterpreterError> {
         let expressions = Parser::new(source).parse();
         match expressions {
             Ok(expressions) => {
                 for expression in expressions {
-                    let command = match Self::parse_expression(
+                    let result = Self::parse_expression(
                         data.clone(),
                         command_definitions.clone(),
                         expression,
                     )
-                    .await
-                    {
+                    .await;
+                    match result {
                         Ok(value) => match value {
-                            Value::Command(command) => command,
+                            Value::Command(command) => match command.execute(data.clone()).await {
+                                Ok(_) => {}
+                                Err(e) if e.exited_program() => {
+                                    break;
+                                }
+                                Err(e) => {
+                                    return Err(InterpreterError::new(
+                                        InterpreterErrorType::Command(e),
+                                        Some(data.call_stack_to_string().await),
+                                    ));
+                                }
+                            },
                             _ => {
                                 unreachable!("parse expression should always return a command")
                             }
@@ -207,16 +217,6 @@ impl FslInterpreter {
                             ));
                         }
                     };
-                    if let Err(e) = command.execute(data.clone()).await {
-                        if e.exited_program() {
-                            break;
-                        } else {
-                            return Err(InterpreterError::new(
-                                InterpreterErrorType::Command(e),
-                                Some(data.call_stack_to_string().await),
-                            ));
-                        }
-                    }
                 }
             }
             Err(e) => {
@@ -230,12 +230,10 @@ impl FslInterpreter {
 
     async fn parse_expression<'c>(
         data: Arc<InterpreterData<'c>>,
-        command_definitions: Arc<Mutex<CommandDefinitions>>,
+        command_definitions: Arc<CommandDefinitions>,
         expression: Expression<'c>,
     ) -> Result<Value<'c>, InterpreterError> {
-        let definitions = command_definitions.lock().await;
-        let command_def = definitions.get(expression.name).cloned();
-        drop(definitions);
+        let command_def = command_definitions.get(expression.name);
         if let Some(command_def) = command_def {
             let mut command = Command::from(command_def);
 
@@ -260,7 +258,7 @@ impl FslInterpreter {
 
             if let Some(label) = user_command_label {
                 let mut command = Command::new(
-                    expression.name.to_string(),
+                    expression.name,
                     RUN_RULES,
                     Handler::new(|command, data| commands::run(command, data).boxed()),
                 );
@@ -289,7 +287,7 @@ impl FslInterpreter {
 
     fn parse_arg<'c>(
         data: Arc<InterpreterData<'c>>,
-        command_definitions: Arc<Mutex<CommandDefinitions>>,
+        command_definitions: Arc<CommandDefinitions>,
         arg: ArgType<'c>,
     ) -> ValueResult<'c, Value<'c>, InterpreterError> {
         Box::pin(async {
@@ -469,12 +467,15 @@ mod interpreter {
     #[tokio::test]
     async fn handle_print_overflow() {
         test_interpreter(
-            "print(1000000000000000000000000000000000000000000000
+            &"print(1000000000000000000000000000000000000000000000
             00000000000000000000000000000000000000000000000000000
             00000000000000000000000000000000000000000000000000000
             00000000000000000000000000000000000000000000000000000
             00000000000000000000000000000000000000000000000000000
-            00000000000000000000000000000000000000000000000000000)",
+            00000000000000000000000000000000000000000000000000000)"
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>(),
             "inf",
         )
         .await;
@@ -483,10 +484,13 @@ mod interpreter {
     #[tokio::test]
     async fn handle_int_overflow() {
         test_interpreter_not_err(
-            "print(random_range(
+            &"print(random_range(
             100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
             123400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-            00000000000000000000000000000000000000000000000000000000000000000))",
+            00000000000000000000000000000000000000000000000000000000000000000))"
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
         )
         .await;
     }
@@ -668,7 +672,7 @@ mod interpreter {
     #[tokio::test]
     async fn print_var_list() {
         test_interpreter(
-            r#"a.store(0), b.store(0), c.store(0), print([a, b, c])"#,
+            r#"a.store(0) b.store(0), c.store(0), print([a, b, c])"#,
             r#"[0, 0, 0]"#,
         )
         .await;

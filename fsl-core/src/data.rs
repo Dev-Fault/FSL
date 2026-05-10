@@ -1,10 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
@@ -38,14 +35,13 @@ impl Default for InterpreterFlags {
 
 #[derive(Debug)]
 pub struct InterpreterData<'c> {
-    pub(crate) call_stack: Mutex<Vec<Arc<str>>>,
+    pub(crate) call_stack: Mutex<Vec<&'c str>>,
 
     pub args: Mutex<Vec<Value<'static>>>,
     pub output_limit: Option<usize>,
     pub output: Mutex<String>,
 
     pub vars: VarStack<'c>,
-
     pub user_commands: Mutex<UserCommands<'c>>,
 
     pub loop_limit: Option<usize>,
@@ -138,9 +134,9 @@ impl<'c> InterpreterData<'c> {
         }
     }
 
-    pub async fn push_call(&self, command_label: Arc<str>) {
+    pub async fn push_call(&self, command_label: &'c str) {
         let mut call_stack = self.call_stack.lock().await;
-        call_stack.push(command_label.clone());
+        call_stack.push(command_label);
     }
 
     pub async fn pop_call(&self) {

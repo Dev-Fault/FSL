@@ -98,19 +98,19 @@ impl CommandDefinition {
 }
 
 pub struct Command<'c> {
-    label: Arc<str>,
+    label: &'c str,
     arg_rules: &'static [ArgRule],
     args: VecDeque<Value<'c>>,
     handler: Handler,
 }
 
-impl<'c> From<CommandDefinition> for Command<'c> {
-    fn from(value: CommandDefinition) -> Self {
+impl<'c> From<&CommandDefinition> for Command<'c> {
+    fn from(value: &CommandDefinition) -> Self {
         Self {
-            label: Arc::from(value.label),
+            label: value.label,
             arg_rules: value.arg_rules,
             args: VecDeque::new(),
-            handler: value.handler,
+            handler: value.handler.clone(),
         }
     }
 }
@@ -124,11 +124,11 @@ impl<'c> Command<'c> {
         Some(size)
     }
 
-    pub fn new(label: String, arg_rules: &'static [ArgRule], handler: Handler) -> Self {
+    pub fn new(label: &'c str, arg_rules: &'static [ArgRule], handler: Handler) -> Self {
         Self {
             args: VecDeque::new(),
             handler: handler,
-            label: Arc::from(label),
+            label,
             arg_rules,
         }
     }
@@ -280,7 +280,7 @@ impl<'c> Command<'c> {
             return Ok(Value::None);
         }
 
-        data.push_call(self.label.clone()).await;
+        data.push_call(self.label).await;
 
         let handler = self.handler.clone();
         match handler.handle(self, data.clone()).await {
@@ -312,7 +312,7 @@ impl<'c> Clone for Command<'c> {
         Self {
             args: self.args.clone(),
             handler: self.handler.clone(),
-            label: self.label.clone(),
+            label: self.label,
             arg_rules: self.arg_rules,
         }
     }
