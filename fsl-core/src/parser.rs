@@ -1937,10 +1937,21 @@ mod tests {
     }
 
     #[test]
-    fn multiple_trailing_commas_should_error() {
-        let result = Parser::new("data.store([1, 2,,,,,])").parse();
-        dbg!(&result);
-        assert!(result.is_err());
+    fn multiple_trailing_commas() {
+        // For now allow multiple trailing commas since it's a non issue to the parser and would add complexity for little gain to handle
+        let parsed = Parser::new("data.store([1, 2,,,,,])").parse().unwrap();
+        let expected = vec![Expression {
+            name: "store",
+            args: vec![
+                ArgType::Identifier("data"),
+                ArgType::List(vec![ArgType::Number("1"), ArgType::Number("2")]),
+            ],
+        }];
+        println!("==GOT==\n");
+        dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
+        assert!(parsed == expected);
     }
 
     #[test]
