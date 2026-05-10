@@ -215,7 +215,7 @@ impl<'code> Token<'code> {
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum Context<'code> {
     String(Token<'code>),
-    Number(Token<'code>),
+    Float(Token<'code>),
     SingleLineComment,
     MultiLineComment(Token<'code>),
     None,
@@ -292,7 +292,7 @@ impl<'code> Lexer<'code> {
     pub fn ignore_quote(&self) -> bool {
         match self.context {
             Context::String(_) => false,
-            Context::Number(_) => true,
+            Context::Float(_) => false,
             Context::SingleLineComment => true,
             Context::MultiLineComment(_) => true,
             Context::None => false,
@@ -302,7 +302,7 @@ impl<'code> Lexer<'code> {
     pub fn ignore_hashtag(&self) -> bool {
         match self.context {
             Context::String(_) => true,
-            Context::Number(_) => true,
+            Context::Float(_) => false,
             Context::SingleLineComment => true,
             Context::MultiLineComment(_) => true,
             Context::None => false,
@@ -312,7 +312,7 @@ impl<'code> Lexer<'code> {
     pub fn ignore_new_line(&self) -> bool {
         match self.context {
             Context::String(_) => true,
-            Context::Number(_) => true,
+            Context::Float(_) => true,
             Context::SingleLineComment => false,
             Context::MultiLineComment(_) => true,
             Context::None => true,
@@ -322,7 +322,7 @@ impl<'code> Lexer<'code> {
     pub fn ignore_star(&self) -> bool {
         match self.context {
             Context::String(_) => true,
-            Context::Number(_) => true,
+            Context::Float(_) => false,
             Context::SingleLineComment => true,
             Context::MultiLineComment(_) => false,
             Context::None => false,
@@ -331,6 +331,10 @@ impl<'code> Lexer<'code> {
 
     pub fn no_context(&self) -> bool {
         matches!(self.context, Context::None)
+    }
+
+    pub fn reading_float(&self) -> bool {
+        matches!(self.context, Context::Float(_))
     }
 }
 
@@ -343,6 +347,7 @@ impl<'code> Iterator for Lexer<'code> {
         }
 
         while let Some((i, ch)) = self.rest.next() {
+            dbg!(&self.partial);
             let token = match ch {
                 ch if ch.is_whitespace() && self.no_context() => {
                     self.location += 1;
@@ -402,12 +407,16 @@ impl<'code> Iterator for Lexer<'code> {
                     self.pending = Some(token);
                     if self.partial.len() > 0 {
                         let token = Token::parse(self.input, self.partial, self.location);
-                        self.location += self.partial.len();
-                        self.partial = "";
-                        if matches!(token.token_type, TokenType::Number(_)) {
-                            self.pending = Some(token);
+                        if matches!(token.token_type, TokenType::Number(_))
+                            && self.rest.peek().is_some_and(|(_, c)| c.is_ascii_digit())
+                        {
+                            // Don't update self.location so that _ => branch includes dot in partial skipping need to recombine float later
+                            self.context = Context::Float(token);
+                            self.pending.take();
                             continue;
                         }
+                        self.location += self.partial.len();
+                        self.partial = "";
                         token
                     } else {
                         self.pending.take().unwrap()
@@ -415,29 +424,13 @@ impl<'code> Iterator for Lexer<'code> {
                 }
                 CLOSED_PAREN | CLOSED_BRACKET | COMMA if self.no_context() => {
                     if self.partial.len() > 0 {
-                        let mut rhs_token = Token::parse(self.input, self.partial, self.location);
-                        if let TokenType::Number(_) = rhs_token.token_type {
-                            if let Some(lhs_token) = self.pending {
-                                if let TokenType::Number(_) = lhs_token.token_type {
-                                    let full_token = &self.input
-                                        [lhs_token.location..rhs_token.location + rhs_token.len()];
-
-                                    match Token::number(self.input, full_token, lhs_token.location)
-                                    {
-                                        Ok(number) => rhs_token = number,
-                                        Err(_) => {
-                                            return Some(Err(LexError::InvalidNumber(lhs_token)));
-                                        }
-                                    };
-                                }
-                            }
-                        }
+                        let token = Token::parse(self.input, self.partial, self.location);
                         self.location += self.partial.len();
                         self.partial = "";
                         let symbol =
                             Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
                         self.pending = Some(symbol);
-                        rhs_token
+                        token
                     } else {
                         if let Some(token) = self.pending {
                             return Some(Err(LexError::UnexpectedToken(token)));
@@ -448,6 +441,20 @@ impl<'code> Iterator for Lexer<'code> {
                 '\n' if !self.ignore_new_line() => {
                     self.context = Context::None;
                     let token = Token::comment(self.input, self.partial, self.location);
+                    self.location += self.partial.len();
+                    self.partial = "";
+                    token
+                }
+                ch if self.reading_float() && !ch.is_ascii_digit() => {
+                    let token = Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
+                    self.pending = Some(token);
+                    self.context = Context::None;
+                    let token = match Token::number(self.input, self.partial, self.location) {
+                        Ok(token) => token,
+                        Err(e) => {
+                            return Some(Err(e));
+                        }
+                    };
                     self.location += self.partial.len();
                     self.partial = "";
                     token
@@ -474,7 +481,7 @@ impl<'code> Iterator for Lexer<'code> {
             Context::String(string) => {
                 return Some(Err(LexError::UnclosedString(string)));
             }
-            Context::Number(number) => {
+            Context::Float(number) => {
                 return Some(Err(LexError::InvalidNumber(number)));
             }
             Context::MultiLineComment(comment) => {
@@ -707,6 +714,20 @@ mod tests {
     fn tokenize_float_missing_suffix() {
         let lexer = Lexer::new("i.store(3.)");
         let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        // Leaving this here incase it is desirable to support missing float suffixes in the future
+        let expected = tokens![
+            (Identifier, "i"),
+            (Symbol, "."),
+            (Command, "store"),
+            (Symbol, "("),
+            (Number, "3"),
+            (Symbol, ")")
+        ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
+        assert!(tokens == expected);
         dbg!(&tokens);
     }
 
