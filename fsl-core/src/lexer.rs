@@ -347,7 +347,6 @@ impl<'code> Iterator for Lexer<'code> {
         }
 
         while let Some((i, ch)) = self.rest.next() {
-            dbg!(&self.partial);
             let token = match ch {
                 ch if ch.is_whitespace() && self.no_context() => {
                     self.location += 1;
