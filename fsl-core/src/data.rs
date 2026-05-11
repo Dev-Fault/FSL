@@ -52,8 +52,7 @@ pub struct InterpreterData<'c> {
 }
 
 impl<'c> InterpreterData<'c> {
-    pub fn new_bounded(args: &Vec<String>) -> Self {
-        let args = args.iter().map(|s| Value::from(s.to_owned())).collect();
+    pub fn new_bounded(args: Vec<Value<'static>>) -> Self {
         InterpreterData {
             args: Mutex::new(args),
             output: Mutex::new(String::new()),
@@ -68,8 +67,7 @@ impl<'c> InterpreterData<'c> {
         }
     }
 
-    pub fn new_unbounded(args: &Vec<String>) -> Self {
-        let args = args.iter().map(|s| Value::from(s.to_owned())).collect();
+    pub fn new_unbounded(args: Vec<Value<'static>>) -> Self {
         InterpreterData {
             args: Mutex::new(args),
             output: Mutex::new(String::new()),

@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
-use fsl_core::{FslInterpreter, libraries::Library};
+use fsl_core::{FslInterpreter, libraries::Library, types::value::Value};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -44,7 +44,7 @@ async fn main() {
     let mut interpreter = FslInterpreter::new_unbounded();
 
     if let Some(input) = input {
-        interpreter.add_arg(input).await;
+        interpreter.add_arg(Value::from(input)).await;
     }
 
     if let Err(e) = interpreter.register_library(Library::Exec) {

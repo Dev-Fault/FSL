@@ -36,7 +36,7 @@ pub type CommandDefinitions = HashMap<&'static str, CommandDefinition>;
 #[derive(Debug)]
 pub struct FslInterpreter {
     pub command_definitions: CommandDefinitions,
-    args: Vec<String>,
+    args: Vec<Value<'static>>,
     bounded: bool,
 }
 
@@ -72,7 +72,7 @@ impl FslInterpreter {
         interpreter
     }
 
-    pub async fn add_arg(&mut self, arg: String) {
+    pub async fn add_arg(&mut self, arg: Value<'static>) {
         self.args.push(arg);
     }
 
@@ -116,8 +116,8 @@ impl FslInterpreter {
     /// Interprets plain fsl code
     pub async fn interpret(&self, input: String) -> Result<String, InterpreterError> {
         let data = match self.bounded {
-            true => InterpreterData::new_bounded(&self.args),
-            false => InterpreterData::new_unbounded(&self.args),
+            true => InterpreterData::new_bounded(self.args.clone()),
+            false => InterpreterData::new_unbounded(self.args.clone()),
         };
         let definitions = Arc::new(self.command_definitions.clone());
         Self::execute_expressions(data.into(), definitions, &input).await
@@ -143,8 +143,8 @@ impl FslInterpreter {
                         Some(code) => {
                             let definitions = Arc::new(self.command_definitions.clone());
                             let data = match self.bounded {
-                                true => InterpreterData::new_bounded(&self.args),
-                                false => InterpreterData::new_unbounded(&self.args),
+                                true => InterpreterData::new_bounded(self.args.clone()),
+                                false => InterpreterData::new_unbounded(self.args.clone()),
                             };
                             let result =
                                 Self::execute_expressions(Arc::from(data), definitions, &code)
@@ -186,7 +186,7 @@ impl FslInterpreter {
         match expressions {
             Ok(expressions) => {
                 for expression in expressions {
-                    let result = Self::parse_expression(
+                    let result = Self::process_expression(
                         data.clone(),
                         command_definitions.clone(),
                         expression,
@@ -228,7 +228,7 @@ impl FslInterpreter {
         Ok(output)
     }
 
-    async fn parse_expression<'c>(
+    async fn process_expression<'c>(
         data: Arc<InterpreterData<'c>>,
         command_definitions: Arc<CommandDefinitions>,
         expression: Expression<'c>,
@@ -241,7 +241,7 @@ impl FslInterpreter {
 
             for arg in expression.args {
                 args.push_back(
-                    Self::parse_arg(data.clone(), command_definitions.clone(), arg).await?,
+                    Self::process_arg(data.clone(), command_definitions.clone(), arg).await?,
                 );
             }
 
@@ -268,7 +268,7 @@ impl FslInterpreter {
 
                 for arg in expression.args {
                     args.push_back(
-                        Self::parse_arg(data.clone(), command_definitions.clone(), arg).await?,
+                        Self::process_arg(data.clone(), command_definitions.clone(), arg).await?,
                     );
                 }
 
@@ -285,7 +285,7 @@ impl FslInterpreter {
         }
     }
 
-    fn parse_arg<'c>(
+    fn process_arg<'c>(
         data: Arc<InterpreterData<'c>>,
         command_definitions: Arc<CommandDefinitions>,
         arg: ArgType<'c>,
@@ -327,7 +327,8 @@ impl FslInterpreter {
                     let mut list: Vec<Value> = vec![];
                     for arg in args {
                         let parsed_arg =
-                            Self::parse_arg(data.clone(), command_definitions.clone(), arg).await?;
+                            Self::process_arg(data.clone(), command_definitions.clone(), arg)
+                                .await?;
                         list.push(parsed_arg);
                     }
                     Ok(Value::List(list))
@@ -338,7 +339,7 @@ impl FslInterpreter {
                     for (key, value) in map {
                         value_map.insert(
                             key.into(),
-                            Self::parse_arg(data.clone(), command_definitions.clone(), value)
+                            Self::process_arg(data.clone(), command_definitions.clone(), value)
                                 .await?,
                         );
                     }
@@ -346,7 +347,7 @@ impl FslInterpreter {
                     Ok(Value::Map(value_map))
                 }
                 ArgType::Expression(expression) => {
-                    Ok(Self::parse_expression(data, command_definitions, expression).await?)
+                    Ok(Self::process_expression(data, command_definitions, expression).await?)
                 }
             }
         })
