@@ -214,6 +214,7 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, UPPERCASE, UPPERCASE_RULES, uppercase);
     register_command!(interpreter, LOWERCASE, LOWERCASE_RULES, lowercase);
     register_command!(interpreter, TRIM, TRIM_RULES, trim);
+    register_command!(interpreter, TRIM_WHITESPACE, TRIM_WHITESPACE_RULES, trim);
     register_command!(interpreter, IS_NUMBER, IS_NUMBER_RULES, is_number);
     register_command!(interpreter, IS_NONE, IS_NONE_RULES, is_none);
     register_command!(interpreter, IS_ALPHA, IS_ALPHA_RULES, is_alpha);
