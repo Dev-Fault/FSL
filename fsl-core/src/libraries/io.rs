@@ -1,15 +1,23 @@
 use std::sync::Arc;
 
 use crate::{
-    commands::NOT_NONE,
+    FslInterpreter,
     data::InterpreterData,
     error::CommandError,
+    register_command,
+    standard::NOT_NONE,
     types::{
-        command::{ArgPos, ArgRule, Command},
+        command::{ArgPos, ArgRule, Command, Handler},
         value::Value,
     },
 };
 
+use futures::FutureExt;
+
+pub fn register_io(interpreter: &mut FslInterpreter) {
+    register_command!(interpreter, SAY, SAY_RULES, say);
+    register_command!(interpreter, ASK, ASK_RULES, ask);
+}
 pub const SAY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const SAY: &str = "say";
 pub async fn say<'c>(

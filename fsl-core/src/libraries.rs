@@ -4,10 +4,12 @@ use crate::error::{InterpreterError, InterpreterErrorType};
 
 pub mod exec;
 pub mod io;
+pub mod standard;
 
 pub enum Library {
     Exec,
     Io,
+    Std,
 }
 
 impl Library {
@@ -15,6 +17,7 @@ impl Library {
         match str {
             "exec" => Ok(Library::Exec),
             "io" => Ok(Library::Io),
+            "std" => Ok(Library::Std),
             _ => Err(InterpreterErrorType::Import(format!("cannot unknown library {str}")).into()),
         }
     }
@@ -25,6 +28,7 @@ impl Display for Library {
         let output = match self {
             Library::Exec => "exec",
             Library::Io => "io",
+            Library::Std => "std",
         };
 
         write!(f, "{}", output)

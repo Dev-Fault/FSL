@@ -11,15 +11,18 @@ use rand::seq::SliceRandom;
 use tokio_stream::StreamExt;
 
 use crate::{
-    InterpreterData,
+    FslInterpreter, InterpreterData,
     error::{CommandError, ExecutionError, ValueError},
+    register_command,
     types::{
         FslType,
-        command::{ArgPos, ArgRule, Command, UserCommand},
+        command::{ArgPos, ArgRule, Command, Handler, UserCommand},
         value::{FslMap, Value},
     },
     vars::VarEntry,
 };
+
+use futures::FutureExt;
 
 pub const ANY: &[FslType] = &[
     FslType::Int,
@@ -140,6 +143,104 @@ pub const MATH_RULES: &[ArgRule] = &[
         valid_types: MAYBE_NUMBER,
     },
 ];
+
+pub fn register_std(interpreter: &mut FslInterpreter) {
+    register_command!(interpreter, ADD, MATH_RULES, add);
+    register_command!(interpreter, SUB, MATH_RULES, sub);
+    register_command!(interpreter, MUL, MATH_RULES, mul);
+    register_command!(interpreter, DIV, MATH_RULES, div);
+    register_command!(interpreter, MODULUS, MATH_RULES, modulus);
+    register_command!(interpreter, CLAMP, CLAMP_RULES, clamp);
+    register_command!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
+    register_command!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
+    register_command!(interpreter, PRECISION, PRECISION_RULES, precision);
+    register_command!(interpreter, STORE, STORE_RULES, store);
+    register_command!(interpreter, CONST, CONST_RULES, r#const);
+    register_command!(interpreter, LOCAL, LOCAL_RULES, local);
+    register_command!(interpreter, UPDATE, UPDATE_RULES, update);
+    register_command!(interpreter, CLONE, CLONE_RULES, clone);
+    register_command!(interpreter, FREE, FREE_RULES, free);
+    register_command!(interpreter, PRINT, PRINT_RULES, print);
+    register_command!(interpreter, ARGS, ARGS_RULES, args);
+    register_command!(interpreter, DEBUG, DEBUG_RULES, debug);
+    register_command!(interpreter, SCOPE, SCOPE_RULES, scope);
+    register_command!(interpreter, EQ, EQ_RULES, eq);
+    register_command!(interpreter, GT, GT_RULES, gt);
+    register_command!(interpreter, GTOE, GTOE_RULES, gtoe);
+    register_command!(interpreter, LT, LT_RULES, lt);
+    register_command!(interpreter, LTOE, LTOE_RULES, ltoe);
+    register_command!(interpreter, NOT, NOT_RULES, not);
+    register_command!(interpreter, AND, AND_RULES, and);
+    register_command!(interpreter, OR, OR_RULES, or);
+    register_command!(interpreter, IF, IF_RULES, r#if);
+    register_command!(interpreter, THEN, BLOCK_RULES, block);
+    register_command!(interpreter, ELSE_IF, BLOCK_RULES, block);
+    register_command!(interpreter, ELSE, BLOCK_RULES, block);
+    register_command!(interpreter, SWITCH, SWITCH_RULES, switch);
+    register_command!(interpreter, CASE, BLOCK_RULES, block);
+    register_command!(interpreter, FALLBACK, BLOCK_RULES, block);
+    register_command!(interpreter, WHILE_LOOP, WHILE_RULES, while_command);
+    register_command!(interpreter, REPEAT, REPEAT_RULES, repeat);
+    register_command!(interpreter, INDEX, INDEX_RULES, index);
+    register_command!(interpreter, GET, GET_RULES, get);
+    register_command!(interpreter, SET, SET_RULES, set);
+    register_command!(interpreter, LENGTH, LENGTH_RULES, length);
+    register_command!(interpreter, SWAP, SWAP_RULES, swap);
+    register_command!(interpreter, INSERT, INSERT_RULES, insert);
+    register_command!(interpreter, REMOVE, REMOVE_RULES, remove);
+    register_command!(interpreter, PUSH, PUSH_RULES, push);
+    register_command!(interpreter, POP, POP_RULES, pop);
+    register_command!(interpreter, REPLACE, REPLACE_RULES, replace);
+    register_command!(
+        interpreter,
+        SLICE_REPLACE,
+        SLICE_REPLACE_RULES,
+        slice_replace
+    );
+    register_command!(
+        interpreter,
+        SEARCH_REPLACE,
+        SEARCH_REPLACE_RULES,
+        search_replace
+    );
+    register_command!(interpreter, REVERSE, REVERSE_RULES, reverse);
+    register_command!(interpreter, INC, INC_RULES, inc);
+    register_command!(interpreter, DEC, DEC_RULES, dec);
+    register_command!(interpreter, CONTAINS, CONTAINS_RULES, contains);
+    register_command!(interpreter, STARTS_WITH, STARTS_WITH_RULES, starts_with);
+    register_command!(interpreter, ENDS_WITH, ENDS_WITH_RULES, ends_with);
+    register_command!(interpreter, CONCAT, CONCAT_RULES, concat);
+    register_command!(interpreter, CAPITALIZE, CAPITALIZE_RULES, capitalize);
+    register_command!(interpreter, UPPERCASE, UPPERCASE_RULES, uppercase);
+    register_command!(interpreter, LOWERCASE, LOWERCASE_RULES, lowercase);
+    register_command!(interpreter, TRIM, TRIM_RULES, trim);
+    register_command!(interpreter, IS_NUMBER, IS_NUMBER_RULES, is_number);
+    register_command!(interpreter, IS_NONE, IS_NONE_RULES, is_none);
+    register_command!(interpreter, IS_ALPHA, IS_ALPHA_RULES, is_alpha);
+    register_command!(interpreter, IS_ALPHA_EN, IS_ALPHA_EN_RULES, is_alpha_en);
+    register_command!(
+        interpreter,
+        IS_WHITESPACE,
+        IS_WHITESPACE_RULES,
+        is_whitespace
+    );
+    register_command!(
+        interpreter,
+        REMOVE_WHITESPACE,
+        REMOVE_WHITESPACE_RULES,
+        remove_whitespace
+    );
+    register_command!(interpreter, SPLIT, SPLIT_RULES, split);
+    register_command!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
+    register_command!(interpreter, SLEEP, SLEEP_RULES, sleep);
+    register_command!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
+    register_command!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
+    register_command!(interpreter, DEF, DEF_RULES, def);
+    register_command!(interpreter, EXIT, NO_ARGS, exit);
+    register_command!(interpreter, BREAK, NO_ARGS, r#break);
+    register_command!(interpreter, CONTINUE, NO_ARGS, r#continue);
+    register_command!(interpreter, RETURN, RETURN_RULES, r#return);
+}
 
 /// If value is var label replaces it with it's actual inner value and returns label + var entry otherwise returns None
 pub async fn take_if_var<'c>(

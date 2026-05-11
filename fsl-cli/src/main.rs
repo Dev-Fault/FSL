@@ -47,14 +47,8 @@ async fn main() {
         interpreter.add_arg(Value::from(input)).await;
     }
 
-    if let Err(e) = interpreter.register_library(Library::Exec) {
-        eprintln!("{e}");
-        return;
-    };
-    if let Err(e) = interpreter.register_library(Library::Io) {
-        eprintln!("{e}");
-        return;
-    };
+    interpreter.register_library(Library::Exec);
+    interpreter.register_library(Library::Io);
 
     let result = if args.embeded {
         interpreter.interpret_embedded_code(script).await

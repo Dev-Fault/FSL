@@ -3,14 +3,24 @@ use std::{borrow::Cow, sync::Arc};
 use tokio_stream::StreamExt;
 
 use crate::{
-    commands::MAYBE_TEXT,
+    FslInterpreter,
     data::InterpreterData,
     error::CommandError,
+    register_command,
+    standard::MAYBE_TEXT,
+    types::command::Handler,
     types::{
         command::{ArgPos, ArgRule, Command},
         value::Value,
     },
 };
+
+use futures::FutureExt;
+
+pub fn register_exec(interpreter: &mut FslInterpreter) {
+    register_command!(interpreter, EXEC, EXEC_RULES, exec);
+    register_command!(interpreter, SH, SH_RULES, sh);
+}
 
 pub const EXEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_TEXT)];
 pub const EXEC: &str = "exec";

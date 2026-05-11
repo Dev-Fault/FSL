@@ -7,13 +7,13 @@ use std::{
 use futures::FutureExt;
 
 use crate::{
-    commands::*,
     data::InterpreterData,
     error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
     libraries::{
         Library,
-        exec::{EXEC, EXEC_RULES, SH, SH_RULES},
-        io::{ASK, ASK_RULES, SAY, SAY_RULES},
+        exec::register_exec,
+        io::register_io,
+        standard::{self, *},
     },
     parser::{ArgType, Expression, Parser},
     types::{
@@ -22,7 +22,6 @@ use crate::{
     },
 };
 
-pub mod commands;
 pub mod data;
 pub mod error;
 mod lexer;
@@ -40,7 +39,7 @@ pub struct FslInterpreter {
     bounded: bool,
 }
 
-// TODO make a companion macro to make creating handlers externally easy
+#[macro_export]
 macro_rules! register_commands {
     ($self:expr, [
         $( ($label:expr, $rules:expr, $executor:path) ),* $(,)?
@@ -51,6 +50,17 @@ macro_rules! register_commands {
     };
 }
 
+#[macro_export]
+macro_rules! register_command {
+    ($self:expr, $label:expr, $rules:expr, $executor:path) => {
+        $self.register(
+            $label,
+            $rules,
+            Handler::new(|command, data| $executor(command, data).boxed()),
+        );
+    };
+}
+
 impl FslInterpreter {
     pub fn new() -> Self {
         let mut interpreter = Self {
@@ -58,7 +68,7 @@ impl FslInterpreter {
             args: Vec::new(),
             bounded: true,
         };
-        interpreter.add_standard_commands();
+        interpreter.register_library(Library::Std);
         interpreter
     }
 
@@ -68,7 +78,7 @@ impl FslInterpreter {
             args: Vec::new(),
             bounded: false,
         };
-        interpreter.add_standard_commands();
+        interpreter.register_library(Library::Std);
         interpreter
     }
 
@@ -82,34 +92,15 @@ impl FslInterpreter {
             .insert(label, CommandDefinition::new(label, rules, executor));
     }
 
-    pub fn register_library(&mut self, library: Library) -> Result<(), InterpreterError> {
+    pub fn register_library(&mut self, library: Library) {
         match library {
             Library::Exec => {
-                self.register(
-                    EXEC,
-                    EXEC_RULES,
-                    Handler::new(|command, data| libraries::exec::exec(command, data).boxed()),
-                );
-                self.register(
-                    SH,
-                    SH_RULES,
-                    Handler::new(|command, data| libraries::exec::sh(command, data).boxed()),
-                );
-                Ok(())
+                register_exec(self);
             }
             Library::Io => {
-                self.register(
-                    SAY,
-                    SAY_RULES,
-                    Handler::new(|command, data| libraries::io::say(command, data).boxed()),
-                );
-                self.register(
-                    ASK,
-                    ASK_RULES,
-                    Handler::new(|command, data| libraries::io::ask(command, data).boxed()),
-                );
-                Ok(())
+                register_io(self);
             }
+            Library::Std => register_std(self),
         }
     }
 
@@ -260,7 +251,7 @@ impl FslInterpreter {
                 let mut command = Command::new(
                     expression.name,
                     RUN_RULES,
-                    Handler::new(|command, data| commands::run(command, data).boxed()),
+                    Handler::new(|command, data| standard::run(command, data).boxed()),
                 );
 
                 let mut args = VecDeque::new();
@@ -352,105 +343,14 @@ impl FslInterpreter {
             }
         })
     }
-
-    fn add_standard_commands(&mut self) {
-        register_commands!(
-            self,
-            [
-                (ADD, MATH_RULES, commands::add),
-                (SUB, MATH_RULES, commands::sub),
-                (MUL, MATH_RULES, commands::mul),
-                (DIV, MATH_RULES, commands::div),
-                (MODULUS, MATH_RULES, commands::modulus),
-                (CLAMP, CLAMP_RULES, commands::clamp),
-                (CLAMP_MIN, CLAMP_MIN_RULES, commands::clamp_min),
-                (CLAMP_MAX, CLAMP_MAX_RULES, commands::clamp_max),
-                (PRECISION, PRECISION_RULES, commands::precision),
-                (STORE, STORE_RULES, commands::store),
-                (CONST, CONST_RULES, commands::r#const),
-                (LOCAL, LOCAL_RULES, commands::local),
-                (UPDATE, UPDATE_RULES, commands::update),
-                (CLONE, CLONE_RULES, commands::clone),
-                (FREE, FREE_RULES, commands::free),
-                (PRINT, PRINT_RULES, commands::print),
-                (ARGS, ARGS_RULES, commands::args),
-                (DEBUG, DEBUG_RULES, commands::debug),
-                (SCOPE, SCOPE_RULES, commands::scope),
-                (EQ, EQ_RULES, commands::eq),
-                (GT, GT_RULES, commands::gt),
-                (GTOE, GTOE_RULES, commands::gtoe),
-                (LT, LT_RULES, commands::lt),
-                (LTOE, LTOE_RULES, commands::ltoe),
-                (NOT, NOT_RULES, commands::not),
-                (AND, AND_RULES, commands::and),
-                (OR, OR_RULES, commands::or),
-                (IF, IF_RULES, commands::r#if),
-                (THEN, BLOCK_RULES, commands::block),
-                (ELSE_IF, BLOCK_RULES, commands::block),
-                (ELSE, BLOCK_RULES, commands::block),
-                (SWITCH, SWITCH_RULES, commands::switch),
-                (CASE, BLOCK_RULES, commands::block),
-                (FALLBACK, BLOCK_RULES, commands::block),
-                (WHILE_LOOP, WHILE_RULES, commands::while_command),
-                (REPEAT, REPEAT_RULES, commands::repeat),
-                (INDEX, INDEX_RULES, commands::index),
-                (GET, GET_RULES, commands::get),
-                (SET, SET_RULES, commands::set),
-                (LENGTH, LENGTH_RULES, commands::length),
-                (SWAP, SWAP_RULES, commands::swap),
-                (INSERT, INSERT_RULES, commands::insert),
-                (REMOVE, REMOVE_RULES, commands::remove),
-                (PUSH, PUSH_RULES, commands::push),
-                (POP, POP_RULES, commands::pop),
-                (REPLACE, REPLACE_RULES, commands::replace),
-                (SLICE_REPLACE, SLICE_REPLACE_RULES, commands::slice_replace),
-                (
-                    SEARCH_REPLACE,
-                    SEARCH_REPLACE_RULES,
-                    commands::search_replace
-                ),
-                (REVERSE, REVERSE_RULES, commands::reverse),
-                (INC, INC_RULES, commands::inc),
-                (DEC, DEC_RULES, commands::dec),
-                (CONTAINS, CONTAINS_RULES, commands::contains),
-                (STARTS_WITH, STARTS_WITH_RULES, commands::starts_with),
-                (ENDS_WITH, ENDS_WITH_RULES, commands::ends_with),
-                (CONCAT, CONCAT_RULES, commands::concat),
-                (CAPITALIZE, CAPITALIZE_RULES, commands::capitalize),
-                (UPPERCASE, UPPERCASE_RULES, commands::uppercase),
-                (LOWERCASE, LOWERCASE_RULES, commands::lowercase),
-                (TRIM, TRIM_RULES, commands::trim),
-                (IS_NUMBER, IS_NUMBER_RULES, commands::is_number),
-                (IS_NONE, IS_NONE_RULES, commands::is_none),
-                (IS_ALPHA, IS_ALPHA_RULES, commands::is_alpha),
-                (IS_ALPHA_EN, IS_ALPHA_EN_RULES, commands::is_alpha_en),
-                (IS_WHITESPACE, IS_WHITESPACE_RULES, commands::is_whitespace),
-                (
-                    REMOVE_WHITESPACE,
-                    REMOVE_WHITESPACE_RULES,
-                    commands::remove_whitespace
-                ),
-                (SPLIT, SPLIT_RULES, commands::split),
-                (RANDOM_RANGE, RANDOM_RANGE_RULES, commands::random_range),
-                (SLEEP, SLEEP_RULES, commands::sleep),
-                (RANDOM_ENTRY, RANDOM_ENTRY_RULES, commands::random_entry),
-                (SHUFFLE, SHUFFLE_RULES, commands::shuffle),
-                (DEF, DEF_RULES, commands::def),
-                (EXIT, NO_ARGS, commands::exit),
-                (BREAK, NO_ARGS, commands::r#break),
-                (CONTINUE, NO_ARGS, commands::r#continue),
-                (RETURN, RETURN_RULES, commands::r#return),
-            ]
-        );
-    }
 }
 
 #[cfg(test)]
 mod interpreter {
-    use crate::commands::tests::{
+    use crate::error::{CommandError, ValueError};
+    use crate::libraries::standard::tests::{
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
-    use crate::error::{CommandError, ValueError};
     use crate::{FslInterpreter, InterpreterErrorType};
 
     async fn test_interpreter_err(code: &str) {

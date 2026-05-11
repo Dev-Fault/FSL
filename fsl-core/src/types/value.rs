@@ -8,8 +8,8 @@ use std::{
 
 use crate::{
     InterpreterData,
-    commands::NUMBER,
     error::{ExecutionError, ValueError},
+    standard::NUMBER,
     types::{FslType, command::Command},
 };
 pub type FslMap<'c> = HashMap<Cow<'c, str>, Value<'c>>;
