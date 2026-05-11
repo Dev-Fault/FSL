@@ -587,7 +587,6 @@ impl<'code> Parser<'code> {
                     self.pending.push(pending);
                 }
                 TokenType::String(string) => {
-                    // TODO parse escaped strings
                     let pending = Pending::new(
                         PendingArg::Done(ArgType::String(parse_string(string))),
                         token,
@@ -656,7 +655,7 @@ fn parse_string(s: &'_ str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, collections::HashMap};
+    use std::borrow::Cow;
 
     use crate::parser::{ArgType, Expression, Map, Parser};
 

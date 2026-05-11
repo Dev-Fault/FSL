@@ -1435,8 +1435,7 @@ pub async fn remove<'c>(
                 Some(_) => {
                     let mut text = text.into_owned();
                     let return_value = text.remove(i).to_string();
-                    // TODO shouldn't need to clone this if value is not var
-                    let text = Value::Text(Cow::Owned(text));
+                    let text = Value::from(std::mem::take(&mut text));
 
                     update_if_var(var, text, data)?;
 
@@ -1649,8 +1648,7 @@ pub async fn insert<'c>(
                 return Err(CommandError::IndexOutOfBounds);
             }
 
-            // TODO shouldn't need to clone Cow if value is not var
-            let return_value = update_if_var(var, Value::from(text), data)?;
+            let return_value = update_if_var(var, Value::from(std::mem::take(&mut text)), data)?;
 
             Ok(return_value)
         }

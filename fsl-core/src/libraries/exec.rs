@@ -37,9 +37,12 @@ pub async fn exec<'c>(
         return Err(CommandError::Custom(format!("{output}")));
     }
 
-    let output = String::from_utf8_lossy(&output.stdout);
-
-    Ok(Value::from(output.into_owned()))
+    let output = output.stdout;
+    let text = match String::from_utf8(output) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    };
+    Ok(Value::from(text))
 }
 
 pub const SH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
@@ -59,10 +62,14 @@ pub async fn sh<'c>(
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
+        // TODO this probably should throw a real error
         eprintln!("{err}");
     }
 
-    let output = String::from_utf8_lossy(&output.stdout);
-
-    Ok(Value::from(output.into_owned()))
+    let output = output.stdout;
+    let text = match String::from_utf8(output) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    };
+    Ok(Value::from(text))
 }
