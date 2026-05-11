@@ -35,21 +35,6 @@ impl<'code> From<Expression<'code>> for ArgType<'code> {
     }
 }
 
-impl<'code> From<PendingArg<'code>> for ArgType<'code> {
-    fn from(value: PendingArg<'code>) -> Self {
-        match value {
-            PendingArg::DotArg(arg) => arg,
-            PendingArg::PathArg(path) => ArgType::List(path.into()),
-            PendingArg::Expression(expression) => ArgType::Expression(expression),
-            PendingArg::List(list) => ArgType::List(list),
-            PendingArg::Map(map) => ArgType::Map(map),
-            PendingArg::UnitializedCollection => todo!(),
-            PendingArg::Done(arg) => arg,
-            PendingArg::Key(key) => ArgType::Identifier(key),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 enum PendingArg<'code> {
     DotArg(ArgType<'code>),
@@ -133,7 +118,6 @@ impl<'code> Pending<'code> {
 pub struct Parser<'code> {
     lexer: Option<Lexer<'code>>,
     pending: Vec<Pending<'code>>,
-    parsed: Vec<Expression<'code>>,
 }
 
 impl<'code> Parser<'code> {
@@ -141,7 +125,6 @@ impl<'code> Parser<'code> {
         Self {
             lexer: Some(Lexer::new(input)),
             pending: Vec::new(),
-            parsed: Vec::new(),
         }
     }
 
@@ -608,17 +591,19 @@ impl<'code> Parser<'code> {
                 }
             }
         }
+
+        let mut parsed = Vec::with_capacity(self.pending.len());
         for pending in self.pending.drain(..) {
             match pending.arg {
                 PendingArg::Done(ArgType::Expression(expr)) => {
-                    self.parsed.push(expr);
+                    parsed.push(expr);
                 }
                 _ => {
                     return Err(ParseError::OutOfPlaceValue(pending.token));
                 }
             }
         }
-        Ok(self.parsed)
+        Ok(parsed)
     }
 }
 
