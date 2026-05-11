@@ -173,50 +173,61 @@ impl FslInterpreter {
         command_definitions: Arc<CommandDefinitions>,
         source: &'c str,
     ) -> Result<String, InterpreterError> {
-        let expressions = Parser::new(source).parse();
-        match expressions {
-            Ok(expressions) => {
-                for expression in expressions {
-                    let result = Self::process_expression(
-                        data.clone(),
-                        command_definitions.clone(),
-                        expression,
-                    )
+        let expressions = Parser::new(source).filter_parse(&[DEF])?;
+
+        for expression in expressions.filtered {
+            Self::interpret_command(data.clone(), command_definitions.clone(), expression).await?;
+        }
+
+        for expression in expressions.unfiltered {
+            let result =
+                Self::interpret_command(data.clone(), command_definitions.clone(), expression)
                     .await;
-                    match result {
-                        Ok(value) => match value {
-                            Value::Command(command) => match command.execute(data.clone()).await {
-                                Ok(_) => {}
-                                Err(e) if e.exited_program() => {
-                                    break;
-                                }
-                                Err(e) => {
-                                    return Err(InterpreterError::new(
-                                        InterpreterErrorType::Command(e),
-                                        Some(data.call_stack_to_string().await),
-                                    ));
-                                }
-                            },
-                            _ => {
-                                unreachable!("parse expression should always return a command")
-                            }
-                        },
-                        Err(e) => {
-                            return Err(InterpreterError::new(
-                                e.error_type,
-                                Some(data.call_stack_to_string().await),
-                            ));
-                        }
-                    };
+            if let Err(e) = result {
+                match e.error_type == InterpreterErrorType::Exit {
+                    true => break,
+                    false => return Err(e),
                 }
-            }
-            Err(e) => {
-                return Err(InterpreterErrorType::Parse(e.to_string()).into());
             }
         }
         let mut output = data.output.lock().await;
         let output = std::mem::take(&mut *output);
         Ok(output)
+    }
+
+    async fn interpret_command<'c>(
+        data: Arc<InterpreterData<'c>>,
+        command_definitions: Arc<CommandDefinitions>,
+        expression: Expression<'c>,
+    ) -> Result<(), InterpreterError> {
+        let result =
+            Self::process_expression(data.clone(), command_definitions.clone(), expression).await;
+        match result {
+            Ok(value) => match value {
+                Value::Command(command) => match command.execute(data.clone()).await {
+                    Ok(_) => {}
+                    Err(e) if e.exited_program() => {
+                        return Err(InterpreterError::new(InterpreterErrorType::Exit, None));
+                    }
+                    Err(e) => {
+                        return Err(InterpreterError::new(
+                            InterpreterErrorType::Command(e),
+                            Some(data.call_stack_to_string().await),
+                        ));
+                    }
+                },
+                _ => {
+                    unreachable!("parse expression should always return a command")
+                }
+            },
+            Err(e) => {
+                return Err(InterpreterError::new(
+                    e.error_type,
+                    Some(data.call_stack_to_string().await),
+                ));
+            }
+        };
+        Ok(())
     }
 
     async fn process_expression<'c>(
@@ -1818,6 +1829,20 @@ mod interpreter {
             player.weapons.sword.name.get().print()
             "#,
             "Gold Sword",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn out_of_order_def() {
+        test_interpreter(
+            r#"
+            test()
+            test.def(
+                print("it just works")
+            )
+            "#,
+            "it just works",
         )
         .await;
     }

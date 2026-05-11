@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use crate::parser::ParseError;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterpreterErrorType {
     Lex(String),
@@ -8,6 +10,7 @@ pub enum InterpreterErrorType {
     Value(ValueError),
     Import(String),
     UnmatchedCurlyBraces,
+    Exit,
 }
 
 impl std::fmt::Display for InterpreterErrorType {
@@ -19,6 +22,7 @@ impl std::fmt::Display for InterpreterErrorType {
             InterpreterErrorType::Value(value_error) => &value_error.to_string(),
             InterpreterErrorType::UnmatchedCurlyBraces => "unmatched curly braces",
             InterpreterErrorType::Import(output) => output,
+            InterpreterErrorType::Exit => "",
         };
         write!(f, "{}", output)
     }
@@ -28,6 +32,15 @@ impl std::fmt::Display for InterpreterErrorType {
 pub struct InterpreterError {
     pub error_type: InterpreterErrorType,
     pub stack_trace: Option<String>,
+}
+
+impl<'c> From<ParseError<'c>> for InterpreterError {
+    fn from(value: ParseError<'c>) -> Self {
+        InterpreterError {
+            error_type: InterpreterErrorType::Parse(value.to_string()),
+            stack_trace: None,
+        }
+    }
 }
 
 impl InterpreterError {

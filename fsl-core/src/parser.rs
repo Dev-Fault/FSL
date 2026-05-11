@@ -2,59 +2,59 @@ use std::{borrow::Cow, collections::VecDeque, fmt::Display};
 
 use crate::lexer::{LexError, Lexer, Symbol, Token, TokenType};
 
-type Map<'code> = Vec<(&'code str, ArgType<'code>)>;
-type List<'code> = Vec<ArgType<'code>>;
-type Path<'code> = VecDeque<ArgType<'code>>;
+type Map<'c> = Vec<(&'c str, ArgType<'c>)>;
+type List<'c> = Vec<ArgType<'c>>;
+type Path<'c> = VecDeque<ArgType<'c>>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ArgType<'code> {
-    Number(&'code str),
-    String(Cow<'code, str>),
-    Keyword(&'code str),
-    Identifier(&'code str),
-    List(List<'code>),
-    Map(Map<'code>),
-    Expression(Expression<'code>),
+pub enum ArgType<'c> {
+    Number(&'c str),
+    String(Cow<'c, str>),
+    Keyword(&'c str),
+    Identifier(&'c str),
+    List(List<'c>),
+    Map(Map<'c>),
+    Expression(Expression<'c>),
 }
 
-impl<'code> From<List<'code>> for ArgType<'code> {
-    fn from(value: List<'code>) -> Self {
+impl<'c> From<List<'c>> for ArgType<'c> {
+    fn from(value: List<'c>) -> Self {
         Self::List(value)
     }
 }
 
-impl<'code> From<Map<'code>> for ArgType<'code> {
-    fn from(value: Map<'code>) -> Self {
+impl<'c> From<Map<'c>> for ArgType<'c> {
+    fn from(value: Map<'c>) -> Self {
         Self::Map(value)
     }
 }
 
-impl<'code> From<Expression<'code>> for ArgType<'code> {
-    fn from(value: Expression<'code>) -> Self {
+impl<'c> From<Expression<'c>> for ArgType<'c> {
+    fn from(value: Expression<'c>) -> Self {
         Self::Expression(value)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum PendingArg<'code> {
-    DotArg(ArgType<'code>),
-    PathArg(Path<'code>),
-    Key(&'code str),
-    Expression(Expression<'code>),
-    List(List<'code>),
-    Map(Map<'code>),
+enum PendingArg<'c> {
+    DotArg(ArgType<'c>),
+    PathArg(Path<'c>),
+    Key(&'c str),
+    Expression(Expression<'c>),
+    List(List<'c>),
+    Map(Map<'c>),
     UnitializedCollection,
-    Done(ArgType<'code>),
+    Done(ArgType<'c>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ParseError<'code> {
-    LexError(LexError<'code>),
-    OutOfPlaceSymbol(Token<'code>),
-    OutOfPlaceValue(Token<'code>),
+pub enum ParseError<'c> {
+    LexError(LexError<'c>),
+    OutOfPlaceSymbol(Token<'c>),
+    OutOfPlaceValue(Token<'c>),
 }
 
-impl<'code> Display for ParseError<'code> {
+impl<'c> Display for ParseError<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParseError::LexError(lex_error) => write!(f, "{}", lex_error),
@@ -82,20 +82,20 @@ impl<'code> Display for ParseError<'code> {
     }
 }
 
-impl<'code> From<LexError<'code>> for ParseError<'code> {
-    fn from(value: LexError<'code>) -> Self {
+impl<'c> From<LexError<'c>> for ParseError<'c> {
+    fn from(value: LexError<'c>) -> Self {
         Self::LexError(value)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Expression<'code> {
-    pub name: &'code str,
-    pub args: Vec<ArgType<'code>>,
+pub struct Expression<'c> {
+    pub name: &'c str,
+    pub args: Vec<ArgType<'c>>,
 }
 
-impl<'code> Expression<'code> {
-    pub fn new(name: &'code str) -> Expression<'code> {
+impl<'c> Expression<'c> {
+    pub fn new(name: &'c str) -> Expression<'c> {
         Self {
             name,
             args: Vec::new(),
@@ -104,40 +104,40 @@ impl<'code> Expression<'code> {
 }
 
 #[derive(Debug)]
-struct Pending<'code> {
-    arg: PendingArg<'code>,
-    token: Token<'code>,
+struct Pending<'c> {
+    arg: PendingArg<'c>,
+    token: Token<'c>,
 }
 
-impl<'code> Pending<'code> {
-    pub fn new(arg: PendingArg<'code>, token: Token<'code>) -> Self {
+impl<'c> Pending<'c> {
+    pub fn new(arg: PendingArg<'c>, token: Token<'c>) -> Self {
         Self { arg, token }
     }
 }
 
-pub struct Parser<'code> {
-    lexer: Option<Lexer<'code>>,
-    pending: Vec<Pending<'code>>,
+pub struct Parser<'c> {
+    lexer: Option<Lexer<'c>>,
+    pending: Vec<Pending<'c>>,
 }
 
-impl<'code> Parser<'code> {
-    pub fn new(input: &'code str) -> Parser<'code> {
+impl<'c> Parser<'c> {
+    pub fn new(input: &'c str) -> Parser<'c> {
         Self {
             lexer: Some(Lexer::new(input)),
             pending: Vec::new(),
         }
     }
 
-    fn pend_map(&mut self, map: Map<'code>, token: Token<'code>) {
+    fn pend_map(&mut self, map: Map<'c>, token: Token<'c>) {
         self.pending.push(Pending::new(PendingArg::Map(map), token));
     }
 
     fn pend_map_with_value(
         &mut self,
-        map: Map<'code>,
-        token: Token<'code>,
-        key: &'code str,
-        value: Option<ArgType<'code>>,
+        map: Map<'c>,
+        token: Token<'c>,
+        key: &'c str,
+        value: Option<ArgType<'c>>,
     ) {
         let mut map = map;
         if let Some(value) = value {
@@ -148,10 +148,10 @@ impl<'code> Parser<'code> {
 
     fn try_pend_map_with_value(
         &mut self,
-        token: Token<'code>,
-        key: &'code str,
-        value: Option<ArgType<'code>>,
-    ) -> Result<(), ParseError<'code>> {
+        token: Token<'c>,
+        key: &'c str,
+        value: Option<ArgType<'c>>,
+    ) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(maybe_map) => match maybe_map.arg {
                 PendingArg::Map(map) => {
@@ -168,9 +168,9 @@ impl<'code> Parser<'code> {
 
     fn pend_list_with_value(
         &mut self,
-        list: List<'code>,
-        token: Token<'code>,
-        value: Option<ArgType<'code>>,
+        list: List<'c>,
+        token: Token<'c>,
+        value: Option<ArgType<'c>>,
     ) {
         let mut list = list;
         if let Some(value) = value {
@@ -180,53 +180,48 @@ impl<'code> Parser<'code> {
             .push(Pending::new(PendingArg::List(list), token));
     }
 
-    fn pend_uninit_collection(&mut self, token: Token<'code>) {
+    fn pend_uninit_collection(&mut self, token: Token<'c>) {
         self.pending
             .push(Pending::new(PendingArg::UnitializedCollection, token));
     }
 
-    fn pend_expr_with_value(
-        &mut self,
-        expr: Expression<'code>,
-        token: Token<'code>,
-        value: ArgType<'code>,
-    ) {
+    fn pend_expr_with_value(&mut self, expr: Expression<'c>, token: Token<'c>, value: ArgType<'c>) {
         let mut expr = expr;
         expr.args.push(value);
         self.pending
             .push(Pending::new(PendingArg::Expression(expr), token));
     }
 
-    fn pend_expr(&mut self, expr: Expression<'code>, token: Token<'code>) {
+    fn pend_expr(&mut self, expr: Expression<'c>, token: Token<'c>) {
         self.pending
             .push(Pending::new(PendingArg::Expression(expr), token));
     }
 
-    fn pend_list(&mut self, list: Vec<ArgType<'code>>, token: Token<'code>) {
+    fn pend_list(&mut self, list: Vec<ArgType<'c>>, token: Token<'c>) {
         self.pending
             .push(Pending::new(PendingArg::List(list), token));
     }
 
-    fn pend_done(&mut self, done: ArgType<'code>, token: Token<'code>) {
+    fn pend_done(&mut self, done: ArgType<'c>, token: Token<'c>) {
         self.pending
             .push(Pending::new(PendingArg::Done(done), token));
     }
 
-    fn pend_dot_arg(&mut self, arg: ArgType<'code>, token: Token<'code>) {
+    fn pend_dot_arg(&mut self, arg: ArgType<'c>, token: Token<'c>) {
         self.pending
             .push(Pending::new(PendingArg::DotArg(arg), token));
     }
 
-    fn pend_path(&mut self, path: Path<'code>, token: Token<'code>) {
+    fn pend_path(&mut self, path: Path<'c>, token: Token<'c>) {
         self.pending
             .push(Pending::new(PendingArg::PathArg(path), token));
     }
 
-    fn pend_key(&mut self, key: &'code str, token: Token<'code>) {
+    fn pend_key(&mut self, key: &'c str, token: Token<'c>) {
         self.pending.push(Pending::new(PendingArg::Key(key), token));
     }
 
-    fn pend_last_as_done(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn pend_last_as_done(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(last) => match last.arg {
                 PendingArg::Expression(expr) => Ok(self.pend_done(expr.into(), token)),
@@ -238,7 +233,7 @@ impl<'code> Parser<'code> {
         }
     }
 
-    fn get_remaining_arg(&mut self) -> Option<ArgType<'code>> {
+    fn get_remaining_arg(&mut self) -> Option<ArgType<'c>> {
         match self.pending.pop() {
             Some(pending) => {
                 if let PendingArg::Done(arg) = pending.arg {
@@ -252,7 +247,7 @@ impl<'code> Parser<'code> {
         }
     }
 
-    fn parse_open_paren(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn parse_open_paren(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(pending) => match pending.arg {
                 PendingArg::Expression(mut expr) => {
@@ -289,17 +284,15 @@ impl<'code> Parser<'code> {
                                     );
                                 } else {
                                     expr.args.push(path.pop_front().unwrap());
-                                    let path: Result<VecDeque<ArgType<'code>>, ParseError<'code>> =
-                                        path.iter()
-                                            .map(|item| match item {
-                                                ArgType::Identifier(ident) => {
-                                                    Ok(ArgType::String(Cow::Borrowed(ident)))
-                                                }
-                                                _ => {
-                                                    Err(ParseError::OutOfPlaceValue(pending_token))
-                                                }
-                                            })
-                                            .collect();
+                                    let path: Result<VecDeque<ArgType<'c>>, ParseError<'c>> = path
+                                        .iter()
+                                        .map(|item| match item {
+                                            ArgType::Identifier(ident) => {
+                                                Ok(ArgType::String(Cow::Borrowed(ident)))
+                                            }
+                                            _ => Err(ParseError::OutOfPlaceValue(pending_token)),
+                                        })
+                                        .collect();
                                     let path = path?;
                                     expr.args.push(ArgType::List(path.into()));
                                 }
@@ -317,7 +310,7 @@ impl<'code> Parser<'code> {
         }
     }
 
-    fn parse_closed_paren(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn parse_closed_paren(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         let last_arg = self.get_remaining_arg();
         match self.pending.pop() {
             Some(maybe_expr) => match maybe_expr.arg {
@@ -360,7 +353,7 @@ impl<'code> Parser<'code> {
         }
     }
 
-    fn parse_open_bracket(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn parse_open_bracket(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.last() {
             Some(pending) => match &pending.arg {
                 PendingArg::Key(_) => Ok(()),
@@ -375,7 +368,7 @@ impl<'code> Parser<'code> {
         Ok(self.pend_uninit_collection(token))
     }
 
-    fn parse_closed_bracket(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn parse_closed_bracket(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         let last_arg = self.get_remaining_arg();
         match self.pending.pop() {
             Some(collection) => match collection.arg {
@@ -409,7 +402,7 @@ impl<'code> Parser<'code> {
         Ok(())
     }
 
-    fn parse_colon(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn parse_colon(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(pending) => match pending.arg {
                 PendingArg::Done(ArgType::Identifier(key)) => Ok(self.pend_key(key, token)),
@@ -421,9 +414,9 @@ impl<'code> Parser<'code> {
 
     fn try_find_last_expression(
         &mut self,
-        token: Token<'code>,
-        popped: Pending<'code>,
-    ) -> Result<(), ParseError<'code>> {
+        token: Token<'c>,
+        popped: Pending<'c>,
+    ) -> Result<(), ParseError<'c>> {
         match popped.arg {
             PendingArg::Expression(mut expr) => match expr.args.pop() {
                 Some(last_arg) => {
@@ -458,7 +451,7 @@ impl<'code> Parser<'code> {
         }
     }
 
-    fn parse_dot(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn parse_dot(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(pending) => match pending.arg {
                 PendingArg::Done(arg) => match self.pending.pop() {
@@ -488,7 +481,7 @@ impl<'code> Parser<'code> {
         }
     }
 
-    fn parse_comma(&mut self, token: Token<'code>) -> Result<(), ParseError<'code>> {
+    fn parse_comma(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(pending) => match pending.arg {
                 PendingArg::Done(value) => match self.pending.pop() {
@@ -527,11 +520,7 @@ impl<'code> Parser<'code> {
         }
     }
 
-    fn parse_symbol(
-        &mut self,
-        token: Token<'code>,
-        symbol: Symbol,
-    ) -> Result<(), ParseError<'code>> {
+    fn parse_symbol(&mut self, token: Token<'c>, symbol: Symbol) -> Result<(), ParseError<'c>> {
         match symbol {
             Symbol::OpenParen => self.parse_open_paren(token),
             Symbol::ClosedParen => self.parse_closed_paren(token),
@@ -546,12 +535,12 @@ impl<'code> Parser<'code> {
         }
     }
 
-    pub fn parse(mut self) -> Result<Vec<Expression<'code>>, ParseError<'code>> {
+    pub fn parse_tokens(&mut self) -> Result<(), ParseError<'c>> {
         let lexer = self
             .lexer
             .take()
             .expect("parser should be called once after new");
-        let tokens = lexer.collect::<Result<Vec<Token<'code>>, LexError<'code>>>()?;
+        let tokens = lexer.collect::<Result<Vec<Token<'c>>, LexError<'c>>>()?;
         let mut tokens = tokens.into_iter().peekable();
 
         while let Some(token) = tokens.next() {
@@ -591,7 +580,11 @@ impl<'code> Parser<'code> {
                 }
             }
         }
+        Ok(())
+    }
 
+    pub fn parse(mut self) -> Result<Vec<Expression<'c>>, ParseError<'c>> {
+        self.parse_tokens()?;
         let mut parsed = Vec::with_capacity(self.pending.len());
         for pending in self.pending.drain(..) {
             match pending.arg {
@@ -605,6 +598,35 @@ impl<'code> Parser<'code> {
         }
         Ok(parsed)
     }
+
+    pub fn filter_parse(mut self, filter: &[&str]) -> Result<ParseFilter<'c>, ParseError<'c>> {
+        self.parse_tokens()?;
+        let mut unfiltered = Vec::with_capacity(self.pending.len());
+        let mut filtered = Vec::with_capacity(self.pending.len());
+        for pending in self.pending.drain(..) {
+            match pending.arg {
+                PendingArg::Done(ArgType::Expression(expr)) => {
+                    if filter.contains(&expr.name) {
+                        filtered.push(expr);
+                    } else {
+                        unfiltered.push(expr);
+                    }
+                }
+                _ => {
+                    return Err(ParseError::OutOfPlaceValue(pending.token));
+                }
+            }
+        }
+        Ok(ParseFilter {
+            filtered,
+            unfiltered,
+        })
+    }
+}
+
+pub struct ParseFilter<'c> {
+    pub filtered: Vec<Expression<'c>>,
+    pub unfiltered: Vec<Expression<'c>>,
 }
 
 fn parse_string(s: &'_ str) -> Cow<'_, str> {
