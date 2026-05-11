@@ -8,6 +8,7 @@ use std::{
 
 use crate::{
     InterpreterData,
+    commands::NUMBER,
     error::{ExecutionError, ValueError},
     types::{FslType, command::Command},
 };
@@ -60,7 +61,7 @@ impl<'c> Value<'c> {
             Value::Bool(_) => FslType::Bool,
             Value::List(_) => FslType::List,
             Value::Map(_) => FslType::Map,
-            Value::Var(label) => data.vars.get_var_type(label),
+            Value::Var(label) => data.vars.get_type(label),
             Value::Command(_) => FslType::Command,
             Value::None => FslType::None,
         }
@@ -139,7 +140,7 @@ impl<'c> Value<'c> {
             match self {
                 Value::Int(value) => Ok(value),
                 Value::Float(value) => Ok(value as i64),
-                Value::Var(label) => data.vars.get_var_value(&label)?.as_int(data).await,
+                Value::Var(label) => data.vars.get(&label)?.as_int(data).await,
                 Value::Command(command) => {
                     command
                         .execute(data.clone())
@@ -177,7 +178,7 @@ impl<'c> Value<'c> {
             match self {
                 Value::Int(value) => Ok(value as f64),
                 Value::Float(value) => Ok(value),
-                Value::Var(label) => data.vars.get_var_value(&label)?.as_float(data).await,
+                Value::Var(label) => data.vars.get(&label)?.as_float(data).await,
                 Value::Command(command) => {
                     command
                         .execute(data.clone())
@@ -210,7 +211,7 @@ impl<'c> Value<'c> {
                 Value::Bool(value) => Ok(value),
                 Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
                 Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Var(label) => data.vars.get_var_value(&label)?.as_bool(data).await,
+                Value::Var(label) => data.vars.get(&label)?.as_bool(data).await,
                 Value::Command(command) => {
                     command
                         .execute(data.clone())
@@ -291,7 +292,7 @@ impl<'c> Value<'c> {
                     output.push(']');
                     Ok(Cow::Owned(output))
                 }
-                Value::Var(label) => data.vars.get_var_value(&label)?.as_text(data).await,
+                Value::Var(label) => data.vars.get(&label)?.as_text(data).await,
                 Value::Command(command) => {
                     command
                         .execute(data.clone())
@@ -328,7 +329,7 @@ impl<'c> Value<'c> {
                     Ok(values)
                 }
                 Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Var(label) => data.vars.get_var_value(&label)?.as_list(data).await,
+                Value::Var(label) => data.vars.get(&label)?.as_list(data).await,
                 Value::Command(command) => {
                     command
                         .execute(data.clone())
@@ -365,7 +366,7 @@ impl<'c> Value<'c> {
                     }
                     Ok(map)
                 }
-                Value::Var(label) => data.vars.get_var_value(&label)?.as_map(data).await,
+                Value::Var(label) => data.vars.get(&label)?.as_map(data).await,
                 Value::Command(command) => {
                     command
                         .execute(data.clone())
@@ -378,6 +379,37 @@ impl<'c> Value<'c> {
         })
     }
 
+    pub fn as_number(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Value<'c>, ExecutionError> {
+        Box::pin(async move {
+            match self {
+                Value::Int(n) => Ok(Value::Int(n)),
+                Value::Float(n) => Ok(Value::Float(n)),
+                Value::Text(n) => match n.parse::<f64>() {
+                    Ok(n) => Ok(Value::Float(n)),
+                    Err(_) => match n.parse::<i64>() {
+                        Ok(n) => Ok(Value::Int(n)),
+                        Err(_) => Err(Value::Text(n)
+                            .gen_conversion_err_to_types(&[FslType::Int, FslType::Float])
+                            .into()),
+                    },
+                },
+                Value::Var(label) => data.vars.get(&label)?.as_number(data.clone()).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_number(data.clone())
+                        .await
+                }
+                _ => Err(self.gen_conversion_err_to_types(NUMBER).into()),
+            }
+        })
+    }
+
+    /// Converts value into it's most raw state ensuring result is of valid type
     pub fn as_raw(
         self,
         data: Arc<InterpreterData<'c>>,
@@ -397,7 +429,8 @@ impl<'c> Value<'c> {
                     value = Value::Map(self.as_map(data.clone()).await?);
                 }
                 FslType::Var => {
-                    value = self.get_var_value(data.clone())?;
+                    let result = self.get_var_value(data.clone())?;
+                    value = result.as_raw(data.clone(), valid_types).await?;
                 }
                 FslType::Command => {
                     let result = self.as_command()?.execute(data.clone()).await?;
@@ -411,6 +444,39 @@ impl<'c> Value<'c> {
             } else {
                 Err(value.gen_conversion_err_to_types(valid_types).into())
             }
+        })
+    }
+
+    /// Converts value into it's most raw state without checking what the result type it is
+    pub fn as_raw_unchecked(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Value<'c>, ExecutionError> {
+        Box::pin(async move {
+            let value;
+            match self.as_type() {
+                FslType::Int => value = self,
+                FslType::Float => value = self,
+                FslType::Bool => value = self,
+                FslType::Text => value = self,
+                FslType::List => {
+                    value = Value::List(self.as_list(data.clone()).await?);
+                }
+                FslType::Map => {
+                    value = Value::Map(self.as_map(data.clone()).await?);
+                }
+                FslType::Var => {
+                    let result = self.get_var_value(data.clone())?;
+                    value = result.as_raw_unchecked(data.clone()).await?;
+                }
+                FslType::Command => {
+                    let result = self.as_command()?.execute(data.clone()).await?;
+                    value = result.as_raw_unchecked(data.clone()).await?;
+                }
+                FslType::None => value = self,
+            }
+
+            Ok(value)
         })
     }
 
@@ -459,7 +525,7 @@ impl<'c> Value<'c> {
 
     pub fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, ValueError> {
         if let Value::Var(label) = self {
-            match data.vars.get_var_value(label) {
+            match data.vars.get(label) {
                 Ok(value) => match value {
                     Value::Var(_) => value.get_var_value(data),
                     _ => Ok(value),
@@ -515,9 +581,21 @@ impl<'c> From<i64> for Value<'c> {
     }
 }
 
+impl<'c> From<usize> for Value<'c> {
+    fn from(value: usize) -> Self {
+        Value::Int(value as i64)
+    }
+}
+
 impl<'c> From<f64> for Value<'c> {
     fn from(value: f64) -> Self {
         Value::Float(value)
+    }
+}
+
+impl<'c> From<Cow<'c, str>> for Value<'c> {
+    fn from(value: Cow<'c, str>) -> Self {
+        Value::Text(value)
     }
 }
 

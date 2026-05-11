@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     mem,
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -47,15 +47,15 @@ impl<'c> VarEntry<'c> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarMap<'c> {
-    map: Mutex<HashMap<Cow<'c, str>, VarEntry<'c>>>,
+    map: Arc<Mutex<HashMap<Cow<'c, str>, VarEntry<'c>>>>,
 }
 
 impl<'c> VarMap<'c> {
     pub fn new() -> Self {
         Self {
-            map: Mutex::new(HashMap::new()),
+            map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -230,8 +230,6 @@ impl<'c> VarMap<'c> {
     }
 }
 
-const VAR_STACK_EXPECT: &str = "Var stack should always at least have global scope var map";
-
 #[derive(Debug)]
 pub struct VarStack<'c> {
     stack: Mutex<Vec<VarMap<'c>>>,
@@ -299,85 +297,85 @@ impl<'c> VarStack<'c> {
             .store(mem.saturating_sub(size), Ordering::Relaxed);
     }
 
-    /// Inserts a variable in the current scope, overwrites it if it already exists
-    pub fn insert_mut_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+    fn find_stack_with_var(&self, label: &Cow<'c, str>) -> Result<VarMap<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
-        let var_map = stack
-            .last()
-            .expect("Var stack should always at least have global scope var map");
-        self.deallocate_mem(var_map.get_var_size(&label));
-        let value_size = value.mem_size();
-        var_map.insert_mut_value(label.clone(), value)?;
-        self.allocate_mem(value_size)?;
-        Ok(())
-    }
-
-    /// Updates var in current scope will throw error if no scopes contain var
-    pub fn update_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
-        let stack = self.stack.lock().unwrap();
-        let value_size = value.mem_size();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(&label) {
-                self.deallocate_mem(var_map.get_var_size(&label));
-                var_map.insert_mut_value(label.clone(), value)?;
-                self.allocate_mem(value_size)?;
-                return Ok(());
+                return Ok(var_map.clone());
             }
         }
         Err(ValueError::NonExistantVar(format!(
-            "cannot update value of non existant var {}",
+            "var \"{}\" does not exist",
             label
         )))
     }
 
-    /// Updates the nearest matching variable searching from local to global scope, or creates it locally if no match is found.
-    pub fn update_or_create_mut_var(
-        &self,
-        label: &Cow<'c, str>,
-        value: Value<'c>,
-    ) -> Result<(), ValueError> {
+    fn get_last_stack(&self) -> VarMap<'c> {
         let stack = self.stack.lock().unwrap();
+        stack.last().expect("global stack must exist").clone()
+    }
+
+    /// Inserts var local first
+    pub fn insert(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
         let value_size = value.mem_size();
-        for var_map in stack.iter().rev() {
-            if var_map.has_entry(&label) {
-                self.deallocate_mem(var_map.get_var_size(&label));
-                var_map.insert_mut_value(label.clone(), value)?;
-                self.allocate_mem(value_size)?;
-                return Ok(());
-            }
-        }
-        let var_map = stack.last().expect(VAR_STACK_EXPECT);
-        self.deallocate_mem(var_map.get_var_size(&label));
-        var_map.insert_mut_value(label.clone(), value)?;
+        let stack = self.get_last_stack();
+        self.deallocate_mem(stack.get_var_size(&label));
+        stack.insert_mut_value(label.clone(), value)?;
         self.allocate_mem(value_size)?;
         Ok(())
     }
 
-    /// Inserts a constant var, will error if constant already exists
-    pub fn insert_const_var(
+    /// Updates var local first, throws error if var doesn't exist
+    pub fn update_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+        let value_size = value.mem_size();
+        let stack = self.find_stack_with_var(label)?;
+        self.deallocate_mem(stack.get_var_size(&label));
+        stack.insert_mut_value(label.clone(), value)?;
+        self.allocate_mem(value_size)?;
+        Ok(())
+    }
+
+    /// Inserts new var or updates var if it already exists local first
+    pub fn create_or_update(
         &self,
         label: &Cow<'c, str>,
         value: Value<'c>,
     ) -> Result<(), ValueError> {
-        let stack = self.stack.lock().unwrap();
         let value_size = value.mem_size();
-        let var_map = stack.last().expect(VAR_STACK_EXPECT);
-        self.allocate_mem(value_size)?;
-        var_map.insert_const_value(label.clone(), value)
+        match self.find_stack_with_var(label) {
+            Ok(stack) => {
+                self.deallocate_mem(stack.get_var_size(&label));
+                stack.insert_mut_value(label.clone(), value)?;
+                self.allocate_mem(value_size)?;
+            }
+            Err(_) => {
+                let stack = self.get_last_stack();
+                self.deallocate_mem(stack.get_var_size(&label));
+                stack.insert_mut_value(label.clone(), value)?;
+                self.allocate_mem(value_size)?;
+            }
+        }
+        Ok(())
     }
 
-    /// Removes a var from the most local scope, throws error if var is constant
-    pub fn remove_var(&self, label: &Cow<'c, str>) -> Result<Option<Value<'c>>, ValueError> {
-        let stack = self.stack.lock().unwrap();
-        let var_map = stack.last().expect(VAR_STACK_EXPECT);
-        let value_size = var_map.get_var_size(&label);
-        let return_value = var_map.remove_value(&label)?;
+    /// Inserts const var local first
+    pub fn insert_const(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+        let value_size = value.mem_size();
+        let locals = self.get_last_stack();
+        self.allocate_mem(value_size)?;
+        locals.insert_const_value(label.clone(), value)
+    }
+
+    /// Removes var local first and returns removed value
+    pub fn remove(&self, label: &Cow<'c, str>) -> Result<Option<Value<'c>>, ValueError> {
+        let stack = self.find_stack_with_var(label)?;
+        let value_size = stack.get_var_size(&label);
+        let return_value = stack.remove_value(&label)?;
         self.deallocate_mem(value_size);
         Ok(return_value)
     }
 
-    /// Gets value of var in most local scope, throws error if it doesn't exist
-    pub fn get_var_value(&self, label: &str) -> Result<Value<'c>, ValueError> {
+    pub fn get(&self, label: &str) -> Result<Value<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {
@@ -390,7 +388,6 @@ impl<'c> VarStack<'c> {
         )))
     }
 
-    /// Does mem::take on var entry in the current local scope
     pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
@@ -404,7 +401,6 @@ impl<'c> VarStack<'c> {
         )))
     }
 
-    /// Inserts var entry into most local var map (intended to be used with take_entry)
     pub fn insert_entry(
         &self,
         label: Cow<'c, str>,
@@ -423,22 +419,7 @@ impl<'c> VarStack<'c> {
         )))
     }
 
-    /// Gets value of var in most local scope, throws error if it doesn't exist
-    pub fn get_mut_var_value(&self, label: &str) -> Result<Value<'c>, ValueError> {
-        let stack = self.stack.lock().unwrap();
-        for var_map in stack.iter().rev() {
-            if var_map.has_entry(label) {
-                return var_map.clone_value(label);
-            }
-        }
-        Err(ValueError::NonExistantVar(format!(
-            "cannot get value of non existant var {}",
-            label
-        )))
-    }
-
-    /// Gets type of var in most local scope, returns None if doesn't exist
-    pub fn get_var_type(&self, label: &str) -> FslType {
+    pub fn get_type(&self, label: &str) -> FslType {
         let stack = self.stack.lock().unwrap();
         for var_map in stack.iter().rev() {
             if var_map.has_entry(label) {
