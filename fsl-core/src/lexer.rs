@@ -50,18 +50,18 @@ impl From<&str> for Symbol {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenType<'code> {
-    Symbol(&'code str),
-    Command(&'code str),
-    Number(&'code str),
-    String(&'code str),
-    Keyword(&'code str),
-    Identifier(&'code str),
-    Comment(&'code str),
-    None(&'code str),
+pub enum TokenType<'c> {
+    Symbol(&'c str),
+    Command(&'c str),
+    Number(&'c str),
+    String(&'c str),
+    Keyword(&'c str),
+    Identifier(&'c str),
+    Comment(&'c str),
+    None(&'c str),
 }
 
-impl<'code> Display for TokenType<'code> {
+impl<'c> Display for TokenType<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TokenType::Symbol(out) => write!(f, "{}", out),
@@ -76,21 +76,21 @@ impl<'code> Display for TokenType<'code> {
     }
 }
 
-impl<'code> Default for TokenType<'code> {
+impl<'c> Default for TokenType<'c> {
     fn default() -> Self {
         Self::None("")
     }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
-pub struct Token<'code> {
-    pub token_type: TokenType<'code>,
-    pub source: &'code str,
+pub struct Token<'c> {
+    pub token_type: TokenType<'c>,
+    pub source: &'c str,
     pub location: usize,
 }
 
-impl<'code> Token<'code> {
-    pub fn symbol(source: &'code str, symbol: &'code str, location: usize) -> Token<'code> {
+impl<'c> Token<'c> {
+    pub fn symbol(source: &'c str, symbol: &'c str, location: usize) -> Token<'c> {
         Token {
             token_type: TokenType::Symbol(symbol),
             source,
@@ -98,7 +98,7 @@ impl<'code> Token<'code> {
         }
     }
 
-    pub fn string(source: &'code str, string: &'code str, location: usize) -> Token<'code> {
+    pub fn string(source: &'c str, string: &'c str, location: usize) -> Token<'c> {
         Token {
             token_type: TokenType::String(string),
             source,
@@ -106,7 +106,7 @@ impl<'code> Token<'code> {
         }
     }
 
-    pub fn command(source: &'code str, command: &'code str, location: usize) -> Token<'code> {
+    pub fn command(source: &'c str, command: &'c str, location: usize) -> Token<'c> {
         Token {
             token_type: TokenType::Command(command),
             source,
@@ -114,7 +114,7 @@ impl<'code> Token<'code> {
         }
     }
 
-    pub fn identifier(source: &'code str, identifier: &'code str, location: usize) -> Token<'code> {
+    pub fn identifier(source: &'c str, identifier: &'c str, location: usize) -> Token<'c> {
         Token {
             token_type: TokenType::Identifier(identifier),
             source,
@@ -122,7 +122,7 @@ impl<'code> Token<'code> {
         }
     }
 
-    pub fn comment(source: &'code str, comment: &'code str, location: usize) -> Token<'code> {
+    pub fn comment(source: &'c str, comment: &'c str, location: usize) -> Token<'c> {
         Token {
             token_type: TokenType::Comment(comment),
             source,
@@ -131,10 +131,10 @@ impl<'code> Token<'code> {
     }
 
     pub fn number(
-        source: &'code str,
-        number: &'code str,
+        source: &'c str,
+        number: &'c str,
         location: usize,
-    ) -> Result<Token<'code>, LexError<'code>> {
+    ) -> Result<Token<'c>, LexError<'c>> {
         let token = Token {
             token_type: TokenType::Number(number),
             source,
@@ -148,7 +148,7 @@ impl<'code> Token<'code> {
         }
     }
 
-    pub fn parse(source: &'code str, value: &'code str, location: usize) -> Token<'code> {
+    pub fn parse(source: &'c str, value: &'c str, location: usize) -> Token<'c> {
         let token_type = if value.parse::<f64>().is_ok() {
             TokenType::Number(value)
         } else if KEYWORDS.contains(&value) {
@@ -164,7 +164,7 @@ impl<'code> Token<'code> {
         }
     }
 
-    pub fn invalid(source: &'code str, value: &'code str, location: usize) -> Token<'code> {
+    pub fn invalid(source: &'c str, value: &'c str, location: usize) -> Token<'c> {
         Token {
             token_type: TokenType::None(value),
             source,
@@ -213,23 +213,23 @@ impl<'code> Token<'code> {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum Context<'code> {
-    String(Token<'code>),
-    Float(Token<'code>),
+enum Context<'c> {
+    String(Token<'c>),
+    Float(Token<'c>),
     SingleLineComment,
-    MultiLineComment(Token<'code>),
+    MultiLineComment(Token<'c>),
     None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LexError<'code> {
-    UnexpectedToken(Token<'code>),
-    InvalidNumber(Token<'code>),
-    UnclosedString(Token<'code>),
-    UnclosedComment(Token<'code>),
+pub enum LexError<'c> {
+    UnexpectedToken(Token<'c>),
+    InvalidNumber(Token<'c>),
+    UnclosedString(Token<'c>),
+    UnclosedComment(Token<'c>),
 }
 
-impl<'code> Display for LexError<'code> {
+impl<'c> Display for LexError<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LexError::UnexpectedToken(token) => {
@@ -265,20 +265,20 @@ impl<'code> Display for LexError<'code> {
     }
 }
 
-impl<'code> std::error::Error for LexError<'code> {}
+impl<'c> std::error::Error for LexError<'c> {}
 
 #[derive(Debug)]
-pub struct Lexer<'code> {
-    input: &'code str,
-    rest: Peekable<CharIndices<'code>>,
+pub struct Lexer<'c> {
+    input: &'c str,
+    rest: Peekable<CharIndices<'c>>,
     location: usize,
-    context: Context<'code>,
-    pending: Option<Token<'code>>,
-    partial: &'code str,
+    context: Context<'c>,
+    pending: Option<Token<'c>>,
+    partial: &'c str,
 }
 
-impl<'code> Lexer<'code> {
-    pub fn new(input: &'code str) -> Self {
+impl<'c> Lexer<'c> {
+    pub fn new(input: &'c str) -> Self {
         Self {
             input,
             rest: input.char_indices().peekable(),
@@ -338,8 +338,8 @@ impl<'code> Lexer<'code> {
     }
 }
 
-impl<'code> Iterator for Lexer<'code> {
-    type Item = Result<Token<'code>, LexError<'code>>;
+impl<'c> Iterator for Lexer<'c> {
+    type Item = Result<Token<'c>, LexError<'c>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(pending) = self.pending.take() {
