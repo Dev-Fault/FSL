@@ -310,7 +310,7 @@ impl<'c> VarStack<'c> {
         )))
     }
 
-    fn get_last_stack(&self) -> VarMap<'c> {
+    pub fn get_last_stack(&self) -> VarMap<'c> {
         let stack = self.stack.lock().unwrap();
         stack.last().expect("global stack must exist").clone()
     }

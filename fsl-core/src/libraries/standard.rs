@@ -19,7 +19,7 @@ use crate::{
         command::{ArgPos, ArgRule, Command, Handler, UserCommand},
         value::{FslMap, Value},
     },
-    vars::VarEntry,
+    vars::{VarEntry, VarMap},
 };
 
 use futures::FutureExt;
@@ -2403,81 +2403,30 @@ pub async fn def<'c>(
     Ok(Value::None)
 }
 
-fn substitute_args_list<'c>(
-    values: &mut Vec<Value<'c>>,
-    var_map: &HashMap<Cow<'c, str>, Value<'c>>,
-) -> Result<(), CommandError> {
-    for value in values {
-        match value {
-            Value::List(values) => substitute_args_list(values, var_map)?,
-            Value::Map(map) => substitute_args_map(map, var_map)?,
-            Value::Var(label) => {
-                if let Some(var_value) = var_map.get(label) {
-                    *value = var_value.clone();
-                }
+fn alias_parameter<'c>(parameter: &mut Value<'c>, aliases: &HashMap<Cow<'c, str>, Cow<'c, str>>) {
+    match parameter {
+        Value::List(values) => {
+            for value in values.iter_mut() {
+                alias_parameter(value, aliases);
             }
-            Value::Command(command) => substitute_args(command, var_map)?,
-            Value::Int(_) => {}
-            Value::Float(_) => {}
-            Value::Bool(_) => {}
-            Value::Text(_) => {}
-            Value::None => {}
         }
-    }
-    Ok(())
-}
-
-fn substitute_args_map<'c>(
-    map: &mut FslMap<'c>,
-    var_map: &HashMap<Cow<'c, str>, Value<'c>>,
-) -> Result<(), CommandError> {
-    for (_, value) in map {
-        match value {
-            Value::Map(map) => substitute_args_map(map, var_map)?,
-            Value::List(values) => substitute_args_list(values, var_map)?,
-            Value::Var(label) => {
-                if let Some(var_value) = var_map.get(label) {
-                    *value = var_value.clone();
-                }
+        Value::Map(map) => {
+            dbg!(&map);
+            for value in map.values_mut() {
+                alias_parameter(value, aliases);
             }
-            Value::Command(command) => substitute_args(command, var_map)?,
-            Value::Int(_) => {}
-            Value::Float(_) => {}
-            Value::Bool(_) => {}
-            Value::Text(_) => {}
-            Value::None => {}
         }
-    }
-    Ok(())
-}
-
-fn substitute_args<'c>(
-    command: &mut Command<'c>,
-    var_map: &HashMap<Cow<'c, str>, Value<'c>>,
-) -> Result<(), CommandError> {
-    for arg in command.get_args_mut() {
-        match arg {
-            Value::List(values) => substitute_args_list(values, var_map)?,
-            Value::Var(label) => {
-                if let Some(var_value) = var_map.get(label) {
-                    *arg = var_value.clone()
-                }
+        Value::Command(command) => {
+            for arg in command.get_args_mut() {
+                alias_parameter(arg, aliases);
             }
-            Value::Command(_) => {
-                let mut inner_command = std::mem::take(arg).as_command()?;
-                substitute_args(&mut inner_command, var_map)?;
-                *arg = Value::Command(Box::new(inner_command));
-            }
-            Value::Map(map) => substitute_args_map(map, var_map)?,
-            Value::Int(_) => {}
-            Value::Float(_) => {}
-            Value::Bool(_) => {}
-            Value::Text(_) => {}
-            Value::None => {}
         }
+        Value::Var(var) => match aliases.get(var) {
+            Some(alias) => *parameter = Value::Var(alias.clone()),
+            None => {}
+        },
+        _ => {}
     }
-
-    Ok(())
 }
 
 pub const RUN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
@@ -2491,7 +2440,7 @@ pub async fn run<'c>(
 
     let commands_lock = data.user_commands.lock().await;
 
-    let mut var_labels = commands_lock
+    let mut parameter_labels = commands_lock
         .get(&command_label)
         .unwrap()
         .parameters
@@ -2499,32 +2448,34 @@ pub async fn run<'c>(
     let commands = commands_lock.get(&command_label).unwrap().commands.clone();
     drop(commands_lock);
 
-    if values.len() != var_labels.len() {
+    if values.len() != parameter_labels.len() {
         return Err(CommandError::WrongArgCount(format!(
             "expected {} args but got {}",
-            var_labels.len(),
+            parameter_labels.len(),
             values.len()
         )));
     }
 
-    let mut var_map: HashMap<Cow<'c, str>, Value> = HashMap::new();
+    data.vars.push();
 
-    let vars = var_labels.len();
-    for _ in 0..vars {
+    let mut aliases: HashMap<Cow<'c, str>, Cow<'c, str>> = HashMap::new();
+    let parameters = parameter_labels.len();
+    for _ in 0..parameters {
         let mut value = values.pop_front().unwrap();
-        match value {
-            Value::Map(_) | Value::List(_) | Value::Command(_) => {
-                value = value.as_raw_unchecked(data.clone()).await?;
-            }
-            _ => {}
+        let parameter = parameter_labels.pop_front().unwrap();
+        if let Value::Var(var) = value {
+            aliases.insert(parameter, var);
+        } else {
+            value = value.as_raw_unchecked(data.clone()).await?;
+            data.vars.insert(&parameter, value)?;
         }
-        var_map.insert(var_labels.pop_front().unwrap(), value);
     }
 
     let mut final_value = Value::None;
-    data.vars.push();
     for mut command in commands {
-        substitute_args(&mut command, &var_map)?;
+        let args = command.get_args_mut();
+        args.iter_mut()
+            .for_each(|arg| alias_parameter(arg, &aliases));
         final_value = command.execute(data.clone()).await?;
         if data.flags.return_flag.load(Ordering::Relaxed) {
             data.flags.return_flag.store(false, Ordering::Relaxed);
@@ -4112,7 +4063,7 @@ pub mod tests {
             r#"
                 create_player.def(name,
 	                player.store([
-	                    name: name,
+	                    name: name.free(),
 	                    health: 100,
 	                    dodge: 0,
 	                    strength: 0
@@ -4121,6 +4072,41 @@ pub mod tests {
 	            )
 	            player.store(create_player("jake"))
 	            player.name.get().print()
+            "#,
+            "jake",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn substitute_list_args() {
+        test_interpreter(
+            r#"
+                create_player.def(name,
+	                player.store([
+	                    name.free(),
+	                    100,
+	                    0,
+	                    0,
+	                ])
+	                player.return()
+	            )
+	            player.store(create_player("jake"))
+	            player.index(0).print()
+            "#,
+            "jake",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn substitute_command_args() {
+        test_interpreter(
+            r#"
+                print_name.def(name,
+	                print(name)
+	            )
+	            print_name("jake")
             "#,
             "jake",
         )
