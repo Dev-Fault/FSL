@@ -318,13 +318,7 @@ impl<'c> Value<'c> {
                 Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
                 Value::List(mut values) => {
                     for value in values.iter_mut() {
-                        if value.is_type(FslType::Command) {
-                            let new_value = std::mem::take(value)
-                                .as_command()?
-                                .execute(data.clone())
-                                .await?;
-                            *value = new_value
-                        }
+                        *value = std::mem::take(value).as_raw_unchecked(data.clone()).await?;
                     }
                     Ok(values)
                 }
@@ -356,13 +350,7 @@ impl<'c> Value<'c> {
                 Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
                 Value::Map(mut map) => {
                     for (_, value) in map.iter_mut() {
-                        if value.is_type(FslType::Command) {
-                            let new_value = std::mem::take(value)
-                                .as_command()?
-                                .execute(data.clone())
-                                .await?;
-                            *value = new_value
-                        }
+                        *value = std::mem::take(value).as_raw_unchecked(data.clone()).await?;
                     }
                     Ok(map)
                 }
@@ -387,10 +375,10 @@ impl<'c> Value<'c> {
             match self {
                 Value::Int(n) => Ok(Value::Int(n)),
                 Value::Float(n) => Ok(Value::Float(n)),
-                Value::Text(n) => match n.parse::<f64>() {
-                    Ok(n) => Ok(Value::Float(n)),
-                    Err(_) => match n.parse::<i64>() {
-                        Ok(n) => Ok(Value::Int(n)),
+                Value::Text(n) => match n.parse::<i64>() {
+                    Ok(n) => Ok(Value::Int(n)),
+                    Err(_) => match n.parse::<f64>() {
+                        Ok(n) => Ok(Value::Float(n)),
                         Err(_) => Err(Value::Text(n)
                             .gen_conversion_err_to_types(&[FslType::Int, FslType::Float])
                             .into()),
@@ -508,8 +496,8 @@ impl<'c> Value<'c> {
         if let Value::Var(label) = self {
             Ok(label.clone())
         } else {
-            Err(ValueError::InvalidVarName(format!(
-                "{} is not a valid var name",
+            Err(ValueError::NotAVar(format!(
+                "value {} is not a var",
                 self.to_string()
             )))
         }

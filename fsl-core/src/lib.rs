@@ -1460,12 +1460,12 @@ mod interpreter {
     }
 
     #[tokio::test]
-    async fn free_variable() {
+    async fn take_variable() {
         test_interpreter(
             r#"
         x.store(42)
         print(x, " ")
-        freed.store(free(x))
+        freed.store(take(x))
         print(freed)
         "#,
             "42 42",
@@ -1474,10 +1474,10 @@ mod interpreter {
     }
 
     #[tokio::test]
-    async fn error_free_nonexistent() {
+    async fn error_take_nonexistent() {
         test_interpreter_err(
             r#"
-        result.store(free(nonexistent))
+        result.store(take(nonexistent))
         print(result)
         "#,
         )
@@ -1600,7 +1600,7 @@ mod interpreter {
             add_potion_modifier.def(potion,
 			    mods.store(attacker.index(C_MODS).clone())
 			    mods.push([potion.index(P_MOD).clone(), potion.index(P_DUR).clone()])
-			    attacker.index(C_MODS).store(mods.clone())
+			    attacker.replace(C_MODS, mods)
             )
             add_potion_modifier([50, 3])
 			print("potion: [1, 1]\n", concat("mods: ", mods, "\nattacker_mods: ", attacker.index(C_MODS)))
@@ -1630,7 +1630,7 @@ mod interpreter {
 			                ))
 	                    )
 	                )
-			        potion_modifier.free()
+			        potion_modifier.take()
 	            )
 
 	            get_potion_mod().print()

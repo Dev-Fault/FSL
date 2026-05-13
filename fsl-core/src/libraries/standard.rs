@@ -19,7 +19,7 @@ use crate::{
         command::{ArgPos, ArgRule, Command, Handler, UserCommand},
         value::{FslMap, Value},
     },
-    vars::{VarEntry, VarMap},
+    vars::VarEntry,
 };
 
 use futures::FutureExt;
@@ -159,7 +159,7 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, LOCAL, LOCAL_RULES, local);
     register_command!(interpreter, UPDATE, UPDATE_RULES, update);
     register_command!(interpreter, CLONE, CLONE_RULES, clone);
-    register_command!(interpreter, FREE, FREE_RULES, free);
+    register_command!(interpreter, TAKE, TAKE_RULES, take);
     register_command!(interpreter, PRINT, PRINT_RULES, print);
     register_command!(interpreter, ARGS, ARGS_RULES, args);
     register_command!(interpreter, DEBUG, DEBUG_RULES, debug);
@@ -638,9 +638,9 @@ pub async fn clone<'c>(
     Ok(value.as_raw(data, ANY).await?)
 }
 
-pub const FREE: &str = "free";
-pub const FREE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
-pub async fn free<'c>(
+pub const TAKE: &str = "take";
+pub const TAKE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub async fn take<'c>(
     command: Command<'c>,
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
@@ -650,6 +650,16 @@ pub async fn free<'c>(
         Some(value) => Ok(value),
         None => Ok(Value::None),
     }
+}
+
+pub const REF: &str = "ref";
+pub const REF_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
+pub async fn r#ref<'c>(
+    command: Command<'c>,
+    _: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, CommandError> {
+    let value = command.take_args().pop_front().unwrap();
+    Ok(Value::Var(value.get_var_label()?))
 }
 
 pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
@@ -2411,7 +2421,6 @@ fn alias_parameter<'c>(parameter: &mut Value<'c>, aliases: &HashMap<Cow<'c, str>
             }
         }
         Value::Map(map) => {
-            dbg!(&map);
             for value in map.values_mut() {
                 alias_parameter(value, aliases);
             }
@@ -2474,8 +2483,9 @@ pub async fn run<'c>(
     let mut final_value = Value::None;
     for mut command in commands {
         let args = command.get_args_mut();
-        args.iter_mut()
-            .for_each(|arg| alias_parameter(arg, &aliases));
+        for arg in args {
+            alias_parameter(arg, &aliases);
+        }
         final_value = command.execute(data.clone()).await?;
         if data.flags.return_flag.load(Ordering::Relaxed) {
             data.flags.return_flag.store(false, Ordering::Relaxed);
@@ -2749,8 +2759,8 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn free_var() {
-        let err = test_interpreter_err_type("a.store(1) print(a) a.free() print(a)").await;
+    async fn take_var() {
+        let err = test_interpreter_err_type("a.store(1) print(a) a.take() print(a)").await;
         assert!(matches!(
             err,
             InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_)))
@@ -3296,6 +3306,25 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn def_passing_by_value() {
+        test_interpreter(
+            r#"
+            create_obj.def(x, y,
+                obj.store([
+                    x: x,
+                    y: y,
+                ]).return()
+            )
+
+            obj.store(create_obj(2, 3))
+            obj.x.get().print()
+            "#,
+            "2",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn pass_var_to_custom_command() {
         test_interpreter(r#"plus.def(f, f.inc()) i.store(0) i.plus() i.print()"#, "1").await;
     }
@@ -3511,21 +3540,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn store_in_result_of_command() {
-        test_interpreter(
-            r#"
-                character_name.store("jake")
-                character.store([character_name])
-                character.index(0).store("joseph")
-                character.index(0).print("\n")
-                character_name.print()
-            "#,
-            "joseph\njoseph",
-        )
-        .await;
-    }
-
-    #[tokio::test]
     async fn return_statement() {
         test_interpreter(
             r#"
@@ -3672,11 +3686,11 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn const_cannot_be_freed() {
+    async fn const_cannot_be_took() {
         let err = test_interpreter_err_type(
             r#"
                 const(MY_CONST, 42)
-                MY_CONST.free()
+                MY_CONST.take()
             "#,
         )
         .await;
@@ -3718,8 +3732,8 @@ pub mod tests {
         test_interpreter(
             r#"
                 THREE.const(3)
-                list.store([1, 2, three])
-                list.index(2).store(99)
+                list.store([1, 2, THREE])
+                list.replace(2, 99)
                 print(list.index(2), "\n")
                 print(THREE)
             "#,
@@ -4063,7 +4077,7 @@ pub mod tests {
             r#"
                 create_player.def(name,
 	                player.store([
-	                    name: name.free(),
+	                    name: name.take(),
 	                    health: 100,
 	                    dodge: 0,
 	                    strength: 0
@@ -4084,7 +4098,7 @@ pub mod tests {
             r#"
                 create_player.def(name,
 	                player.store([
-	                    name.free(),
+	                    name.take(),
 	                    100,
 	                    0,
 	                    0,
@@ -4265,11 +4279,11 @@ pub mod tests {
 
 	            	potion.local([
 	            		type: type,
-	            		modifier: modifier.free(),
-	            		duration: duration.free(),
+	            		modifier: modifier.take(),
+	            		duration: duration.take(),
 	            		quality: quality,
 	            	])
-	            	action.store(create_action(name.free(), POTION, potion.free())).return()
+	            	action.store(create_action(name.take(), POTION, potion.take())).return()
 	            )
 
 	            QUALITY_THRESHOLDS.const([
@@ -4306,7 +4320,7 @@ pub mod tests {
 	            		*return across multiple functions and loops must be fixed*
 	            		quality.local(get_threshold_value(QUALITY_THRESHOLDS, random_range(0, 100)))
 	            		potion.store(create_potion_action(type, quality))
-	            		potion_actions.push(potion.free())
+	            		potion_actions.push(potion.take())
 	            	)
 	            	return(potion_actions)
 	            )

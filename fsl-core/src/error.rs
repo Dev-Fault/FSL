@@ -207,7 +207,7 @@ pub enum ValueError {
     InvalidConversion(String),
     FailedParse(String),
     NonExistantVar(String),
-    InvalidVarName(String),
+    NotAVar(String),
     InvalidVarValue(String),
     NegativeIndex(String),
     VarMemoryLimitReached,
@@ -239,7 +239,7 @@ impl std::fmt::Display for ValueError {
             ValueError::InvalidConversion(error_text) => error_text,
             ValueError::FailedParse(error_text) => error_text,
             ValueError::NonExistantVar(error_text) => error_text,
-            ValueError::InvalidVarName(error_text) => error_text,
+            ValueError::NotAVar(error_text) => error_text,
             ValueError::NegativeIndex(error_text) => error_text,
             ValueError::InvalidVarValue(error_text) => error_text,
             ValueError::VarMemoryLimitReached => {

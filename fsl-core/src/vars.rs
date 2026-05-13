@@ -32,7 +32,7 @@ impl<'c> Default for VarEntry<'c> {
 }
 
 impl<'c> VarEntry<'c> {
-    fn new_mut(value: Value) -> VarEntry {
+    fn new(value: Value) -> VarEntry {
         VarEntry {
             value: value,
             constant: false,
@@ -59,11 +59,15 @@ impl<'c> VarMap<'c> {
         }
     }
 
-    pub fn insert_mut_value(
+    fn insert_with<F>(
         &self,
         label: Cow<'c, str>,
         value: Value<'c>,
-    ) -> Result<(), ValueError> {
+        make_entry: F,
+    ) -> Result<(), ValueError>
+    where
+        F: FnOnce(Value<'c>) -> VarEntry<'c>,
+    {
         match value {
             Value::Var(_) => {
                 return Err(ValueError::InvalidVarValue(
@@ -78,105 +82,74 @@ impl<'c> VarMap<'c> {
             _ => {
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
-                if let Some(prev_entry) = map.get(&label) {
-                    if prev_entry.constant {
-                        return Err(ValueError::AttemptToOverwriteConstant(format!(
-                            "cannot overwrite constant var {}",
-                            label
-                        )));
-                    }
+                if map.get(&label).is_some_and(|entry| entry.constant) {
+                    return Err(ValueError::AttemptToOverwriteConstant(format!(
+                        "cannot overwrite constant var {}",
+                        label
+                    )));
                 }
-                map.insert(label, VarEntry::new_mut(value));
+                map.insert(label, make_entry(value));
                 Ok(())
             }
         }
     }
 
-    pub fn insert_const_value(
-        &self,
-        label: Cow<'c, str>,
-        value: Value<'c>,
-    ) -> Result<(), ValueError> {
-        match value {
-            Value::Var(_) => {
-                return Err(ValueError::InvalidVarValue(
-                    "cannot store var in var".into(),
-                ));
-            }
-            Value::Command(_) => {
-                return Err(ValueError::InvalidVarValue(
-                    "cannot store command in var".into(),
-                ));
-            }
-            _ => {
-                let lock = self.map.lock();
-                let mut map = lock.unwrap();
-                if let Some(prev_entry) = map.get(&label) {
-                    if prev_entry.constant {
-                        return Err(ValueError::AttemptToOverwriteConstant(format!(
-                            "cannot overwrite constant var {}",
-                            label
-                        )));
-                    }
-                }
-                map.insert(label, VarEntry::new_const(value));
-                Ok(())
-            }
-        }
+    pub fn insert(&self, label: Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+        self.insert_with(label, value, VarEntry::new)
+    }
+
+    pub fn insert_const(&self, label: Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+        self.insert_with(label, value, VarEntry::new_const)
     }
 
     pub fn remove_value(&self, label: &str) -> Result<Option<Value<'c>>, ValueError> {
         let lock = self.map.lock();
         let mut map = lock.unwrap();
 
-        if let Some(prev_entry) = map.get(label) {
-            if prev_entry.constant {
-                return Err(ValueError::AttemptToFreeConstant(format!(
-                    "cannot free constant var {}",
-                    label
-                )));
-            }
+        if map.get(label).is_some_and(|entry| entry.constant) {
+            return Err(ValueError::AttemptToFreeConstant(format!(
+                "cannot remove constant var {}",
+                label
+            )));
         }
         Ok(map.remove(label).map(|entry| entry.value))
     }
 
-    pub fn clone_value(&self, label: &str) -> Result<Value<'c>, ValueError> {
-        let var_entry = self.map.lock().unwrap().get(label).cloned();
+    pub fn get_cloned(&self, label: &str) -> Result<Value<'c>, ValueError> {
+        let entry = self.map.lock().unwrap().get(label).cloned();
 
-        match var_entry {
-            Some(var_entry) => {
-                if var_entry.value.is_type(FslType::Var) {
-                    return self.clone_value(&var_entry.value.get_var_label()?);
-                } else {
-                    Ok(var_entry.value)
-                }
+        if let Some(entry) = entry {
+            if entry.value.is_type(FslType::Var) {
+                return self.get_cloned(&entry.value.get_var_label()?);
+            } else {
+                Ok(entry.value)
             }
-            None => Err(ValueError::NonExistantVar(format!(
-                "cannot get value of a non existant var: \"{}\"",
+        } else {
+            Err(ValueError::NonExistantVar(format!(
+                "cannot not get value of non existant var {}",
                 label
-            ))),
+            )))
         }
     }
 
     pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, ValueError> {
         let mut vars = self.map.lock().unwrap();
-        let var_entry = vars.get_mut(label);
+        let entry = vars.get_mut(label);
 
-        match var_entry {
-            Some(var_entry) => {
-                if var_entry.constant {
-                    return Err(ValueError::AttemptToOverwriteConstant(format!(
-                        "cannot overwrite constant var {}",
-                        label
-                    )));
-                }
-                let var_entry = mem::take(var_entry);
-                Ok(var_entry)
+        if let Some(entry) = entry {
+            if entry.constant {
+                return Err(ValueError::AttemptToOverwriteConstant(format!(
+                    "cannot overwrite constant var {}",
+                    label
+                )));
             }
-            None => Err(ValueError::NonExistantVar(format!(
-                "cannot get value of a non existant var: \"{}\"",
+            let var_entry = mem::take(entry);
+            Ok(var_entry)
+        } else {
+            Err(ValueError::NonExistantVar(format!(
+                "cannot not get value of non existant var {}",
                 label
-            ))),
+            )))
         }
     }
 
@@ -185,23 +158,21 @@ impl<'c> VarMap<'c> {
         vars.insert(label, var_entry);
     }
 
-    pub fn has_entry(&self, label: &str) -> bool {
-        let var_map = self.map.lock().unwrap();
-        var_map.contains_key(label)
+    pub fn contains(&self, label: &str) -> bool {
+        let map = self.map.lock().unwrap();
+        map.contains_key(label)
     }
 
-    pub fn get_var_size(&self, label: &Cow<'c, str>) -> usize {
-        let var_map = self.map.lock().unwrap();
-        var_map
-            .get(label)
+    pub fn get_size(&self, label: &Cow<'c, str>) -> usize {
+        let map = self.map.lock().unwrap();
+        map.get(label)
             .and_then(|entry| entry.value.mem_size())
             .unwrap_or(0)
     }
 
     pub fn total_mem_size(&self) -> usize {
-        let var_map = self.map.lock().unwrap();
-        var_map
-            .values()
+        let map = self.map.lock().unwrap();
+        map.values()
             .map(|entry| entry.value.mem_size().unwrap_or(0))
             .sum()
     }
@@ -209,11 +180,11 @@ impl<'c> VarMap<'c> {
     pub fn get_type(&self, label: &str) -> FslType {
         let lock = self.map.lock();
         let map = lock.unwrap();
-        let var_entry = map.get(label);
+        let entry = map.get(label);
 
-        match var_entry {
-            Some(var_entry) => {
-                let value = &var_entry.value;
+        match entry {
+            Some(entry) => {
+                let value = &entry.value;
                 if value.is_type(FslType::Var) {
                     match value.get_var_label() {
                         Ok(label) => {
@@ -230,27 +201,88 @@ impl<'c> VarMap<'c> {
     }
 }
 
+pub trait MemoryManager {
+    fn allocate(&self, size: Option<usize>) -> Result<(), ValueError>;
+    fn deallocate(&self, size: usize);
+}
+
+#[derive(Debug)]
+pub struct Unbounded;
+
+impl MemoryManager for Unbounded {
+    fn allocate(&self, size: Option<usize>) -> Result<(), ValueError> {
+        todo!()
+    }
+
+    fn deallocate(&self, size: usize) {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+pub struct Bounded {
+    pub limit: Option<usize>,
+    pub allocated: AtomicUsize,
+}
+
+impl Bounded {
+    pub fn new(limit: Option<usize>) -> Bounded {
+        Bounded {
+            limit,
+            allocated: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl MemoryManager for Bounded {
+    fn allocate(&self, size: Option<usize>) -> Result<(), ValueError> {
+        let Some(limit) = self.limit else {
+            return Ok(());
+        };
+
+        let mem = self.allocated.load(Ordering::Relaxed);
+        match size {
+            Some(size) => {
+                match mem.checked_add(size) {
+                    Some(new_mem) => {
+                        if new_mem > limit {
+                            return Err(ValueError::VarMemoryLimitReached);
+                        }
+                        self.allocated.store(new_mem, Ordering::Relaxed);
+                    }
+                    None => return Err(ValueError::VarMemoryLimitReached),
+                };
+            }
+            None => return Err(ValueError::VarMemoryLimitReached),
+        }
+        Ok(())
+    }
+
+    fn deallocate(&self, size: usize) {
+        let mem = self.allocated.load(Ordering::Relaxed);
+        self.allocated
+            .store(mem.saturating_sub(size), Ordering::Relaxed);
+    }
+}
+
 #[derive(Debug)]
 pub struct VarStack<'c> {
     stack: Mutex<Vec<VarMap<'c>>>,
-    mem_limit: Option<usize>,
-    pub(crate) allocated_mem: AtomicUsize,
+    bound: Bounded,
 }
 
 impl<'c> VarStack<'c> {
     pub fn new_unbounded() -> VarStack<'c> {
         VarStack {
             stack: Mutex::new(vec![(VarMap::new())]),
-            mem_limit: None,
-            allocated_mem: AtomicUsize::new(0),
+            bound: Bounded::new(None),
         }
     }
 
     pub fn new_bounded(byte_limit: usize) -> VarStack<'c> {
         VarStack {
             stack: Mutex::new(vec![(VarMap::new())]),
-            mem_limit: Some(byte_limit),
-            allocated_mem: AtomicUsize::new(0),
+            bound: Bounded::new(Some(byte_limit)),
         }
     }
 
@@ -265,47 +297,20 @@ impl<'c> VarStack<'c> {
 
     pub fn pop(&self) {
         let mut stack = self.stack.lock().unwrap();
-        if let Some(var_map) = stack.pop() {
-            self.deallocate_mem(var_map.total_mem_size());
+        if let Some(map) = stack.pop() {
+            self.bound.deallocate(map.total_mem_size());
         }
-    }
-
-    pub fn allocate_mem(&self, size: Option<usize>) -> Result<(), ValueError> {
-        let mem = self.allocated_mem.load(Ordering::Relaxed);
-        match size {
-            Some(size) => match mem.checked_add(size) {
-                Some(new_mem) => {
-                    if let Some(mem_limit) = self.mem_limit
-                        && new_mem > mem_limit
-                    {
-                        return Err(ValueError::VarMemoryLimitReached);
-                    }
-                    self.allocated_mem.store(new_mem, Ordering::Relaxed);
-                }
-                None => return Err(ValueError::VarMemoryLimitReached),
-            },
-            None => {
-                return Err(ValueError::VarMemoryLimitReached);
-            }
-        };
-        Ok(())
-    }
-
-    pub fn deallocate_mem(&self, size: usize) {
-        let mem = self.allocated_mem.load(Ordering::Relaxed);
-        self.allocated_mem
-            .store(mem.saturating_sub(size), Ordering::Relaxed);
     }
 
     fn find_stack_with_var(&self, label: &Cow<'c, str>) -> Result<VarMap<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
-        for var_map in stack.iter().rev() {
-            if var_map.has_entry(&label) {
-                return Ok(var_map.clone());
+        for map in stack.iter().rev() {
+            if map.contains(&label) {
+                return Ok(map.clone());
             }
         }
         Err(ValueError::NonExistantVar(format!(
-            "var \"{}\" does not exist",
+            "var {} does not exist",
             label
         )))
     }
@@ -317,21 +322,21 @@ impl<'c> VarStack<'c> {
 
     /// Inserts var local first
     pub fn insert(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
-        let value_size = value.mem_size();
+        let size = value.mem_size();
         let stack = self.get_last_stack();
-        self.deallocate_mem(stack.get_var_size(&label));
-        stack.insert_mut_value(label.clone(), value)?;
-        self.allocate_mem(value_size)?;
+        self.bound.deallocate(stack.get_size(&label));
+        stack.insert(label.clone(), value)?;
+        self.bound.allocate(size)?;
         Ok(())
     }
 
     /// Updates var local first, throws error if var doesn't exist
     pub fn update_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
-        let value_size = value.mem_size();
+        let size = value.mem_size();
         let stack = self.find_stack_with_var(label)?;
-        self.deallocate_mem(stack.get_var_size(&label));
-        stack.insert_mut_value(label.clone(), value)?;
-        self.allocate_mem(value_size)?;
+        self.bound.deallocate(stack.get_size(&label));
+        stack.insert(label.clone(), value)?;
+        self.bound.allocate(size)?;
         Ok(())
     }
 
@@ -341,18 +346,18 @@ impl<'c> VarStack<'c> {
         label: &Cow<'c, str>,
         value: Value<'c>,
     ) -> Result<(), ValueError> {
-        let value_size = value.mem_size();
+        let size = value.mem_size();
         match self.find_stack_with_var(label) {
             Ok(stack) => {
-                self.deallocate_mem(stack.get_var_size(&label));
-                stack.insert_mut_value(label.clone(), value)?;
-                self.allocate_mem(value_size)?;
+                self.bound.deallocate(stack.get_size(&label));
+                stack.insert(label.clone(), value)?;
+                self.bound.allocate(size)?;
             }
             Err(_) => {
                 let stack = self.get_last_stack();
-                self.deallocate_mem(stack.get_var_size(&label));
-                stack.insert_mut_value(label.clone(), value)?;
-                self.allocate_mem(value_size)?;
+                self.bound.deallocate(stack.get_size(&label));
+                stack.insert(label.clone(), value)?;
+                self.bound.allocate(size)?;
             }
         }
         Ok(())
@@ -360,26 +365,26 @@ impl<'c> VarStack<'c> {
 
     /// Inserts const var local first
     pub fn insert_const(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
-        let value_size = value.mem_size();
+        let size = value.mem_size();
         let locals = self.get_last_stack();
-        self.allocate_mem(value_size)?;
-        locals.insert_const_value(label.clone(), value)
+        self.bound.allocate(size)?;
+        locals.insert_const(label.clone(), value)
     }
 
     /// Removes var local first and returns removed value
     pub fn remove(&self, label: &Cow<'c, str>) -> Result<Option<Value<'c>>, ValueError> {
         let stack = self.find_stack_with_var(label)?;
-        let value_size = stack.get_var_size(&label);
+        let size = stack.get_size(&label);
         let return_value = stack.remove_value(&label)?;
-        self.deallocate_mem(value_size);
+        self.bound.deallocate(size);
         Ok(return_value)
     }
 
     pub fn get(&self, label: &str) -> Result<Value<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
-        for var_map in stack.iter().rev() {
-            if var_map.has_entry(label) {
-                return var_map.clone_value(label);
+        for map in stack.iter().rev() {
+            if map.contains(label) {
+                return map.get_cloned(label);
             }
         }
         Err(ValueError::NonExistantVar(format!(
@@ -390,9 +395,9 @@ impl<'c> VarStack<'c> {
 
     pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, ValueError> {
         let stack = self.stack.lock().unwrap();
-        for var_map in stack.iter().rev() {
-            if var_map.has_entry(label) {
-                return var_map.take_entry(label);
+        for map in stack.iter().rev() {
+            if map.contains(label) {
+                return map.take_entry(label);
             }
         }
         Err(ValueError::NonExistantVar(format!(
@@ -401,15 +406,11 @@ impl<'c> VarStack<'c> {
         )))
     }
 
-    pub fn insert_entry(
-        &self,
-        label: Cow<'c, str>,
-        var_entry: VarEntry<'c>,
-    ) -> Result<(), ValueError> {
+    pub fn insert_entry(&self, label: Cow<'c, str>, entry: VarEntry<'c>) -> Result<(), ValueError> {
         let stack = self.stack.lock().unwrap();
-        for var_map in stack.iter().rev() {
-            if var_map.has_entry(&label) {
-                var_map.insert_entry(label, var_entry);
+        for map in stack.iter().rev() {
+            if map.contains(&label) {
+                map.insert_entry(label, entry);
                 return Ok(());
             }
         }
@@ -421,9 +422,9 @@ impl<'c> VarStack<'c> {
 
     pub fn get_type(&self, label: &str) -> FslType {
         let stack = self.stack.lock().unwrap();
-        for var_map in stack.iter().rev() {
-            if var_map.has_entry(label) {
-                return var_map.get_type(label);
+        for map in stack.iter().rev() {
+            if map.contains(label) {
+                return map.get_type(label);
             }
         }
         FslType::None

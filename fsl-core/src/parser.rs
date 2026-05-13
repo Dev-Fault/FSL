@@ -583,6 +583,7 @@ impl<'c> Parser<'c> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn parse(mut self) -> Result<Vec<Expression<'c>>, ParseError<'c>> {
         self.parse_tokens()?;
         let mut parsed = Vec::with_capacity(self.pending.len());
