@@ -43,20 +43,24 @@ async fn main() {
 
     let mut interpreter = FslInterpreter::new();
 
-    if let Some(input) = input {
-        interpreter.add_arg(Value::from(input)).await;
-    }
-
     interpreter.register_library(Library::Exec);
     interpreter.register_library(Library::Io);
 
     let result = if args.embeded {
         interpreter
-            .interpret_embedded_code(&script, InterpreterData::default())
+            .interpret_embedded_code(
+                &script,
+                InterpreterData::default()
+                    .with_args(vec![Value::from(input.unwrap_or("".to_string()))]),
+            )
             .await
     } else {
         interpreter
-            .interpret(&script, InterpreterData::default())
+            .interpret(
+                &script,
+                InterpreterData::default()
+                    .with_args(vec![Value::from(input.unwrap_or("".to_string()))]),
+            )
             .await
     };
 

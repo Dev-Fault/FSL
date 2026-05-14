@@ -35,7 +35,6 @@ pub type CommandDefinitions = HashMap<&'static str, CommandDefinition>;
 #[derive(Debug)]
 pub struct FslInterpreter {
     pub command_definitions: CommandDefinitions,
-    args: Vec<Value<'static>>,
 }
 
 #[macro_export]
@@ -64,14 +63,9 @@ impl FslInterpreter {
     pub fn new() -> Self {
         let mut interpreter = Self {
             command_definitions: CommandDefinitions::new(),
-            args: Vec::new(),
         };
         interpreter.register_library(Library::Std);
         interpreter
-    }
-
-    pub async fn add_arg(&mut self, arg: Value<'static>) {
-        self.args.push(arg);
     }
 
     /// Register command to interpreter allowing it to execute it, overwrites commands with same name if they exist
