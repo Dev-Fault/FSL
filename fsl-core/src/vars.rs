@@ -2,13 +2,11 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     mem,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use crate::{
+    data::MemoryLimit,
     error::ValueError,
     types::{FslType, value::Value},
 };
@@ -16,19 +14,10 @@ use crate::{
 const MEGABYTE: usize = 1024 * 1024;
 pub const DEFAULT_MEMORY_LIMIT: usize = 5 * MEGABYTE;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VarEntry<'c> {
     pub value: Value<'c>,
     pub constant: bool,
-}
-
-impl<'c> Default for VarEntry<'c> {
-    fn default() -> Self {
-        Self {
-            value: Default::default(),
-            constant: Default::default(),
-        }
-    }
 }
 
 impl<'c> VarEntry<'c> {
@@ -201,89 +190,31 @@ impl<'c> VarMap<'c> {
     }
 }
 
-pub trait MemoryManager {
-    fn allocate(&self, size: Option<usize>) -> Result<(), ValueError>;
-    fn deallocate(&self, size: usize);
-}
-
-#[derive(Debug)]
-pub struct Unbounded;
-
-impl MemoryManager for Unbounded {
-    fn allocate(&self, size: Option<usize>) -> Result<(), ValueError> {
-        todo!()
-    }
-
-    fn deallocate(&self, size: usize) {
-        todo!()
-    }
-}
-
-#[derive(Debug)]
-pub struct Bounded {
-    pub limit: Option<usize>,
-    pub allocated: AtomicUsize,
-}
-
-impl Bounded {
-    pub fn new(limit: Option<usize>) -> Bounded {
-        Bounded {
-            limit,
-            allocated: AtomicUsize::new(0),
-        }
-    }
-}
-
-impl MemoryManager for Bounded {
-    fn allocate(&self, size: Option<usize>) -> Result<(), ValueError> {
-        let Some(limit) = self.limit else {
-            return Ok(());
-        };
-
-        let mem = self.allocated.load(Ordering::Relaxed);
-        match size {
-            Some(size) => {
-                match mem.checked_add(size) {
-                    Some(new_mem) => {
-                        if new_mem > limit {
-                            return Err(ValueError::VarMemoryLimitReached);
-                        }
-                        self.allocated.store(new_mem, Ordering::Relaxed);
-                    }
-                    None => return Err(ValueError::VarMemoryLimitReached),
-                };
-            }
-            None => return Err(ValueError::VarMemoryLimitReached),
-        }
-        Ok(())
-    }
-
-    fn deallocate(&self, size: usize) {
-        let mem = self.allocated.load(Ordering::Relaxed);
-        self.allocated
-            .store(mem.saturating_sub(size), Ordering::Relaxed);
-    }
-}
-
 #[derive(Debug)]
 pub struct VarStack<'c> {
     stack: Mutex<Vec<VarMap<'c>>>,
-    bound: Bounded,
+    bound: Arc<MemoryLimit>,
+}
+
+impl<'c> Default for VarStack<'c> {
+    fn default() -> Self {
+        Self {
+            stack: Mutex::new(vec![VarMap::new()]),
+            bound: Default::default(),
+        }
+    }
 }
 
 impl<'c> VarStack<'c> {
-    pub fn new_unbounded() -> VarStack<'c> {
+    pub fn new(limit: Arc<MemoryLimit>) -> VarStack<'c> {
         VarStack {
             stack: Mutex::new(vec![(VarMap::new())]),
-            bound: Bounded::new(None),
+            bound: limit.clone(),
         }
     }
 
-    pub fn new_bounded(byte_limit: usize) -> VarStack<'c> {
-        VarStack {
-            stack: Mutex::new(vec![(VarMap::new())]),
-            bound: Bounded::new(Some(byte_limit)),
-        }
+    pub fn is_limited(&self) -> bool {
+        self.bound.limit.is_some()
     }
 
     pub fn len(&self) -> usize {

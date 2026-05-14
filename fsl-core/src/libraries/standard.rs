@@ -670,7 +670,7 @@ pub async fn print<'c>(
 ) -> Result<Value<'c>, CommandError> {
     let values = command.take_args();
 
-    if let Some(limit) = data.output_limit {
+    if let Some(limit) = data.limits.max_output_len {
         for value in values {
             let text = value.as_text(data.clone()).await?;
             // Must be locked after as_text (could require evaluating command that calls print)
@@ -2557,11 +2557,14 @@ pub mod tests {
     use std::time::{Duration, SystemTime};
 
     use crate::{
-        CommandError, FslInterpreter, InterpreterError, InterpreterErrorType, error::ValueError,
+        CommandError, FslInterpreter, InterpreterError, InterpreterErrorType,
+        data::InterpreterData, error::ValueError,
     };
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
-        let result = FslInterpreter::new().interpret(code.to_string()).await;
+        let result = FslInterpreter::new()
+            .interpret(code, InterpreterData::default())
+            .await;
 
         println!("DEBUG");
         dbg!(&result);
@@ -2574,7 +2577,9 @@ pub mod tests {
     }
 
     pub async fn observe_interpreter(code: &str) {
-        let result = FslInterpreter::new().interpret(code.to_string()).await;
+        let result = FslInterpreter::new()
+            .interpret(code, InterpreterData::default())
+            .await;
 
         println!("DEBUG");
         dbg!(&result);
@@ -2586,7 +2591,7 @@ pub mod tests {
 
     pub async fn test_interpreter_embedded(code: &str, expected_output: &str) {
         let result = FslInterpreter::new()
-            .interpret_embedded_code(code.to_string())
+            .interpret_embedded_code(code, InterpreterData::default())
             .await;
 
         println!("DEBUG");
@@ -2600,14 +2605,18 @@ pub mod tests {
     }
 
     pub async fn test_interpreter_err_type(code: &str) -> crate::InterpreterErrorType {
-        let result = FslInterpreter::new().interpret(code.to_string()).await;
+        let result = FslInterpreter::new()
+            .interpret(code, InterpreterData::default())
+            .await;
         dbg!(&result);
         assert!(result.is_err());
         result.err().unwrap().error_type
     }
 
     pub async fn interpreter_throws_err(code: &str, err: InterpreterError) -> bool {
-        let result = FslInterpreter::new().interpret(code.to_string()).await;
+        let result = FslInterpreter::new()
+            .interpret(code, InterpreterData::default())
+            .await;
         dbg!(&result);
         result.is_err_and(|e| {
             dbg!(&e);
@@ -2616,7 +2625,9 @@ pub mod tests {
     }
 
     pub async fn interpreter_results_in_error(code: &str) -> bool {
-        let result = FslInterpreter::new().interpret(code.to_string()).await;
+        let result = FslInterpreter::new()
+            .interpret(code, InterpreterData::default())
+            .await;
         dbg!(&result);
         result.is_err()
     }

@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
-use fsl_core::{FslInterpreter, libraries::Library, types::value::Value};
+use fsl_core::{FslInterpreter, data::InterpreterData, libraries::Library, types::value::Value};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -41,7 +41,7 @@ async fn main() {
         args.script
     };
 
-    let mut interpreter = FslInterpreter::new_unbounded();
+    let mut interpreter = FslInterpreter::new();
 
     if let Some(input) = input {
         interpreter.add_arg(Value::from(input)).await;
@@ -51,9 +51,13 @@ async fn main() {
     interpreter.register_library(Library::Io);
 
     let result = if args.embeded {
-        interpreter.interpret_embedded_code(script).await
+        interpreter
+            .interpret_embedded_code(&script, InterpreterData::default())
+            .await
     } else {
-        interpreter.interpret(script).await
+        interpreter
+            .interpret(&script, InterpreterData::default())
+            .await
     };
 
     match result {

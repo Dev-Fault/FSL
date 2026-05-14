@@ -1,20 +1,70 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 
 pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
+pub const DEFAULT_LOOP_LIMIT: usize = u16::MAX as usize;
 
 use tokio::sync::Mutex;
 
 use crate::{
-    error::CommandError,
+    error::{CommandError, ValueError},
     types::{command::UserCommand, value::Value},
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
 
 pub type UserCommands<'c> = HashMap<Cow<'c, str>, UserCommand<'c>>;
+
+#[derive(Debug, Default)]
+pub struct MemoryLimit {
+    pub limit: Option<usize>,
+    pub allocated: AtomicUsize,
+}
+
+impl MemoryLimit {
+    pub fn new(limit: Option<usize>) -> MemoryLimit {
+        MemoryLimit {
+            limit,
+            allocated: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn allocate(&self, size: Option<usize>) -> Result<(), ValueError> {
+        let Some(limit) = self.limit else {
+            return Ok(());
+        };
+
+        let mem = self.allocated.load(Ordering::Relaxed);
+        match size {
+            Some(size) => {
+                match mem.checked_add(size) {
+                    Some(new_mem) => {
+                        if new_mem > limit {
+                            return Err(ValueError::VarMemoryLimitReached);
+                        }
+                        self.allocated.store(new_mem, Ordering::Relaxed);
+                    }
+                    None => return Err(ValueError::VarMemoryLimitReached),
+                };
+            }
+            None => return Err(ValueError::VarMemoryLimitReached),
+        }
+        Ok(())
+    }
+
+    pub fn deallocate(&self, size: usize) {
+        if self.limit.is_some() {
+            let mem = self.allocated.load(Ordering::Relaxed);
+            self.allocated
+                .store(mem.saturating_sub(size), Ordering::Relaxed);
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct InterpreterFlags {
@@ -33,96 +83,97 @@ impl Default for InterpreterFlags {
     }
 }
 
-#[derive(Debug)]
-pub struct InterpreterData<'c> {
-    pub(crate) call_stack: Mutex<Vec<&'c str>>,
+#[derive(Clone, Debug, Default)]
+pub struct InterpreterLimits {
+    pub max_output_len: Option<usize>,
+    pub max_loops: Option<usize>,
+    pub memory_limit: Arc<MemoryLimit>,
+}
 
-    pub args: Mutex<Vec<Value<'static>>>,
-    pub output_limit: Option<usize>,
+impl InterpreterLimits {
+    pub fn with_output_limit(mut self, limit: usize) -> Self {
+        self.max_output_len = Some(limit);
+        self
+    }
+
+    pub fn with_loop_limit(mut self, limit: usize) -> Self {
+        self.max_loops = Some(limit);
+        self
+    }
+
+    pub fn with_memory_limit(mut self, limit: usize) -> Self {
+        self.memory_limit = Arc::new(MemoryLimit::new(Some(limit)));
+        self
+    }
+
+    pub fn bounded() -> Self {
+        InterpreterLimits {
+            max_output_len: Some(DEFAULT_OUTPUT_LIMIT),
+            max_loops: Some(DEFAULT_LOOP_LIMIT),
+            memory_limit: Arc::new(MemoryLimit::new(Some(DEFAULT_MEMORY_LIMIT))),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct InterpreterData<'c> {
+    pub call_stack: Mutex<Vec<&'c str>>,
+
+    pub args: Arc<Mutex<Vec<Value<'static>>>>,
     pub output: Mutex<String>,
 
     pub vars: VarStack<'c>,
     pub user_commands: Mutex<UserCommands<'c>>,
 
-    pub loop_limit: Option<usize>,
-    pub total_loops: AtomicUsize,
     pub loop_depth: AtomicUsize,
+    pub total_loops: AtomicUsize,
 
     pub flags: InterpreterFlags,
+
+    pub limits: InterpreterLimits,
 }
 
 impl<'c> InterpreterData<'c> {
-    pub fn new_bounded(args: Vec<Value<'static>>) -> Self {
-        InterpreterData {
-            args: Mutex::new(args),
-            output: Mutex::new(String::new()),
-            vars: VarStack::new_bounded(DEFAULT_MEMORY_LIMIT),
-            user_commands: Mutex::new(UserCommands::new()),
-            call_stack: Mutex::new(Vec::new()),
-            loop_limit: Some(u16::MAX as usize),
-            total_loops: AtomicUsize::new(0),
-            loop_depth: AtomicUsize::new(0),
-            flags: InterpreterFlags::default(),
-            output_limit: Some(DEFAULT_OUTPUT_LIMIT),
-        }
+    pub fn with_args(mut self, args: Vec<Value<'static>>) -> Self {
+        self.args = Arc::new(Mutex::new(args));
+        self
     }
 
-    pub fn new_unbounded(args: Vec<Value<'static>>) -> Self {
-        InterpreterData {
-            args: Mutex::new(args),
-            output: Mutex::new(String::new()),
-            vars: VarStack::new_unbounded(),
-            user_commands: Mutex::new(UserCommands::new()),
-            call_stack: Mutex::new(Vec::new()),
-            loop_limit: None,
-            total_loops: AtomicUsize::new(0),
-            loop_depth: AtomicUsize::new(0),
-            flags: InterpreterFlags::default(),
-            output_limit: None,
-        }
+    pub fn with_limits(mut self, limits: InterpreterLimits) -> Self {
+        self.vars = VarStack::new(limits.memory_limit.clone());
+        self.limits = limits;
+        self
     }
 
-    pub fn from_bounded(
-        input: Vec<Value<'static>>,
-        loop_limit: usize,
-        total_loops: usize,
-        output_limit: usize,
-        current_out_len: usize,
-    ) -> Self {
+    pub fn from<'new>(data: &InterpreterData<'c>) -> InterpreterData<'new> {
         InterpreterData {
-            args: Mutex::new(input),
-            output: Mutex::new(String::new()),
-            vars: VarStack::new_unbounded(),
-            user_commands: Mutex::new(UserCommands::new()),
-            call_stack: Mutex::new(Vec::new()),
-            loop_limit: Some(loop_limit),
-            total_loops: AtomicUsize::new(total_loops),
-            loop_depth: AtomicUsize::new(0),
-            flags: InterpreterFlags::default(),
-            output_limit: Some(output_limit - current_out_len),
-        }
-    }
-
-    pub fn from_unbounded(input: Vec<Value<'static>>) -> Self {
-        InterpreterData {
-            args: Mutex::new(input),
-            output: Mutex::new(String::new()),
-            vars: VarStack::new_unbounded(),
-            user_commands: Mutex::new(UserCommands::new()),
-            call_stack: Mutex::new(Vec::new()),
-            loop_limit: None,
-            total_loops: AtomicUsize::new(0),
-            loop_depth: AtomicUsize::new(0),
-            flags: InterpreterFlags::default(),
-            output_limit: None,
+            args: data.args.clone(),
+            vars: VarStack::new(data.limits.memory_limit.clone()),
+            limits: data.limits.clone(),
+            ..Default::default()
         }
     }
 
     pub async fn increment_loops(&self) -> Result<(), CommandError> {
-        match self.loop_limit {
+        match self.limits.max_loops {
             Some(limit) => {
                 let prev_loops = self.total_loops.fetch_add(1, Ordering::Relaxed);
                 if prev_loops + 1 >= limit {
+                    Err(CommandError::LoopLimitReached)
+                } else {
+                    Ok(())
+                }
+            }
+            None => Ok(()),
+        }
+    }
+
+    pub async fn increment_loops_by(&self, loops: &AtomicUsize) -> Result<(), CommandError> {
+        match self.limits.max_loops {
+            Some(limit) => {
+                let loops = loops.load(Ordering::Relaxed);
+                let prev_loops = self.total_loops.fetch_add(loops, Ordering::Relaxed);
+                if prev_loops + loops > limit {
                     Err(CommandError::LoopLimitReached)
                 } else {
                     Ok(())
