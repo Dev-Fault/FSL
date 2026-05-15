@@ -7,7 +7,7 @@ use std::{
 use futures::FutureExt;
 
 use crate::{
-    data::InterpreterData,
+    data::{InterpreterData, UserCommands},
     error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
     libraries::{
         Library,
@@ -170,6 +170,20 @@ impl FslInterpreter {
         Ok(output)
     }
 
+    fn forward_declare_defs<'c>(expression: &Expression<'c>, user_commands: &mut UserCommands<'c>) {
+        if expression.name.as_str() == DEF {
+            if let Some(label) = expression.args.get(0) {
+                let label = Cow::Borrowed(label.token.as_str());
+                user_commands.insert(label.clone(), UserCommand::declaration(label));
+            }
+        }
+        for arg in &expression.args {
+            if let ArgKind::Expression(inner) = &arg.kind {
+                Self::forward_declare_defs(inner, user_commands);
+            }
+        }
+    }
+
     async fn execute_expressions<'c, 'd: 'c>(
         data: Arc<InterpreterData<'c>>,
         command_definitions: &'d CommandDefinitions,
@@ -178,12 +192,9 @@ impl FslInterpreter {
         let expressions = Parser::new(source).filter_parse(&[DEF])?;
 
         for expression in expressions.filtered {
-            if expression.name.as_str() == DEF
-                && let Some(label) = expression.args.get(0)
             {
                 let mut user_commands = data.user_commands.lock().await;
-                let label = Cow::Borrowed(label.token.as_str());
-                user_commands.insert(label.clone(), UserCommand::declaration(label));
+                Self::forward_declare_defs(&expression, &mut user_commands);
             }
             Self::interpret_command(data.clone(), command_definitions, expression).await?;
         }
@@ -1924,6 +1935,55 @@ mod interpreter {
             print(recurse(n))
             "#,
             "10",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inner_def() {
+        test_interpreter(
+            r#"
+            outer.def(
+            	n.store(1)
+            	inner.def(x,
+            		x.inc()
+            		x.inc()
+            		x.inc()
+            	)
+            	inner(n)
+            	return(n)
+            )
+            
+            print(outer())
+            "#,
+            "4",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inner_inner_def() {
+        test_interpreter(
+            r#"
+            outer.def(
+            	n.store(1)
+            	inner.def(x,
+            		x.inc()
+            		x.inc()
+            		x.inc()
+            		inner_inner.def(y,
+            		    y.inc()
+            		    y.inc()
+            		)
+            		inner_inner(x)
+            	)
+            	inner(n)
+            	return(n)
+            )
+            
+            print(outer())
+            "#,
+            "6",
         )
         .await;
     }
