@@ -692,7 +692,6 @@ impl<'c> Parser<'c> {
         let mut unfiltered = Vec::with_capacity(self.pending.len());
         let mut filtered = Vec::with_capacity(self.pending.len());
         for pending in self.pending.drain(..) {
-            dbg!(&pending);
             match pending {
                 PendingArg::Done(Arg {
                     kind: ArgKind::Expression(expr),
@@ -705,7 +704,6 @@ impl<'c> Parser<'c> {
                     }
                 }
                 _ => {
-                    dbg!("found this error at the end");
                     return Err(ParseError::OutOfPlaceValue(pending.start()));
                 }
             }
