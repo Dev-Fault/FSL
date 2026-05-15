@@ -1,0 +1,77 @@
+# Welcome to FSL
+
+# Single line comments can be created with the hashtag symbol like on this line
+
+*
+Multiline comments come between the asterisk's
+Just like in this comment
+*
+
+# Hello, world!
+
+# print will give its output when the script ends
+print("Hello, world!")
+# say immediately displays its output and is preferred for interactive scripts
+say("Hello, world!")
+
+# Bools
+
+# FSL supports standard boolean values and common comparisons between them
+say(and(true, true)) # output: true
+say(and(true, false)) # output: false
+say(or(true, false)) # output: true
+say(not(true)) # output: false
+
+# Numbers
+
+# FSL supports two number types, int (whole number), float (fractional)
+say(add(1, 1)) # output: 2
+say(sub(1, 1)) # output: 0
+say(mul(2, 2)) # output: 4
+say(div(4, 2)) # output: 2
+# mod = modulus (computes remainder of division)
+say(mod(4, 2)) # output: 0
+
+# float numbers work just like ints but we include a decimal point
+say(add(1.5, 1.5)) # output: 3
+# If you want to limit how many numbers come after the decimal point you can use precision
+say(precision(1.513157895, 2)) # output: 1.51
+# Precision can also be used to round like:
+say(precision(1.51, 0)) # output: 2
+say(precision(1.49, 0)) # output: 1
+
+# If you need to limit a number within a certain range you can use these clamp commands:
+say(
+	clamp(
+		1, # Value we want to clamp
+		2, # Minimum value allowed
+		3, # Maximum value allowed
+	)
+) # output: 2
+
+# If you don't care about what the min, or alternatively max is the following commands are helpful:
+say(clamp_min(1, 2)) # output: 2 
+say(clamp_max(1, 0)) # output: 0 
+
+# Strings
+
+# FSL supports strings and a few useful escape sequences like so:
+say("The text inside these quotes is a string")
+say("This will print two consecutive lines with this on top\nAnd this on the bottom")
+
+# You can include quotes inside your strings with escaping
+say(concat("in \"quotes\""))
+
+# FSL strings support utf8 characters so the following is valid:
+say("🍇")
+
+# To concatenate/combine two strings you can do the following:
+say(concat("The first part of the string.", " ", "The second part of the string.")) # output: The first part of the string. The second part of the string.
+
+# Variables
+
+# We can create variables with the store command, the following creates a variable named "x" and stores the number 1 inside it
+x.store(1)
+
+# To use variables you can pass them into commands like:
+say(add(x, x)) # output: 2
