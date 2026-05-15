@@ -2143,10 +2143,7 @@ pub async fn trim<'c>(
     Ok(Value::from(trimmed))
 }
 
-pub const TRIM_WHITESPACE_RULES: &[ArgRule] = &[
-    ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
-    ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
-];
+pub const TRIM_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const TRIM_WHITESPACE: &str = "trim_whitespace";
 pub async fn trim_whitespace<'c>(
     command: Command<'c>,
