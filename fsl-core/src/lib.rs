@@ -15,7 +15,7 @@ use crate::{
         io::register_io,
         standard::{self, *},
     },
-    parser::{ArgType, Expression, Parser},
+    parser::{Arg, ArgKind, Expression, Parser},
     types::{
         command::{ArgRule, Command, CommandDefinition, Handler},
         value::{Value, ValueResult},
@@ -235,7 +235,7 @@ impl FslInterpreter {
         command_definitions: &'d CommandDefinitions,
         expression: Expression<'c>,
     ) -> Result<Value<'c>, InterpreterError> {
-        let command_def = command_definitions.get(expression.name);
+        let command_def = command_definitions.get(expression.name.as_str());
         if let Some(command_def) = command_def {
             let mut command = Command::from(command_def);
 
@@ -252,13 +252,13 @@ impl FslInterpreter {
             let user_command_label = {
                 let user_commands = data.user_commands.lock().await;
                 user_commands
-                    .get(expression.name)
+                    .get(expression.name.as_str())
                     .map(|uc| uc.label.clone())
             };
 
             if let Some(label) = user_command_label {
                 let mut command = Command::new(
-                    expression.name,
+                    expression.name.as_str(),
                     RUN_RULES,
                     Handler::new(|command, data| standard::run(command, data).boxed()),
                 );
@@ -278,7 +278,7 @@ impl FslInterpreter {
             } else {
                 return Err(CommandError::NonExistantCommand(format!(
                     "command with name {} does not exist",
-                    expression.name
+                    expression.name.as_str()
                 ))
                 .into());
             }
@@ -288,11 +288,11 @@ impl FslInterpreter {
     fn process_arg<'c, 'd: 'c>(
         data: Arc<InterpreterData<'c>>,
         command_definitions: &'d CommandDefinitions,
-        arg: ArgType<'c>,
+        arg: Arg<'c>,
     ) -> ValueResult<'c, Value<'c>, InterpreterError> {
         Box::pin(async {
-            match arg {
-                ArgType::Number(number) => {
+            match arg.kind {
+                ArgKind::Number(number) => {
                     if number.contains('.') {
                         match number.parse::<f64>() {
                             Ok(value) => Ok(Value::Float(value)),
@@ -316,35 +316,35 @@ impl FslInterpreter {
                         }
                     }
                 }
-                ArgType::String(cow) => Ok(Value::Text(cow)),
-                ArgType::Keyword(keyword) => match keyword {
+                ArgKind::String(cow) => Ok(Value::Text(cow)),
+                ArgKind::Keyword(keyword) => match keyword {
                     lexer::TRUE => Ok(Value::Bool(true)),
                     lexer::FALSE => Ok(Value::Bool(false)),
                     _ => unreachable!("parser should validate keywords"),
                 },
-                ArgType::Identifier(ident) => Ok(Value::Var(Cow::from(ident))),
-                ArgType::List(args) => {
+                ArgKind::Identifier(ident) => Ok(Value::Var(Cow::from(ident))),
+                ArgKind::List(args) => {
                     let mut list: Vec<Value> = vec![];
-                    for arg in args {
+                    for arg in args.data {
                         let parsed_arg =
                             Self::process_arg(data.clone(), command_definitions, arg).await?;
                         list.push(parsed_arg);
                     }
                     Ok(Value::List(list))
                 }
-                ArgType::Map(map) => {
+                ArgKind::Map(map) => {
                     let mut value_map = HashMap::new();
 
-                    for (key, value) in map {
+                    for (key, value) in map.data {
                         value_map.insert(
-                            key.into(),
+                            key.as_str().into(),
                             Self::process_arg(data.clone(), command_definitions, value).await?,
                         );
                     }
 
                     Ok(Value::Map(value_map))
                 }
-                ArgType::Expression(expression) => {
+                ArgKind::Expression(expression) => {
                     Ok(Self::process_expression(data, command_definitions, expression).await?)
                 }
             }

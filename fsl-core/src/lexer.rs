@@ -82,7 +82,7 @@ impl<'c> Default for TokenType<'c> {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq)]
 pub struct Token<'c> {
     pub token_type: TokenType<'c>,
     pub source: &'c str,
@@ -209,6 +209,28 @@ impl<'c> Token<'c> {
             TokenType::None(s) => s,
         }
         .len()
+    }
+
+    pub fn as_str(&self) -> &'c str {
+        match self.token_type {
+            TokenType::Symbol(s) => s,
+            TokenType::Command(s) => s,
+            TokenType::Number(s) => s,
+            TokenType::String(s) => s,
+            TokenType::Keyword(s) => s,
+            TokenType::Identifier(s) => s,
+            TokenType::Comment(s) => s,
+            TokenType::None(s) => s,
+        }
+    }
+}
+
+impl<'c> std::fmt::Debug for Token<'c> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Token")
+            .field("token_type", &self.token_type)
+            .field("location", &self.location)
+            .finish()
     }
 }
 

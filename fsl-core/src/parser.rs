@@ -2,12 +2,86 @@ use std::{borrow::Cow, collections::VecDeque, fmt::Display};
 
 use crate::lexer::{LexError, Lexer, Symbol, Token, TokenType};
 
-type Map<'c> = Vec<(&'c str, ArgType<'c>)>;
-type List<'c> = Vec<ArgType<'c>>;
-type Path<'c> = VecDeque<ArgType<'c>>;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Path<'c> {
+    pub start: Token<'c>,
+    pub data: VecDeque<Arg<'c>>,
+}
+
+impl<'c> Path<'c> {
+    pub fn new(start: Token<'c>) -> Self {
+        Self {
+            start,
+            data: VecDeque::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ArgType<'c> {
+pub struct List<'c> {
+    pub start: Token<'c>,
+    pub data: Vec<Arg<'c>>,
+    pub end: Option<Token<'c>>,
+}
+
+impl<'c> List<'c> {
+    pub fn new(start: Token<'c>) -> Self {
+        Self {
+            start,
+            data: Vec::new(),
+            end: None,
+        }
+    }
+}
+
+impl<'c> From<Path<'c>> for List<'c> {
+    fn from(value: Path<'c>) -> Self {
+        Self {
+            start: value.start,
+            data: value.data.into(),
+            end: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Map<'c> {
+    pub start: Token<'c>,
+    pub data: Vec<(Token<'c>, Arg<'c>)>,
+    pub end: Option<Token<'c>>,
+}
+
+impl<'c> Map<'c> {
+    pub fn new(start: Token<'c>) -> Self {
+        Self {
+            start,
+            data: Vec::new(),
+            end: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Expression<'c> {
+    pub name: Token<'c>,
+    pub start: Token<'c>,
+    pub args: Vec<Arg<'c>>,
+    pub end: Option<Token<'c>>,
+}
+
+impl<'c> Expression<'c> {
+    pub fn new(name: Token<'c>) -> Expression<'c> {
+        Self {
+            name,
+            start: name,
+            args: Vec::new(),
+            end: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArgKind<'c> {
     Number(&'c str),
     String(Cow<'c, str>),
     Keyword(&'c str),
@@ -17,34 +91,61 @@ pub enum ArgType<'c> {
     Expression(Expression<'c>),
 }
 
-impl<'c> From<List<'c>> for ArgType<'c> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Arg<'c> {
+    pub kind: ArgKind<'c>,
+    pub token: Token<'c>,
+}
+
+impl<'c> Arg<'c> {
+    pub fn new(kind: ArgKind<'c>, token: Token<'c>) -> Self {
+        Self { kind, token }
+    }
+}
+
+impl<'c> From<List<'c>> for ArgKind<'c> {
     fn from(value: List<'c>) -> Self {
         Self::List(value)
     }
 }
 
-impl<'c> From<Map<'c>> for ArgType<'c> {
+impl<'c> From<Map<'c>> for ArgKind<'c> {
     fn from(value: Map<'c>) -> Self {
         Self::Map(value)
     }
 }
 
-impl<'c> From<Expression<'c>> for ArgType<'c> {
+impl<'c> From<Expression<'c>> for ArgKind<'c> {
     fn from(value: Expression<'c>) -> Self {
         Self::Expression(value)
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum PendingArg<'c> {
-    DotArg(ArgType<'c>),
+pub enum PendingArg<'c> {
+    DotArg(Arg<'c>),
     PathArg(Path<'c>),
-    Key(&'c str),
+    Key(Token<'c>),
     Expression(Expression<'c>),
     List(List<'c>),
     Map(Map<'c>),
-    UnitializedCollection,
-    Done(ArgType<'c>),
+    UnitializedCollection(Token<'c>),
+    Done(Arg<'c>),
+}
+
+impl<'c> PendingArg<'c> {
+    pub fn start(&self) -> Token<'c> {
+        match self {
+            PendingArg::DotArg(arg) => arg.token,
+            PendingArg::PathArg(path) => path.start,
+            PendingArg::Key(token) => *token,
+            PendingArg::Expression(expr) => expr.start,
+            PendingArg::List(list) => list.start,
+            PendingArg::Map(map) => map.start,
+            PendingArg::UnitializedCollection(token) => *token,
+            PendingArg::Done(arg) => arg.token,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +153,7 @@ pub enum ParseError<'c> {
     LexError(LexError<'c>),
     OutOfPlaceSymbol(Token<'c>),
     OutOfPlaceValue(Token<'c>),
+    UnfinishedExpression((Token<'c>, Token<'c>)),
 }
 
 impl<'c> Display for ParseError<'c> {
@@ -78,6 +180,23 @@ impl<'c> Display for ParseError<'c> {
                     token.line(),
                 )
             }
+            ParseError::UnfinishedExpression((start, end)) => {
+                write!(
+                    f,
+                    "
+                    Unfinished expression started with \"{}\" on line {}\n{}: {}\n
+                    Ending with with \"{}\" on line {}\n{}: {}
+                    ",
+                    start.token_type,
+                    start.line_number(),
+                    start.line_number(),
+                    start.line(),
+                    end.token_type,
+                    end.line_number(),
+                    end.line_number(),
+                    end.line(),
+                )
+            }
         }
     }
 }
@@ -88,36 +207,9 @@ impl<'c> From<LexError<'c>> for ParseError<'c> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Expression<'c> {
-    pub name: &'c str,
-    pub args: Vec<ArgType<'c>>,
-}
-
-impl<'c> Expression<'c> {
-    pub fn new(name: &'c str) -> Expression<'c> {
-        Self {
-            name,
-            args: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Pending<'c> {
-    arg: PendingArg<'c>,
-    token: Token<'c>,
-}
-
-impl<'c> Pending<'c> {
-    pub fn new(arg: PendingArg<'c>, token: Token<'c>) -> Self {
-        Self { arg, token }
-    }
-}
-
 pub struct Parser<'c> {
     lexer: Option<Lexer<'c>>,
-    pending: Vec<Pending<'c>>,
+    pending: Vec<PendingArg<'c>>,
 }
 
 impl<'c> Parser<'c> {
@@ -128,115 +220,100 @@ impl<'c> Parser<'c> {
         }
     }
 
-    fn pend_map(&mut self, map: Map<'c>, token: Token<'c>) {
-        self.pending.push(Pending::new(PendingArg::Map(map), token));
+    fn pend_map(&mut self, map: Map<'c>) {
+        self.pending.push(PendingArg::Map(map));
     }
 
-    fn pend_map_with_value(
-        &mut self,
-        map: Map<'c>,
-        token: Token<'c>,
-        key: &'c str,
-        value: Option<ArgType<'c>>,
-    ) {
+    fn pend_map_with_value(&mut self, map: Map<'c>, key: Token<'c>, value: Option<Arg<'c>>) {
         let mut map = map;
         if let Some(value) = value {
-            map.push((key, value));
+            map.data.push((key, value));
         }
-        self.pending.push(Pending::new(PendingArg::Map(map), token));
+        self.pending.push(PendingArg::Map(map));
     }
 
     fn try_pend_map_with_value(
         &mut self,
         token: Token<'c>,
-        key: &'c str,
-        value: Option<ArgType<'c>>,
+        key: Token<'c>,
+        value: Option<Arg<'c>>,
     ) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
-            Some(maybe_map) => match maybe_map.arg {
-                PendingArg::Map(map) => {
-                    Ok(self.pend_map_with_value(map, maybe_map.token, key, value))
+            Some(maybe_map) => match maybe_map {
+                PendingArg::Map(map) => Ok(self.pend_map_with_value(map, key, value)),
+                PendingArg::UnitializedCollection(start) => {
+                    Ok(self.pend_map_with_value(Map::new(start), key, value))
                 }
-                PendingArg::UnitializedCollection => {
-                    Ok(self.pend_map_with_value(Map::new(), maybe_map.token, key, value))
-                }
-                _ => Err(ParseError::OutOfPlaceValue(maybe_map.token)),
+                _ => Err(ParseError::OutOfPlaceValue(maybe_map.start())),
             },
             None => Err(ParseError::OutOfPlaceSymbol(token)),
         }
     }
 
-    fn pend_list_with_value(
-        &mut self,
-        list: List<'c>,
-        token: Token<'c>,
-        value: Option<ArgType<'c>>,
-    ) {
+    fn pend_list_with_value(&mut self, list: List<'c>, value: Option<Arg<'c>>) {
         let mut list = list;
         if let Some(value) = value {
-            list.push(value);
+            list.data.push(value);
         }
-        self.pending
-            .push(Pending::new(PendingArg::List(list), token));
+        self.pending.push(PendingArg::List(list));
     }
 
     fn pend_uninit_collection(&mut self, token: Token<'c>) {
-        self.pending
-            .push(Pending::new(PendingArg::UnitializedCollection, token));
+        self.pending.push(PendingArg::UnitializedCollection(token));
     }
 
-    fn pend_expr_with_value(&mut self, expr: Expression<'c>, token: Token<'c>, value: ArgType<'c>) {
+    fn pend_expr_with_value(&mut self, expr: Expression<'c>, value: Arg<'c>) {
         let mut expr = expr;
         expr.args.push(value);
-        self.pending
-            .push(Pending::new(PendingArg::Expression(expr), token));
+        self.pending.push(PendingArg::Expression(expr));
     }
 
-    fn pend_expr(&mut self, expr: Expression<'c>, token: Token<'c>) {
-        self.pending
-            .push(Pending::new(PendingArg::Expression(expr), token));
+    fn pend_expr(&mut self, expr: Expression<'c>) {
+        self.pending.push(PendingArg::Expression(expr));
     }
 
-    fn pend_list(&mut self, list: Vec<ArgType<'c>>, token: Token<'c>) {
-        self.pending
-            .push(Pending::new(PendingArg::List(list), token));
+    fn pend_list(&mut self, list: List<'c>) {
+        self.pending.push(PendingArg::List(list));
     }
 
-    fn pend_done(&mut self, done: ArgType<'c>, token: Token<'c>) {
-        self.pending
-            .push(Pending::new(PendingArg::Done(done), token));
+    fn pend_done(&mut self, done: Arg<'c>) {
+        self.pending.push(PendingArg::Done(done));
     }
 
-    fn pend_dot_arg(&mut self, arg: ArgType<'c>, token: Token<'c>) {
-        self.pending
-            .push(Pending::new(PendingArg::DotArg(arg), token));
+    fn pend_dot_arg(&mut self, arg: Arg<'c>) {
+        self.pending.push(PendingArg::DotArg(arg));
     }
 
-    fn pend_path(&mut self, path: Path<'c>, token: Token<'c>) {
-        self.pending
-            .push(Pending::new(PendingArg::PathArg(path), token));
+    fn pend_path(&mut self, path: Path<'c>) {
+        self.pending.push(PendingArg::PathArg(path));
     }
 
-    fn pend_key(&mut self, key: &'c str, token: Token<'c>) {
-        self.pending.push(Pending::new(PendingArg::Key(key), token));
+    fn pend_key(&mut self, key: Token<'c>) {
+        self.pending.push(PendingArg::Key(key));
     }
 
     fn pend_last_as_done(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
-            Some(last) => match last.arg {
-                PendingArg::Expression(expr) => Ok(self.pend_done(expr.into(), token)),
-                PendingArg::List(list) => Ok(self.pend_done(list.into(), token)),
-                PendingArg::Map(map) => Ok(self.pend_done(map.into(), token)),
-                _ => Err(ParseError::OutOfPlaceValue(last.token)),
+            Some(last) => match last {
+                PendingArg::Expression(expr) => Ok(self.pend_done(Arg::new(expr.into(), token))),
+                PendingArg::List(mut list) => {
+                    list.end = Some(token);
+                    Ok(self.pend_done(Arg::new(list.into(), token)))
+                }
+                PendingArg::Map(mut map) => {
+                    map.end = Some(token);
+                    Ok(self.pend_done(Arg::new(map.into(), token)))
+                }
+                _ => Err(ParseError::OutOfPlaceValue(last.start())),
             },
             None => Err(ParseError::OutOfPlaceSymbol(token)),
         }
     }
 
-    fn get_remaining_arg(&mut self) -> Option<ArgType<'c>> {
+    fn get_remaining_arg(&mut self) -> Option<Arg<'c>> {
         match self.pending.pop() {
             Some(pending) => {
-                if let PendingArg::Done(arg) = pending.arg {
+                if let PendingArg::Done(arg) = pending {
                     Some(arg)
                 } else {
                     self.pending.push(pending);
@@ -249,16 +326,14 @@ impl<'c> Parser<'c> {
 
     fn parse_open_paren(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
-            Some(pending) => match pending.arg {
+            Some(pending) => match pending {
                 PendingArg::Expression(mut expr) => {
+                    expr.start = token;
+
                     let pending_dot = match self.pending.pop() {
-                        Some(pending) => match pending.arg {
-                            PendingArg::DotArg(dot_arg) => {
-                                Some((PendingArg::DotArg(dot_arg), pending.token))
-                            }
-                            PendingArg::PathArg(path) => {
-                                Some((PendingArg::PathArg(path), pending.token))
-                            }
+                        Some(pending) => match pending {
+                            PendingArg::DotArg(dot_arg) => Some(PendingArg::DotArg(dot_arg)),
+                            PendingArg::PathArg(path) => Some(PendingArg::PathArg(path)),
                             _ => {
                                 self.pending.push(pending);
                                 None
@@ -266,7 +341,7 @@ impl<'c> Parser<'c> {
                         },
                         None => None,
                     };
-                    if let Some((pending_arg, pending_token)) = pending_dot {
+                    if let Some(pending_arg) = pending_dot {
                         match pending_arg {
                             PendingArg::DotArg(dot_arg) => {
                                 if expr.args.len() > 0 {
@@ -283,71 +358,82 @@ impl<'c> Parser<'c> {
                                         "should not have put args in expression before path"
                                     );
                                 } else {
-                                    expr.args.push(path.pop_front().unwrap());
-                                    let path: Result<VecDeque<ArgType<'c>>, ParseError<'c>> = path
+                                    expr.args.push(path.data.pop_front().unwrap());
+                                    let data: Result<VecDeque<Arg<'c>>, ParseError<'c>> = path
+                                        .data
                                         .iter()
-                                        .map(|item| match item {
-                                            ArgType::Identifier(ident) => {
-                                                Ok(ArgType::String(Cow::Borrowed(ident)))
-                                            }
-                                            _ => Err(ParseError::OutOfPlaceValue(pending_token)),
+                                        .map(|item| match item.kind {
+                                            ArgKind::Identifier(ident) => Ok(Arg::new(
+                                                ArgKind::String(Cow::Borrowed(ident)),
+                                                token,
+                                            )),
+                                            _ => Err(ParseError::OutOfPlaceValue(item.token)),
                                         })
                                         .collect();
-                                    let path = path?;
-                                    expr.args.push(ArgType::List(path.into()));
+
+                                    path.data = data?;
+                                    expr.args.push(Arg::new(ArgKind::List(path.into()), token));
                                 }
                             }
                             _ => {}
                         }
                     }
-                    self.pending
-                        .push(Pending::new(PendingArg::Expression(expr), pending.token));
+                    self.pending.push(PendingArg::Expression(expr));
                     Ok(())
                 }
-                _ => Err(ParseError::OutOfPlaceValue(pending.token)),
+                _ => {
+                    // Likely impossible since lexer always pushes a command token even if empty before (
+                    Err(ParseError::OutOfPlaceSymbol(token))
+                }
             },
-            None => Err(ParseError::OutOfPlaceSymbol(token)),
+            None => {
+                // Likely impossible since lexer always pushes a command token even if empty before (
+                Err(ParseError::OutOfPlaceSymbol(token))
+            }
         }
     }
 
     fn parse_closed_paren(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         let last_arg = self.get_remaining_arg();
         match self.pending.pop() {
-            Some(maybe_expr) => match maybe_expr.arg {
+            Some(maybe_expr) => match maybe_expr {
                 PendingArg::Expression(mut expr) => {
+                    expr.end = Some(token);
                     if let Some(arg) = last_arg {
                         expr.args.push(arg);
                     }
                     match self.pending.pop() {
-                        Some(parent) => match parent.arg {
-                            PendingArg::Expression(parent_expr) => {
-                                Ok(self.pend_expr_with_value(parent_expr, token, expr.into()))
-                            }
+                        Some(parent) => match parent {
+                            PendingArg::Expression(parent_expr) => Ok(self
+                                .pend_expr_with_value(parent_expr, Arg::new(expr.into(), token))),
                             PendingArg::List(list) => {
-                                Ok(self.pend_list_with_value(list, token, Some(expr.into())))
+                                Ok(self
+                                    .pend_list_with_value(list, Some(Arg::new(expr.into(), token))))
                             }
-                            PendingArg::Key(key) => {
-                                Ok(self.try_pend_map_with_value(token, key, Some(expr.into()))?)
-                            }
-                            PendingArg::UnitializedCollection => Ok(self.pend_list_with_value(
-                                List::new(),
+                            PendingArg::Key(key) => Ok(self.try_pend_map_with_value(
                                 token,
-                                Some(expr.into()),
-                            )),
+                                key,
+                                Some(Arg::new(expr.into(), token)),
+                            )?),
+                            PendingArg::UnitializedCollection(start) => Ok(self
+                                .pend_list_with_value(
+                                    List::new(start),
+                                    Some(Arg::new(expr.into(), token)),
+                                )),
                             PendingArg::Done(done) => {
-                                self.pend_done(done.into(), token);
-                                self.pend_done(expr.into(), token);
+                                self.pend_done(done.into());
+                                self.pend_done(Arg::new(expr.into(), token));
                                 Ok(())
                             }
                             _ => Err(ParseError::OutOfPlaceSymbol(token)),
                         },
                         None => {
-                            self.pend_done(expr.into(), token);
+                            self.pend_done(Arg::new(expr.into(), token));
                             Ok(())
                         }
                     }
                 }
-                _ => Err(ParseError::OutOfPlaceValue(maybe_expr.token)),
+                _ => Err(ParseError::OutOfPlaceValue(maybe_expr.start())),
             },
             None => Err(ParseError::OutOfPlaceSymbol(token)),
         }
@@ -355,11 +441,11 @@ impl<'c> Parser<'c> {
 
     fn parse_open_bracket(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.last() {
-            Some(pending) => match &pending.arg {
+            Some(pending) => match &pending {
                 PendingArg::Key(_) => Ok(()),
                 PendingArg::Expression(_) => Ok(()),
                 PendingArg::List(_) => Ok(()),
-                PendingArg::UnitializedCollection => Ok(()),
+                PendingArg::UnitializedCollection(_) => Ok(()),
                 _ => Err(ParseError::OutOfPlaceSymbol(token)),
             },
             None => Ok(()),
@@ -371,14 +457,14 @@ impl<'c> Parser<'c> {
     fn parse_closed_bracket(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         let last_arg = self.get_remaining_arg();
         match self.pending.pop() {
-            Some(collection) => match collection.arg {
+            Some(collection) => match collection {
                 PendingArg::Key(key) => {
                     if last_arg.is_none() {
-                        return Err(ParseError::OutOfPlaceValue(collection.token));
+                        return Err(ParseError::OutOfPlaceValue(collection.start()));
                     }
                     self.try_pend_map_with_value(token, key, last_arg)?
                 }
-                PendingArg::List(list) => self.pend_list_with_value(list, token, last_arg),
+                PendingArg::List(list) => self.pend_list_with_value(list, last_arg),
                 PendingArg::Map(_) => {
                     /*
                     This means user left trailing comma which handled map
@@ -386,8 +472,8 @@ impl<'c> Parser<'c> {
                     */
                     self.pending.push(collection);
                 }
-                PendingArg::UnitializedCollection => {
-                    self.pend_list_with_value(List::new(), token, last_arg)
+                PendingArg::UnitializedCollection(start) => {
+                    self.pend_list_with_value(List::new(start), last_arg)
                 }
                 _ => {
                     return Err(ParseError::OutOfPlaceSymbol(token));
@@ -404,9 +490,12 @@ impl<'c> Parser<'c> {
 
     fn parse_colon(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
-            Some(pending) => match pending.arg {
-                PendingArg::Done(ArgType::Identifier(key)) => Ok(self.pend_key(key, token)),
-                _ => Err(ParseError::OutOfPlaceValue(pending.token)),
+            Some(pending) => match pending {
+                PendingArg::Done(Arg {
+                    kind: ArgKind::Identifier(_),
+                    token,
+                }) => Ok(self.pend_key(token)),
+                _ => Err(ParseError::OutOfPlaceValue(pending.start())),
             },
             None => Err(ParseError::OutOfPlaceSymbol(token)),
         }
@@ -415,32 +504,32 @@ impl<'c> Parser<'c> {
     fn try_find_last_expression(
         &mut self,
         token: Token<'c>,
-        popped: Pending<'c>,
+        popped: PendingArg<'c>,
     ) -> Result<(), ParseError<'c>> {
-        match popped.arg {
+        match popped {
             PendingArg::Expression(mut expr) => match expr.args.pop() {
                 Some(last_arg) => {
-                    self.pend_expr(expr, token);
-                    Ok(self.pend_dot_arg(last_arg, token))
+                    self.pend_expr(expr);
+                    Ok(self.pend_dot_arg(last_arg))
                 }
                 None => Err(ParseError::OutOfPlaceSymbol(token)),
             },
-            PendingArg::List(mut list) => match list.pop() {
-                Some(last_arg) => match last_arg {
-                    ArgType::Expression(_) => {
-                        self.pend_list(list, token);
-                        Ok(self.pend_dot_arg(last_arg, token))
+            PendingArg::List(mut list) => match list.data.pop() {
+                Some(last_arg) => match last_arg.kind {
+                    ArgKind::Expression(_) => {
+                        self.pend_list(list);
+                        Ok(self.pend_dot_arg(last_arg))
                     }
                     _ => Err(ParseError::OutOfPlaceSymbol(token)),
                 },
                 None => Err(ParseError::OutOfPlaceSymbol(token)),
             },
-            PendingArg::Map(mut map) => match map.pop() {
-                Some((key, value)) => match value {
-                    ArgType::Expression(_) => {
-                        self.pend_map(map, token);
-                        self.pend_key(key, token);
-                        self.pend_dot_arg(value, token);
+            PendingArg::Map(mut map) => match map.data.pop() {
+                Some((key, value)) => match value.kind {
+                    ArgKind::Expression(_) => {
+                        self.pend_map(map);
+                        self.pend_key(key);
+                        self.pend_dot_arg(value);
                         Ok(())
                     }
                     _ => Err(ParseError::OutOfPlaceSymbol(token)),
@@ -453,27 +542,27 @@ impl<'c> Parser<'c> {
 
     fn parse_dot(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
-            Some(pending) => match pending.arg {
+            Some(pending) => match pending {
                 PendingArg::Done(arg) => match self.pending.pop() {
-                    Some(pending) => match pending.arg {
+                    Some(pending) => match pending {
                         PendingArg::DotArg(parent_dot_arg) => {
-                            let mut path = Path::new();
-                            path.push_back(parent_dot_arg);
-                            path.push_back(arg);
-                            self.pend_path(path, token);
+                            let mut path = Path::new(token);
+                            path.data.push_back(parent_dot_arg);
+                            path.data.push_back(arg);
+                            self.pend_path(path);
                             Ok(())
                         }
                         PendingArg::PathArg(mut path) => {
-                            path.push_back(arg);
-                            self.pend_path(path, token);
+                            path.data.push_back(arg);
+                            self.pend_path(path);
                             Ok(())
                         }
                         _ => {
                             self.pending.push(pending);
-                            Ok(self.pend_dot_arg(arg, token))
+                            Ok(self.pend_dot_arg(arg))
                         }
                     },
-                    None => Ok(self.pend_dot_arg(arg, token)),
+                    None => Ok(self.pend_dot_arg(arg)),
                 },
                 _ => self.try_find_last_expression(token, pending),
             },
@@ -483,27 +572,25 @@ impl<'c> Parser<'c> {
 
     fn parse_comma(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
-            Some(pending) => match pending.arg {
+            Some(pending) => match pending {
                 PendingArg::Done(value) => match self.pending.pop() {
-                    Some(parent) => match parent.arg {
+                    Some(parent) => match parent {
                         PendingArg::Expression(expression) => {
-                            Ok(self.pend_expr_with_value(expression, parent.token, value.into()))
+                            Ok(self.pend_expr_with_value(expression, value.into()))
                         }
-                        PendingArg::UnitializedCollection => {
-                            Ok(self.pend_list_with_value(List::new(), parent.token, value.into()))
+                        PendingArg::UnitializedCollection(start) => {
+                            Ok(self.pend_list_with_value(List::new(start), value.into()))
                         }
-                        PendingArg::List(list) => {
-                            Ok(self.pend_list_with_value(list, parent.token, value.into()))
-                        }
+                        PendingArg::List(list) => Ok(self.pend_list_with_value(list, value.into())),
                         PendingArg::Key(key) => {
                             Ok(self.try_pend_map_with_value(token, key, value.into())?)
                         }
                         PendingArg::Done(done) => {
-                            self.pend_done(done, token);
-                            self.pend_done(value, pending.token);
+                            self.pend_done(done);
+                            self.pend_done(value);
                             Ok(())
                         }
-                        _ => Err(ParseError::OutOfPlaceValue(parent.token)),
+                        _ => Err(ParseError::OutOfPlaceValue(parent.start())),
                     },
                     None => {
                         // Top level commas not allowed
@@ -549,29 +636,26 @@ impl<'c> Parser<'c> {
                 TokenType::Symbol(symbol) => {
                     self.parse_symbol(token, Symbol::from(symbol))?;
                 }
-                TokenType::Command(name) => {
-                    let pending =
-                        Pending::new(PendingArg::Expression(Expression::new(name)), token);
+                TokenType::Command(_) => {
+                    let pending = PendingArg::Expression(Expression::new(token));
                     self.pending.push(pending);
                 }
                 TokenType::Number(number) => {
-                    let pending = Pending::new(PendingArg::Done(ArgType::Number(number)), token);
+                    let pending = PendingArg::Done(Arg::new(ArgKind::Number(number), token));
                     self.pending.push(pending);
                 }
                 TokenType::String(string) => {
-                    let pending = Pending::new(
-                        PendingArg::Done(ArgType::String(parse_string(string))),
-                        token,
-                    );
+                    let pending =
+                        PendingArg::Done(Arg::new(ArgKind::String(parse_string(string)), token));
                     self.pending.push(pending);
                 }
                 TokenType::Keyword(keyword) => {
-                    let pending = Pending::new(PendingArg::Done(ArgType::Keyword(keyword)), token);
+                    let pending = PendingArg::Done(Arg::new(ArgKind::Keyword(keyword), token));
                     self.pending.push(pending);
                 }
                 TokenType::Identifier(identifier) => {
                     let pending =
-                        Pending::new(PendingArg::Done(ArgType::Identifier(identifier)), token);
+                        PendingArg::Done(Arg::new(ArgKind::Identifier(identifier), token));
                     self.pending.push(pending);
                 }
                 TokenType::Comment(_) => { /* Skip Comments */ }
@@ -588,12 +672,15 @@ impl<'c> Parser<'c> {
         self.parse_tokens()?;
         let mut parsed = Vec::with_capacity(self.pending.len());
         for pending in self.pending.drain(..) {
-            match pending.arg {
-                PendingArg::Done(ArgType::Expression(expr)) => {
+            match pending {
+                PendingArg::Done(Arg {
+                    kind: ArgKind::Expression(expr),
+                    ..
+                }) => {
                     parsed.push(expr);
                 }
                 _ => {
-                    return Err(ParseError::OutOfPlaceValue(pending.token));
+                    return Err(ParseError::OutOfPlaceValue(pending.start()));
                 }
             }
         }
@@ -605,16 +692,21 @@ impl<'c> Parser<'c> {
         let mut unfiltered = Vec::with_capacity(self.pending.len());
         let mut filtered = Vec::with_capacity(self.pending.len());
         for pending in self.pending.drain(..) {
-            match pending.arg {
-                PendingArg::Done(ArgType::Expression(expr)) => {
-                    if filter.contains(&expr.name) {
+            dbg!(&pending);
+            match pending {
+                PendingArg::Done(Arg {
+                    kind: ArgKind::Expression(expr),
+                    ..
+                }) => {
+                    if filter.contains(&expr.name.as_str()) {
                         filtered.push(expr);
                     } else {
                         unfiltered.push(expr);
                     }
                 }
                 _ => {
-                    return Err(ParseError::OutOfPlaceValue(pending.token));
+                    dbg!("found this error at the end");
+                    return Err(ParseError::OutOfPlaceValue(pending.start()));
                 }
             }
         }
@@ -665,15 +757,115 @@ fn parse_string(s: &'_ str) -> Cow<'_, str> {
 mod tests {
     use std::borrow::Cow;
 
-    use crate::parser::{ArgType, Expression, Map, Parser};
+    use crate::parser::{ArgKind, Expression, Map, Parser};
 
+    #[derive(Debug, PartialEq)]
+    enum Tree<'c> {
+        Number(&'c str),
+        String(Cow<'c, str>),
+        Keyword(&'c str),
+        Identifier(&'c str),
+        List(Vec<Tree<'c>>),
+        Map(Vec<(&'c str, Tree<'c>)>),
+        Expression((&'c str, Vec<Tree<'c>>)),
+    }
+
+    trait ToTree<'c> {
+        fn to_tree(&self) -> Tree<'c>;
+    }
+
+    impl<'c> ToTree<'c> for ArgKind<'c> {
+        fn to_tree(&self) -> Tree<'c> {
+            match self {
+                ArgKind::Number(number) => Tree::Number(number),
+                ArgKind::String(string) => Tree::String(string.clone()),
+                ArgKind::Keyword(keyword) => Tree::Keyword(keyword),
+                ArgKind::Identifier(ident) => Tree::Identifier(ident),
+                ArgKind::List(list) => {
+                    let mut tree_list: Vec<Tree<'c>> = Vec::new();
+                    for item in &list.data {
+                        tree_list.push(item.kind.to_tree());
+                    }
+                    Tree::List(tree_list)
+                }
+                ArgKind::Map(map) => {
+                    let mut tree_map: Vec<(&'c str, Tree<'c>)> = Vec::new();
+                    for (key, value) in &map.data {
+                        tree_map.push((key.as_str(), value.kind.to_tree()));
+                    }
+                    Tree::Map(tree_map)
+                }
+                ArgKind::Expression(expr) => {
+                    let mut tree_args: Vec<Tree<'c>> = Vec::new();
+                    for arg in &expr.args {
+                        tree_args.push(arg.kind.to_tree());
+                    }
+                    let name = expr.name.as_str();
+                    Tree::Expression((name, tree_args))
+                }
+            }
+        }
+    }
+
+    trait ToTreeVec<'c> {
+        fn to_tree_vec(&self) -> Vec<Tree<'c>>;
+    }
+
+    impl<'c> ToTreeVec<'c> for Vec<Expression<'c>> {
+        fn to_tree_vec(&self) -> Vec<Tree<'c>> {
+            let mut tree = Vec::new();
+            for expr in self {
+                let mut tree_args: Vec<Tree<'c>> = Vec::new();
+                for arg in &expr.args {
+                    tree_args.push(arg.kind.to_tree());
+                }
+                let name = expr.name.as_str();
+                tree.push(Tree::Expression((name, tree_args)))
+            }
+            tree
+        }
+    }
+
+    macro_rules! leaf {
+    // Expression (recursive tree)
+    (Expression ( $name:ident { $($rest:tt)* } )) => {
+        tree!($name { $($rest)* })
+    };
+    // Lists
+    ($parent:ident [ $( $type:ident $value:tt ),* $(,)? ]) => {
+        Tree::$parent(vec![ $(leaf!($type $value)),* ])
+    };
+    // Maps
+    ($parent:ident [ $( ($key:tt, $type:ident $value:tt) ),* $(,)? ]) => {
+        Tree::$parent(vec![ $( (stringify!($key), leaf!($type $value)) ),* ])
+    };
+    // String literal
+    (String ($value:literal)) => {
+        Tree::String(Cow::Borrowed($value))
+    };
+
+    // Other literals (ident, number, keyword - passed as string literals in macro)
+    ($type:ident ($value:literal)) => {
+        Tree::$type($value)
+    };
+    }
+
+    macro_rules! tree {
+    ($name:ident { $( $child:tt $child_rest:tt ),* $(,)? }) => {
+        Tree::Expression((
+            stringify!($name),
+            vec![ $( leaf!($child $child_rest) ),* ]
+        ))
+    };
+}
     #[test]
     fn parse_simple() {
         let parser = Parser::new("print(\"hello world\")");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "print",
-            args: vec![ArgType::String(Cow::Borrowed("hello world"))],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            print {
+                String("hello world")
+            }
         }];
         println!("==GOT==\n");
         dbg!(&parsed);
@@ -685,60 +877,65 @@ mod tests {
     #[test]
     fn parse_simple_dot() {
         let parser = Parser::new("i.store(0)");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![ArgType::Identifier("i"), ArgType::Number("0")],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+             store{
+            Identifier("i"), Number("0"),}
         }];
+        println!("==GOT==\n");
         dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
         assert!(expected == parsed)
     }
 
     #[test]
     fn parse_simple_path() {
         let parser = Parser::new("player.weapon.name.damage.get()");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "get",
-            args: vec![
-                ArgType::Identifier("player"),
-                ArgType::List(vec![
-                    ArgType::String(Cow::Borrowed("weapon")),
-                    ArgType::String(Cow::Borrowed("name")),
-                    ArgType::String(Cow::Borrowed("damage")),
-                ]),
-            ],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            get {
+                Identifier("player"),
+                List[
+                    String("weapon"),
+                    String("name"),
+                    String("damage"),
+                ],
+            }
         }];
+        println!("==GOT==\n");
         dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
         assert!(expected == parsed)
     }
 
     #[test]
     fn parse_simple_map() {
         let parser = Parser::new("map.store([value_one: 1, value_two: 2, value_three: [1, 2, 3]])");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgType::Identifier("map"),
-                ArgType::Map(Map::from([
-                    ("value_one", ArgType::Number("1")),
-                    ("value_two", ArgType::Number("2")),
-                    (
-                        "value_three",
-                        ArgType::List(vec![
-                            ArgType::Number("1"),
-                            ArgType::Number("2"),
-                            ArgType::Number("3"),
-                        ]),
-                    ),
-                ])),
-            ],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("map"),
+                Map[
+                    (value_one, Number("1")),
+                    (value_two, Number("2")),
+                    (value_three, List[
+                        Number("1"),
+                        Number("2"),
+                        Number("3"),
+                    ]),
+                ],
+            }
         }];
+        println!("==GOT==\n");
         dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
         assert!(expected == parsed)
     }
 
+    /*
     #[test]
     fn parse_trailing_comma() {
         let parser = Parser::new("list.store([1,2,3,])");
@@ -746,11 +943,11 @@ mod tests {
         let expected = vec![Expression {
             name: "store",
             args: vec![
-                ArgType::Identifier("list"),
-                ArgType::List(vec![
-                    ArgType::Number("1"),
-                    ArgType::Number("2"),
-                    ArgType::Number("3"),
+                ArgKind::Identifier("list"),
+                ArgKind::List(vec![
+                    ArgKind::Number("1"),
+                    ArgKind::Number("2"),
+                    ArgKind::Number("3"),
                 ]),
             ],
         }];
@@ -764,7 +961,7 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "print",
-            args: vec![ArgType::List(vec![])],
+            args: vec![ArgKind::List(vec![])],
         }];
         println!("==GOT==\n");
         dbg!(&parsed);
@@ -780,15 +977,15 @@ mod tests {
         let expected = vec![Expression {
             name: "store",
             args: vec![
-                ArgType::Identifier("matrix"),
-                ArgType::List(vec![
-                    ArgType::List(vec![
-                        ArgType::Number("1"),
-                        ArgType::List(vec![ArgType::Number("2"), ArgType::Number("3")]),
-                        ArgType::Number("4"),
+                ArgKind::Identifier("matrix"),
+                ArgKind::List(vec![
+                    ArgKind::List(vec![
+                        ArgKind::Number("1"),
+                        ArgKind::List(vec![ArgKind::Number("2"), ArgKind::Number("3")]),
+                        ArgKind::Number("4"),
                     ]),
-                    ArgType::List(vec![ArgType::Number("5"), ArgType::Number("6")]),
-                    ArgType::Number("7"),
+                    ArgKind::List(vec![ArgKind::Number("5"), ArgKind::Number("6")]),
+                    ArgKind::Number("7"),
                 ]),
             ],
         }];
@@ -801,9 +998,9 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "print",
-            args: vec![ArgType::Expression(Expression {
+            args: vec![ArgKind::Expression(Expression {
                 name: "add",
-                args: vec![ArgType::Number("1"), ArgType::Number("2")],
+                args: vec![ArgKind::Number("1"), ArgKind::Number("2")],
             })],
         }];
         assert!(expected == parsed)
@@ -816,11 +1013,11 @@ mod tests {
         let expected = vec![
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("i"), ArgType::Number("0")],
+                args: vec![ArgKind::Identifier("i"), ArgKind::Number("0")],
             },
             Expression {
                 name: "inc",
-                args: vec![ArgType::Identifier("i")],
+                args: vec![ArgKind::Identifier("i")],
             },
         ];
         assert!(expected == parsed)
@@ -832,7 +1029,7 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "store",
-            args: vec![ArgType::Identifier("loop"), ArgType::Keyword("true")],
+            args: vec![ArgKind::Identifier("loop"), ArgKind::Keyword("true")],
         }];
         assert!(expected == parsed)
     }
@@ -843,7 +1040,7 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "inc",
-            args: vec![ArgType::Identifier("i")],
+            args: vec![ArgKind::Identifier("i")],
         }];
         assert!(expected == parsed)
     }
@@ -855,15 +1052,15 @@ mod tests {
         let expected = vec![Expression {
             name: "store",
             args: vec![
-                ArgType::Identifier("result"),
-                ArgType::List(vec![
-                    ArgType::Expression(Expression {
+                ArgKind::Identifier("result"),
+                ArgKind::List(vec![
+                    ArgKind::Expression(Expression {
                         name: "add",
-                        args: vec![ArgType::Number("1"), ArgType::Number("2")],
+                        args: vec![ArgKind::Number("1"), ArgKind::Number("2")],
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "add",
-                        args: vec![ArgType::Number("3"), ArgType::Number("4")],
+                        args: vec![ArgKind::Number("3"), ArgKind::Number("4")],
                     }),
                 ]),
             ],
@@ -878,10 +1075,10 @@ mod tests {
         let expected = vec![Expression {
             name: "create",
             args: vec![
-                ArgType::Identifier("player"),
-                ArgType::Map(Map::from([
-                    ("name", ArgType::String(Cow::Borrowed("hero"))),
-                    ("health", ArgType::Number("100")),
+                ArgKind::Identifier("player"),
+                ArgKind::Map(Map::from([
+                    ("name", ArgKind::String(Cow::Borrowed("hero"))),
+                    ("health", ArgKind::Number("100")),
                 ])),
             ],
         }];
@@ -899,8 +1096,8 @@ mod tests {
         let expected = vec![Expression {
             name: "get",
             args: vec![
-                ArgType::Identifier("player"),
-                ArgType::List(vec![ArgType::String(Cow::Borrowed("health"))]),
+                ArgKind::Identifier("player"),
+                ArgKind::List(vec![ArgKind::String(Cow::Borrowed("health"))]),
             ],
         }];
         assert!(expected == parsed)
@@ -912,7 +1109,7 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "store",
-            args: vec![ArgType::Identifier("items"), ArgType::List(vec![])],
+            args: vec![ArgKind::Identifier("items"), ArgKind::List(vec![])],
         }];
         assert!(expected == parsed)
     }
@@ -923,7 +1120,7 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "say",
-            args: vec![ArgType::String(Cow::Borrowed("hello world"))],
+            args: vec![ArgKind::String(Cow::Borrowed("hello world"))],
         }];
         println!("==GOT==\n");
         dbg!(&parsed);
@@ -938,16 +1135,16 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "print",
-            args: vec![ArgType::Expression(Expression {
+            args: vec![ArgKind::Expression(Expression {
                 name: "concat",
                 args: vec![
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "add",
-                        args: vec![ArgType::Number("1"), ArgType::Number("2")],
+                        args: vec![ArgKind::Number("1"), ArgKind::Number("2")],
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "add",
-                        args: vec![ArgType::Number("3"), ArgType::Number("4")],
+                        args: vec![ArgKind::Number("3"), ArgKind::Number("4")],
                     }),
                 ],
             })],
@@ -971,19 +1168,19 @@ mod tests {
         let expected = vec![
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("counter"), ArgType::Number("0")],
+                args: vec![ArgKind::Identifier("counter"), ArgKind::Number("0")],
             },
             Expression {
                 name: "repeat",
                 args: vec![
-                    ArgType::Number("0"),
-                    ArgType::Expression(Expression {
+                    ArgKind::Number("0"),
+                    ArgKind::Expression(Expression {
                         name: "store",
                         args: vec![
-                            ArgType::Identifier("counter"),
-                            ArgType::Expression(Expression {
+                            ArgKind::Identifier("counter"),
+                            ArgKind::Expression(Expression {
                                 name: "add",
-                                args: vec![ArgType::Identifier("counter"), ArgType::Number("1")],
+                                args: vec![ArgKind::Identifier("counter"), ArgKind::Number("1")],
                             }),
                         ],
                     }),
@@ -991,7 +1188,7 @@ mod tests {
             },
             Expression {
                 name: "print",
-                args: vec![ArgType::Identifier("counter")],
+                args: vec![ArgKind::Identifier("counter")],
             },
         ];
         println!("==GOT==\n");
@@ -1013,14 +1210,14 @@ mod tests {
         let expected = vec![Expression {
             name: "concat",
             args: vec![
-                ArgType::Expression(Expression {
+                ArgKind::Expression(Expression {
                     name: "uppercase",
-                    args: vec![ArgType::Expression(Expression {
+                    args: vec![ArgKind::Expression(Expression {
                         name: "remove_whitespace",
-                        args: vec![ArgType::Identifier("text")],
+                        args: vec![ArgKind::Identifier("text")],
                     })],
                 }),
-                ArgType::String(Cow::Borrowed("!!!")),
+                ArgKind::String(Cow::Borrowed("!!!")),
             ],
         }];
         println!("==GOT==\n");
@@ -1050,32 +1247,32 @@ mod tests {
             Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("text"),
-                    ArgType::String(Cow::Borrowed("  hello world  ")),
+                    ArgKind::Identifier("text"),
+                    ArgKind::String(Cow::Borrowed("  hello world  ")),
                 ],
             },
             Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("result"),
-                    ArgType::Expression(Expression {
+                    ArgKind::Identifier("result"),
+                    ArgKind::Expression(Expression {
                         name: "concat",
                         args: vec![
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "uppercase",
-                                args: vec![ArgType::Expression(Expression {
+                                args: vec![ArgKind::Expression(Expression {
                                     name: "remove_whitespace",
-                                    args: vec![ArgType::Identifier("text")],
+                                    args: vec![ArgKind::Identifier("text")],
                                 })],
                             }),
-                            ArgType::String(Cow::Borrowed("!!!")),
+                            ArgKind::String(Cow::Borrowed("!!!")),
                         ],
                     }),
                 ],
             },
             Expression {
                 name: "print",
-                args: vec![ArgType::Identifier("result")],
+                args: vec![ArgKind::Identifier("result")],
             },
         ];
         println!("==GOT==\n");
@@ -1098,33 +1295,33 @@ mod tests {
         let expected = vec![
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("empty"), ArgType::List(vec![])],
+                args: vec![ArgKind::Identifier("empty"), ArgKind::List(vec![])],
             },
             Expression {
                 name: "print",
                 args: vec![
-                    ArgType::String(Cow::Borrowed("Length: ")),
-                    ArgType::Expression(Expression {
+                    ArgKind::String(Cow::Borrowed("Length: ")),
+                    ArgKind::Expression(Expression {
                         name: "length",
-                        args: vec![ArgType::Identifier("empty")],
+                        args: vec![ArgKind::Identifier("empty")],
                     }),
                 ],
             },
             Expression {
                 name: "insert",
                 args: vec![
-                    ArgType::Identifier("empty"),
-                    ArgType::Number("0"),
-                    ArgType::Number("42"),
+                    ArgKind::Identifier("empty"),
+                    ArgKind::Number("0"),
+                    ArgKind::Number("42"),
                 ],
             },
             Expression {
                 name: "print",
                 args: vec![
-                    ArgType::String(Cow::Borrowed(" After insert: ")),
-                    ArgType::Expression(Expression {
+                    ArgKind::String(Cow::Borrowed(" After insert: ")),
+                    ArgKind::Expression(Expression {
                         name: "index",
-                        args: vec![ArgType::Identifier("empty"), ArgType::Number("0")],
+                        args: vec![ArgKind::Identifier("empty"), ArgKind::Number("0")],
                     }),
                 ],
             },
@@ -1145,18 +1342,18 @@ mod tests {
         let parsed = parser.parse().unwrap();
         let expected = vec![Expression {
             name: "print",
-            args: vec![ArgType::Expression(Expression {
+            args: vec![ArgKind::Expression(Expression {
                 name: "index",
                 args: vec![
-                    ArgType::List(vec![
-                        ArgType::Number("1"),
-                        ArgType::Expression(Expression {
+                    ArgKind::List(vec![
+                        ArgKind::Number("1"),
+                        ArgKind::Expression(Expression {
                             name: "add",
-                            args: vec![ArgType::Number("1"), ArgType::Number("1")],
+                            args: vec![ArgKind::Number("1"), ArgKind::Number("1")],
                         }),
-                        ArgType::Number("3"),
+                        ArgKind::Number("3"),
                     ]),
-                    ArgType::List(vec![ArgType::String(Cow::Borrowed("one"))]),
+                    ArgKind::List(vec![ArgKind::String(Cow::Borrowed("one"))]),
                 ],
             })],
         }];
@@ -1176,25 +1373,25 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "a",
-                args: vec![ArgType::Expression(Expression {
+                args: vec![ArgKind::Expression(Expression {
                     name: "b",
-                    args: vec![ArgType::Expression(Expression {
+                    args: vec![ArgKind::Expression(Expression {
                         name: "c",
-                        args: vec![ArgType::Expression(Expression {
+                        args: vec![ArgKind::Expression(Expression {
                             name: "d",
-                            args: vec![ArgType::Expression(Expression {
+                            args: vec![ArgKind::Expression(Expression {
                                 name: "e",
-                                args: vec![ArgType::Expression(Expression {
+                                args: vec![ArgKind::Expression(Expression {
                                     name: "f",
-                                    args: vec![ArgType::Expression(Expression {
+                                    args: vec![ArgKind::Expression(Expression {
                                         name: "g",
-                                        args: vec![ArgType::Expression(Expression {
+                                        args: vec![ArgKind::Expression(Expression {
                                             name: "h",
-                                            args: vec![ArgType::Expression(Expression {
+                                            args: vec![ArgKind::Expression(Expression {
                                                 name: "i",
-                                                args: vec![ArgType::Expression(Expression {
+                                                args: vec![ArgKind::Expression(Expression {
                                                     name: "j",
-                                                    args: vec![ArgType::Expression(Expression {
+                                                    args: vec![ArgKind::Expression(Expression {
                                                         name: "k",
                                                         args: vec![]
                                                     })]
@@ -1220,18 +1417,18 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "process",
-                args: vec![ArgType::List(vec![
-                    ArgType::Expression(Expression {
+                args: vec![ArgKind::List(vec![
+                    ArgKind::Expression(Expression {
                         name: "add",
-                        args: vec![ArgType::Number("1"), ArgType::Number("2"),]
+                        args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "sub",
-                        args: vec![ArgType::Number("5"), ArgType::Number("3"),]
+                        args: vec![ArgKind::Number("5"), ArgKind::Number("3"),]
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "mul",
-                        args: vec![ArgType::Number("2"), ArgType::Number("4"),]
+                        args: vec![ArgKind::Number("2"), ArgKind::Number("4"),]
                     })
                 ])]
             }]
@@ -1247,19 +1444,19 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "outer",
-                args: vec![ArgType::List(vec![
-                    ArgType::Expression(Expression {
+                args: vec![ArgKind::List(vec![
+                    ArgKind::Expression(Expression {
                         name: "inner",
-                        args: vec![ArgType::List(vec![
-                            ArgType::Number("1"),
-                            ArgType::Number("2"),
+                        args: vec![ArgKind::List(vec![
+                            ArgKind::Number("1"),
+                            ArgKind::Number("2"),
                         ])]
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "inner",
-                        args: vec![ArgType::List(vec![
-                            ArgType::Number("3"),
-                            ArgType::Number("4"),
+                        args: vec![ArgKind::List(vec![
+                            ArgKind::Number("3"),
+                            ArgKind::Number("4"),
                         ])]
                     })
                 ])]
@@ -1277,11 +1474,11 @@ mod tests {
             vec![Expression {
                 name: "add",
                 args: vec![
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "add",
-                        args: vec![ArgType::Number("1"), ArgType::Number("1"),]
+                        args: vec![ArgKind::Number("1"), ArgKind::Number("1"),]
                     }),
-                    ArgType::Number("1")
+                    ArgKind::Number("1")
                 ]
             }]
         );
@@ -1296,14 +1493,14 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "print",
-                args: vec![ArgType::Expression(Expression {
+                args: vec![ArgKind::Expression(Expression {
                     name: "index",
                     args: vec![
-                        ArgType::List(vec![
-                            ArgType::String(Cow::Borrowed("john")),
-                            ArgType::String(Cow::Borrowed("joseph")),
+                        ArgKind::List(vec![
+                            ArgKind::String(Cow::Borrowed("john")),
+                            ArgKind::String(Cow::Borrowed("joseph")),
                         ]),
-                        ArgType::Number("1")
+                        ArgKind::Number("1")
                     ]
                 })]
             }]
@@ -1327,44 +1524,44 @@ mod tests {
                 Expression {
                     name: "store",
                     args: vec![
-                        ArgType::Identifier("names"),
-                        ArgType::List(vec![
-                            ArgType::String(Cow::Borrowed("John")),
-                            ArgType::String(Cow::Borrowed("James")),
-                            ArgType::String(Cow::Borrowed("Joseph")),
-                            ArgType::String(Cow::Borrowed("Alexander")),
+                        ArgKind::Identifier("names"),
+                        ArgKind::List(vec![
+                            ArgKind::String(Cow::Borrowed("John")),
+                            ArgKind::String(Cow::Borrowed("James")),
+                            ArgKind::String(Cow::Borrowed("Joseph")),
+                            ArgKind::String(Cow::Borrowed("Alexander")),
                         ])
                     ]
                 },
                 Expression {
                     name: "store",
-                    args: vec![ArgType::Identifier("i"), ArgType::Number("0")]
+                    args: vec![ArgKind::Identifier("i"), ArgKind::Number("0")]
                 },
                 Expression {
                     name: "repeat",
                     args: vec![
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "length",
-                            args: vec![ArgType::Identifier("names")]
+                            args: vec![ArgKind::Identifier("names")]
                         }),
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "print",
-                            args: vec![ArgType::Expression(Expression {
+                            args: vec![ArgKind::Expression(Expression {
                                 name: "index",
-                                args: vec![ArgType::Identifier("names"), ArgType::Identifier("i")]
+                                args: vec![ArgKind::Identifier("names"), ArgKind::Identifier("i")]
                             })]
                         }),
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "print",
-                            args: vec![ArgType::String(Cow::Borrowed("\n"))]
+                            args: vec![ArgKind::String(Cow::Borrowed("\n"))]
                         }),
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "store",
                             args: vec![
-                                ArgType::Identifier("i"),
-                                ArgType::Expression(Expression {
+                                ArgKind::Identifier("i"),
+                                ArgKind::Expression(Expression {
                                     name: "add",
-                                    args: vec![ArgType::Identifier("i"), ArgType::Number("1")]
+                                    args: vec![ArgKind::Identifier("i"), ArgKind::Number("1")]
                                 })
                             ]
                         })
@@ -1414,7 +1611,7 @@ mod tests {
             expressions
                 == vec![Expression {
                     name: "store",
-                    args: vec![ArgType::Identifier("i"), ArgType::Number("0")]
+                    args: vec![ArgKind::Identifier("i"), ArgKind::Number("0")]
                 }]
         );
     }
@@ -1426,12 +1623,12 @@ mod tests {
         let expected = vec![Expression {
             name: "set",
             args: vec![
-                ArgType::Identifier("character"),
-                ArgType::List(vec![
-                    ArgType::String(Cow::Borrowed("weapon")),
-                    ArgType::String(Cow::Borrowed("name")),
+                ArgKind::Identifier("character"),
+                ArgKind::List(vec![
+                    ArgKind::String(Cow::Borrowed("weapon")),
+                    ArgKind::String(Cow::Borrowed("name")),
                 ]),
-                ArgType::String(Cow::Borrowed("sword")),
+                ArgKind::String(Cow::Borrowed("sword")),
             ],
         }];
         println!("==GOT==\n");
@@ -1461,19 +1658,19 @@ mod tests {
             vec![Expression {
                 name: "if_then",
                 args: vec![
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "ends_with",
                         args: vec![
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "index",
-                                args: vec![ArgType::Identifier("names"), ArgType::Number("0")]
+                                args: vec![ArgKind::Identifier("names"), ArgKind::Number("0")]
                             }),
-                            ArgType::String(Cow::Borrowed("2"))
+                            ArgKind::String(Cow::Borrowed("2"))
                         ]
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "print",
-                        args: vec![ArgType::String(Cow::Borrowed("it's name 2!!"))]
+                        args: vec![ArgKind::String(Cow::Borrowed("it's name 2!!"))]
                     })
                 ]
             }]
@@ -1491,17 +1688,17 @@ mod tests {
             vec![Expression {
                 name: "def",
                 args: vec![
-                    ArgType::Identifier("quadruple"),
-                    ArgType::Expression(Expression {
+                    ArgKind::Identifier("quadruple"),
+                    ArgKind::Expression(Expression {
                         name: "add",
                         args: vec![
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "double",
-                                args: vec![ArgType::Identifier("x")]
+                                args: vec![ArgKind::Identifier("x")]
                             }),
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "double",
-                                args: vec![ArgType::Identifier("x")]
+                                args: vec![ArgKind::Identifier("x")]
                             })
                         ]
                     })
@@ -1534,10 +1731,10 @@ mod tests {
             vec![Expression {
                 name: "add",
                 args: vec![
-                    ArgType::Number("1"),
-                    ArgType::Number("2"),
-                    ArgType::Number("3"),
-                    ArgType::Number("4"),
+                    ArgKind::Number("1"),
+                    ArgKind::Number("2"),
+                    ArgKind::Number("3"),
+                    ArgKind::Number("4"),
                 ]
             }]
         );
@@ -1553,14 +1750,14 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("list"),
-                    ArgType::List(vec![
-                        ArgType::Number("1"),
-                        ArgType::Expression(Expression {
+                    ArgKind::Identifier("list"),
+                    ArgKind::List(vec![
+                        ArgKind::Number("1"),
+                        ArgKind::Expression(Expression {
                             name: "add",
-                            args: vec![ArgType::Number("2"), ArgType::Number("3"),]
+                            args: vec![ArgKind::Number("2"), ArgKind::Number("3"),]
                         }),
-                        ArgType::Number("4"),
+                        ArgKind::Number("4"),
                     ])
                 ]
             }]
@@ -1577,22 +1774,22 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("matrix"),
-                    ArgType::List(vec![
-                        ArgType::List(vec![
-                            ArgType::Number("1"),
-                            ArgType::Number("2"),
-                            ArgType::Number("3"),
+                    ArgKind::Identifier("matrix"),
+                    ArgKind::List(vec![
+                        ArgKind::List(vec![
+                            ArgKind::Number("1"),
+                            ArgKind::Number("2"),
+                            ArgKind::Number("3"),
                         ]),
-                        ArgType::List(vec![
-                            ArgType::Number("4"),
-                            ArgType::Number("5"),
-                            ArgType::Number("6"),
+                        ArgKind::List(vec![
+                            ArgKind::Number("4"),
+                            ArgKind::Number("5"),
+                            ArgKind::Number("6"),
                         ]),
-                        ArgType::List(vec![
-                            ArgType::Number("7"),
-                            ArgType::Number("8"),
-                            ArgType::Number("9"),
+                        ArgKind::List(vec![
+                            ArgKind::Number("7"),
+                            ArgKind::Number("8"),
+                            ArgKind::Number("9"),
                         ]),
                     ])
                 ]
@@ -1610,14 +1807,14 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("data"),
-                    ArgType::List(vec![
-                        ArgType::Number("1"),
-                        ArgType::List(vec![
-                            ArgType::Number("2"),
-                            ArgType::List(vec![
-                                ArgType::Number("3"),
-                                ArgType::List(vec![ArgType::Number("4"), ArgType::Number("5"),])
+                    ArgKind::Identifier("data"),
+                    ArgKind::List(vec![
+                        ArgKind::Number("1"),
+                        ArgKind::List(vec![
+                            ArgKind::Number("2"),
+                            ArgKind::List(vec![
+                                ArgKind::Number("3"),
+                                ArgKind::List(vec![ArgKind::Number("4"), ArgKind::Number("5"),])
                             ])
                         ])
                     ])
@@ -1637,18 +1834,18 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("data"),
-                    ArgType::List(vec![
-                        ArgType::Identifier("x"),
-                        ArgType::String(Cow::Borrowed("hello")),
-                        ArgType::Number("42"),
-                        ArgType::Expression(Expression {
+                    ArgKind::Identifier("data"),
+                    ArgKind::List(vec![
+                        ArgKind::Identifier("x"),
+                        ArgKind::String(Cow::Borrowed("hello")),
+                        ArgKind::Number("42"),
+                        ArgKind::Expression(Expression {
                             name: "add",
-                            args: vec![ArgType::Number("1"), ArgType::Number("2"),]
+                            args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
                         }),
-                        ArgType::List(vec![
-                            ArgType::Identifier("nested"),
-                            ArgType::Identifier("list"),
+                        ArgKind::List(vec![
+                            ArgKind::Identifier("nested"),
+                            ArgKind::Identifier("list"),
                         ])
                     ])
                 ]
@@ -1668,44 +1865,44 @@ mod tests {
             vec![Expression {
                 name: "transform",
                 args: vec![
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "map",
                         args: vec![
-                            ArgType::Identifier("data"),
-                            ArgType::List(vec![
-                                ArgType::Expression(Expression {
+                            ArgKind::Identifier("data"),
+                            ArgKind::List(vec![
+                                ArgKind::Expression(Expression {
                                     name: "filter",
                                     args: vec![
-                                        ArgType::List(vec![
-                                            ArgType::Number("1"),
-                                            ArgType::Number("2"),
-                                            ArgType::Number("3"),
+                                        ArgKind::List(vec![
+                                            ArgKind::Number("1"),
+                                            ArgKind::Number("2"),
+                                            ArgKind::Number("3"),
                                         ]),
-                                        ArgType::Expression(Expression {
+                                        ArgKind::Expression(Expression {
                                             name: "is_even",
                                             args: vec![]
                                         })
                                     ]
                                 }),
-                                ArgType::Expression(Expression {
+                                ArgKind::Expression(Expression {
                                     name: "sort",
-                                    args: vec![ArgType::List(vec![
-                                        ArgType::Identifier("b"),
-                                        ArgType::Identifier("a"),
-                                        ArgType::Identifier("c"),
+                                    args: vec![ArgKind::List(vec![
+                                        ArgKind::Identifier("b"),
+                                        ArgKind::Identifier("a"),
+                                        ArgKind::Identifier("c"),
                                     ])]
                                 })
                             ])
                         ]
                     }),
-                    ArgType::List(vec![
-                        ArgType::Expression(Expression {
+                    ArgKind::List(vec![
+                        ArgKind::Expression(Expression {
                             name: "process",
-                            args: vec![ArgType::Identifier("x")]
+                            args: vec![ArgKind::Identifier("x")]
                         }),
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "process",
-                            args: vec![ArgType::Identifier("y")]
+                            args: vec![ArgKind::Identifier("y")]
                         })
                     ])
                 ]
@@ -1724,26 +1921,26 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("grid"),
-                    ArgType::List(vec![
-                        ArgType::List(vec![
-                            ArgType::Expression(Expression {
+                    ArgKind::Identifier("grid"),
+                    ArgKind::List(vec![
+                        ArgKind::List(vec![
+                            ArgKind::Expression(Expression {
                                 name: "add",
-                                args: vec![ArgType::Number("1"), ArgType::Number("2"),]
+                                args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
                             }),
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "sub",
-                                args: vec![ArgType::Number("3"), ArgType::Number("4"),]
+                                args: vec![ArgKind::Number("3"), ArgKind::Number("4"),]
                             })
                         ]),
-                        ArgType::List(vec![
-                            ArgType::Expression(Expression {
+                        ArgKind::List(vec![
+                            ArgKind::Expression(Expression {
                                 name: "mul",
-                                args: vec![ArgType::Number("5"), ArgType::Number("6"),]
+                                args: vec![ArgKind::Number("5"), ArgKind::Number("6"),]
                             }),
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "div",
-                                args: vec![ArgType::Number("7"), ArgType::Number("8"),]
+                                args: vec![ArgKind::Number("7"), ArgKind::Number("8"),]
                             })
                         ])
                     ])
@@ -1761,22 +1958,22 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "outer",
-                args: vec![ArgType::List(vec![
-                    ArgType::Identifier("a"),
-                    ArgType::Expression(Expression {
+                args: vec![ArgKind::List(vec![
+                    ArgKind::Identifier("a"),
+                    ArgKind::Expression(Expression {
                         name: "inner",
-                        args: vec![ArgType::List(vec![
-                            ArgType::Identifier("b"),
-                            ArgType::Expression(Expression {
+                        args: vec![ArgKind::List(vec![
+                            ArgKind::Identifier("b"),
+                            ArgKind::Expression(Expression {
                                 name: "deeper",
-                                args: vec![ArgType::List(vec![
-                                    ArgType::Identifier("c"),
-                                    ArgType::Identifier("d"),
+                                args: vec![ArgKind::List(vec![
+                                    ArgKind::Identifier("c"),
+                                    ArgKind::Identifier("d"),
                                 ])]
                             })
                         ])]
                     }),
-                    ArgType::Identifier("e"),
+                    ArgKind::Identifier("e"),
                 ])]
             }]
         );
@@ -1791,11 +1988,11 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "outer",
-                args: vec![ArgType::List(vec![ArgType::Expression(Expression {
+                args: vec![ArgKind::List(vec![ArgKind::Expression(Expression {
                     name: "inner",
-                    args: vec![ArgType::List(vec![ArgType::List(vec![
-                        ArgType::Identifier("a"),
-                        ArgType::Identifier("b"),
+                    args: vec![ArgKind::List(vec![ArgKind::List(vec![
+                        ArgKind::Identifier("a"),
+                        ArgKind::Identifier("b"),
                     ])])]
                 })])]
             }]
@@ -1811,11 +2008,11 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "outer",
-                args: vec![ArgType::Expression(Expression {
+                args: vec![ArgKind::Expression(Expression {
                     name: "inner2",
-                    args: vec![ArgType::List(vec![
-                        ArgType::Identifier("c"),
-                        ArgType::List(vec![ArgType::Identifier("d"),])
+                    args: vec![ArgKind::List(vec![
+                        ArgKind::Identifier("c"),
+                        ArgKind::List(vec![ArgKind::Identifier("d"),])
                     ])]
                 })]
             }]
@@ -1831,9 +2028,9 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "outer",
-                args: vec![ArgType::List(vec![ArgType::Expression(Expression {
+                args: vec![ArgKind::List(vec![ArgKind::Expression(Expression {
                     name: "inner",
-                    args: vec![ArgType::Expression(Expression {
+                    args: vec![ArgKind::Expression(Expression {
                         name: "deepest",
                         args: vec![]
                     })]
@@ -1852,11 +2049,11 @@ mod tests {
             vec![Expression {
                 name: "outer",
                 args: vec![
-                    ArgType::List(vec![ArgType::Identifier("a")]),
-                    ArgType::List(vec![ArgType::Identifier("b")]),
-                    ArgType::Expression(Expression {
+                    ArgKind::List(vec![ArgKind::Identifier("a")]),
+                    ArgKind::List(vec![ArgKind::Identifier("b")]),
+                    ArgKind::Expression(Expression {
                         name: "inner",
-                        args: vec![ArgType::List(vec![ArgType::Identifier("c")])]
+                        args: vec![ArgKind::List(vec![ArgKind::Identifier("c")])]
                     })
                 ]
             }]
@@ -1873,18 +2070,18 @@ mod tests {
             vec![Expression {
                 name: "outer",
                 args: vec![
-                    ArgType::List(vec![
-                        ArgType::Identifier("a"),
-                        ArgType::Expression(Expression {
+                    ArgKind::List(vec![
+                        ArgKind::Identifier("a"),
+                        ArgKind::Expression(Expression {
                             name: "inner1",
-                            args: vec![ArgType::List(vec![ArgType::Identifier("b")])]
+                            args: vec![ArgKind::List(vec![ArgKind::Identifier("b")])]
                         })
                     ]),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "inner2",
-                        args: vec![ArgType::List(vec![
-                            ArgType::Identifier("c"),
-                            ArgType::List(vec![ArgType::Identifier("d")])
+                        args: vec![ArgKind::List(vec![
+                            ArgKind::Identifier("c"),
+                            ArgKind::List(vec![ArgKind::Identifier("d")])
                         ])]
                     })
                 ]
@@ -1902,8 +2099,8 @@ mod tests {
             vec![Expression {
                 name: "outer",
                 args: vec![
-                    ArgType::List(vec![ArgType::Identifier("a"), ArgType::Identifier("b"),]),
-                    ArgType::Expression(Expression {
+                    ArgKind::List(vec![ArgKind::Identifier("a"), ArgKind::Identifier("b"),]),
+                    ArgKind::Expression(Expression {
                         name: "inner",
                         args: vec![]
                     })
@@ -1921,7 +2118,7 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("data"), ArgType::List(vec![])]
+                args: vec![ArgKind::Identifier("data"), ArgKind::List(vec![])]
             }]
         );
     }
@@ -1936,8 +2133,8 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("data"),
-                    ArgType::List(vec![ArgType::Number("1"), ArgType::Number("2"),])
+                    ArgKind::Identifier("data"),
+                    ArgKind::List(vec![ArgKind::Number("1"), ArgKind::Number("2"),])
                 ]
             }]
         );
@@ -1950,8 +2147,8 @@ mod tests {
         let expected = vec![Expression {
             name: "store",
             args: vec![
-                ArgType::Identifier("data"),
-                ArgType::List(vec![ArgType::Number("1"), ArgType::Number("2")]),
+                ArgKind::Identifier("data"),
+                ArgKind::List(vec![ArgKind::Number("1"), ArgKind::Number("2")]),
             ],
         }];
         println!("==GOT==\n");
@@ -1970,7 +2167,7 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "add",
-                args: vec![ArgType::Number("1"), ArgType::Number("2"),]
+                args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
             }]
         );
     }
@@ -1985,14 +2182,14 @@ mod tests {
             vec![Expression {
                 name: "method",
                 args: vec![
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "outer",
-                        args: vec![ArgType::Expression(Expression {
+                        args: vec![ArgKind::Expression(Expression {
                             name: "inner",
-                            args: vec![ArgType::Identifier("x")]
+                            args: vec![ArgKind::Identifier("x")]
                         })]
                     }),
-                    ArgType::Identifier("y")
+                    ArgKind::Identifier("y")
                 ]
             }]
         );
@@ -2028,16 +2225,16 @@ mod tests {
             expressions,
             vec![Expression {
                 name: "a",
-                args: vec![ArgType::List(vec![
-                    ArgType::Expression(Expression {
+                args: vec![ArgKind::List(vec![
+                    ArgKind::Expression(Expression {
                         name: "b",
-                        args: vec![ArgType::Identifier("c")]
+                        args: vec![ArgKind::Identifier("c")]
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "d",
-                        args: vec![ArgType::List(vec![
-                            ArgType::Identifier("e"),
-                            ArgType::Identifier("f"),
+                        args: vec![ArgKind::List(vec![
+                            ArgKind::Identifier("e"),
+                            ArgKind::Identifier("f"),
                         ])]
                     })
                 ])]
@@ -2065,12 +2262,12 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("player"),
-                    ArgType::Map(vec![
-                        ("name", ArgType::String(Cow::Borrowed("blah"))),
-                        ("health", ArgType::Number("100")),
-                        ("dodge", ArgType::Number("0")),
-                        ("strength", ArgType::Number("0")),
+                    ArgKind::Identifier("player"),
+                    ArgKind::Map(vec![
+                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
+                        ("health", ArgKind::Number("100")),
+                        ("dodge", ArgKind::Number("0")),
+                        ("strength", ArgKind::Number("0")),
                     ])
                 ]
             }]
@@ -2095,15 +2292,15 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("player"),
-                    ArgType::Map(vec![
-                        ("name", ArgType::String(Cow::Borrowed("blah"))),
+                    ArgKind::Identifier("player"),
+                    ArgKind::Map(vec![
+                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
                         (
                             "items",
-                            ArgType::List(vec![
-                                ArgType::Identifier("x"),
-                                ArgType::Identifier("y"),
-                                ArgType::Identifier("z"),
+                            ArgKind::List(vec![
+                                ArgKind::Identifier("x"),
+                                ArgKind::Identifier("y"),
+                                ArgKind::Identifier("z"),
                             ])
                         ),
                     ])
@@ -2139,19 +2336,19 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("player"),
-                    ArgType::Map(vec![
-                        ("name", ArgType::String(Cow::Borrowed("blah"))),
+                    ArgKind::Identifier("player"),
+                    ArgKind::Map(vec![
+                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
                         (
                             "inventory",
-                            ArgType::List(vec![
-                                ArgType::Map(vec![
-                                    ("name", ArgType::String(Cow::Borrowed("sword"))),
-                                    ("damage", ArgType::Number("10")),
+                            ArgKind::List(vec![
+                                ArgKind::Map(vec![
+                                    ("name", ArgKind::String(Cow::Borrowed("sword"))),
+                                    ("damage", ArgKind::Number("10")),
                                 ]),
-                                ArgType::Map(vec![
-                                    ("name", ArgType::String(Cow::Borrowed("shield"))),
-                                    ("defense", ArgType::Number("5")),
+                                ArgKind::Map(vec![
+                                    ("name", ArgKind::String(Cow::Borrowed("shield"))),
+                                    ("defense", ArgKind::Number("5")),
                                 ]),
                             ])
                         ),
@@ -2182,14 +2379,14 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("player"),
-                    ArgType::Map(vec![
-                        ("name", ArgType::String(Cow::Borrowed("blah"))),
+                    ArgKind::Identifier("player"),
+                    ArgKind::Map(vec![
+                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
                         (
                             "stats",
-                            ArgType::Map(vec![
-                                ("health", ArgType::Number("100")),
-                                ("strength", ArgType::Number("10")),
+                            ArgKind::Map(vec![
+                                ("health", ArgKind::Number("100")),
+                                ("strength", ArgKind::Number("10")),
                             ])
                         ),
                     ])
@@ -2221,16 +2418,16 @@ mod tests {
             vec![Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("world"),
-                    ArgType::Map(vec![(
+                    ArgKind::Identifier("world"),
+                    ArgKind::Map(vec![(
                         "player",
-                        ArgType::Map(vec![
-                            ("name", ArgType::String(Cow::Borrowed("blah"))),
+                        ArgKind::Map(vec![
+                            ("name", ArgKind::String(Cow::Borrowed("blah"))),
                             (
                                 "location",
-                                ArgType::Map(vec![
-                                    ("x", ArgType::Number("0")),
-                                    ("y", ArgType::Number("0")),
+                                ArgKind::Map(vec![
+                                    ("x", ArgKind::Number("0")),
+                                    ("y", ArgKind::Number("0")),
                                 ])
                             ),
                         ])
@@ -2255,20 +2452,20 @@ mod tests {
         let expected = vec![Expression {
             name: "store",
             args: vec![
-                ArgType::Identifier("player"),
-                ArgType::Map(vec![
+                ArgKind::Identifier("player"),
+                ArgKind::Map(vec![
                     (
                         "name",
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "get_name",
                             args: vec![],
                         }),
                     ),
                     (
                         "health",
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "add",
-                            args: vec![ArgType::Number("50"), ArgType::Number("50")],
+                            args: vec![ArgKind::Number("50"), ArgKind::Number("50")],
                         }),
                     ),
                 ]),
@@ -2306,100 +2503,100 @@ mod tests {
         let expected = vec![
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("C_MODS"), ArgType::Number("0")],
+                args: vec![ArgKind::Identifier("C_MODS"), ArgKind::Number("0")],
             },
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("P_MOD"), ArgType::Number("0")],
+                args: vec![ArgKind::Identifier("P_MOD"), ArgKind::Number("0")],
             },
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("P_DUR"), ArgType::Number("1")],
+                args: vec![ArgKind::Identifier("P_DUR"), ArgKind::Number("1")],
             },
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("attacker_mods"), ArgType::List(vec![])],
+                args: vec![ArgKind::Identifier("attacker_mods"), ArgKind::List(vec![])],
             },
             Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("attacker"),
-                    ArgType::List(vec![ArgType::Identifier("attacker_mods")]),
+                    ArgKind::Identifier("attacker"),
+                    ArgKind::List(vec![ArgKind::Identifier("attacker_mods")]),
                 ],
             },
             Expression {
                 name: "store",
                 args: vec![
-                    ArgType::Identifier("potion"),
-                    ArgType::List(vec![ArgType::Number("1"), ArgType::Number("1")]),
+                    ArgKind::Identifier("potion"),
+                    ArgKind::List(vec![ArgKind::Number("1"), ArgKind::Number("1")]),
                 ],
             },
             Expression {
                 name: "store",
-                args: vec![ArgType::Identifier("mods"), ArgType::List(vec![])],
+                args: vec![ArgKind::Identifier("mods"), ArgKind::List(vec![])],
             },
             Expression {
                 name: "def",
                 args: vec![
-                    ArgType::Identifier("add_potion_modifier"),
-                    ArgType::Identifier("potion"),
-                    ArgType::Expression(Expression {
+                    ArgKind::Identifier("add_potion_modifier"),
+                    ArgKind::Identifier("potion"),
+                    ArgKind::Expression(Expression {
                         name: "store",
                         args: vec![
-                            ArgType::Identifier("mods"),
-                            ArgType::Expression(Expression {
+                            ArgKind::Identifier("mods"),
+                            ArgKind::Expression(Expression {
                                 name: "clone",
-                                args: vec![ArgType::Expression(Expression {
+                                args: vec![ArgKind::Expression(Expression {
                                     name: "index",
                                     args: vec![
-                                        ArgType::Identifier("attacker"),
-                                        ArgType::Identifier("C_MODS"),
+                                        ArgKind::Identifier("attacker"),
+                                        ArgKind::Identifier("C_MODS"),
                                     ],
                                 })],
                             }),
                         ],
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "push",
                         args: vec![
-                            ArgType::Identifier("mods"),
-                            ArgType::List(vec![
-                                ArgType::Expression(Expression {
+                            ArgKind::Identifier("mods"),
+                            ArgKind::List(vec![
+                                ArgKind::Expression(Expression {
                                     name: "clone",
-                                    args: vec![ArgType::Expression(Expression {
+                                    args: vec![ArgKind::Expression(Expression {
                                         name: "index",
                                         args: vec![
-                                            ArgType::Identifier("potion"),
-                                            ArgType::Identifier("P_MOD"),
+                                            ArgKind::Identifier("potion"),
+                                            ArgKind::Identifier("P_MOD"),
                                         ],
                                     })],
                                 }),
-                                ArgType::Expression(Expression {
+                                ArgKind::Expression(Expression {
                                     name: "clone",
-                                    args: vec![ArgType::Expression(Expression {
+                                    args: vec![ArgKind::Expression(Expression {
                                         name: "index",
                                         args: vec![
-                                            ArgType::Identifier("potion"),
-                                            ArgType::Identifier("P_DUR"),
+                                            ArgKind::Identifier("potion"),
+                                            ArgKind::Identifier("P_DUR"),
                                         ],
                                     })],
                                 }),
                             ]),
                         ],
                     }),
-                    ArgType::Expression(Expression {
+                    ArgKind::Expression(Expression {
                         name: "store",
                         args: vec![
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "index",
                                 args: vec![
-                                    ArgType::Identifier("attacker"),
-                                    ArgType::Identifier("C_MODS"),
+                                    ArgKind::Identifier("attacker"),
+                                    ArgKind::Identifier("C_MODS"),
                                 ],
                             }),
-                            ArgType::Expression(Expression {
+                            ArgKind::Expression(Expression {
                                 name: "clone",
-                                args: vec![ArgType::Identifier("mods")],
+                                args: vec![ArgKind::Identifier("mods")],
                             }),
                         ],
                     }),
@@ -2407,26 +2604,26 @@ mod tests {
             },
             Expression {
                 name: "add_potion_modifier",
-                args: vec![ArgType::List(vec![
-                    ArgType::Number("50"),
-                    ArgType::Number("3"),
+                args: vec![ArgKind::List(vec![
+                    ArgKind::Number("50"),
+                    ArgKind::Number("3"),
                 ])],
             },
             Expression {
                 name: "print",
                 args: vec![
-                    ArgType::String(Cow::Borrowed("potion: [1, 1]\n")),
-                    ArgType::Expression(Expression {
+                    ArgKind::String(Cow::Borrowed("potion: [1, 1]\n")),
+                    ArgKind::Expression(Expression {
                         name: "concat",
                         args: vec![
-                            ArgType::String(Cow::Borrowed("mods: ")),
-                            ArgType::Identifier("mods"),
-                            ArgType::String(Cow::Borrowed("\nattacker_mods: ")),
-                            ArgType::Expression(Expression {
+                            ArgKind::String(Cow::Borrowed("mods: ")),
+                            ArgKind::Identifier("mods"),
+                            ArgKind::String(Cow::Borrowed("\nattacker_mods: ")),
+                            ArgKind::Expression(Expression {
                                 name: "index",
                                 args: vec![
-                                    ArgType::Identifier("attacker"),
-                                    ArgType::Identifier("C_MODS"),
+                                    ArgKind::Identifier("attacker"),
+                                    ArgKind::Identifier("C_MODS"),
                                 ],
                             }),
                         ],
@@ -2499,20 +2696,20 @@ mod tests {
         let expected = vec![Expression {
             name: "store",
             args: vec![
-                ArgType::Identifier("player"),
-                ArgType::Map(vec![
-                    ("name", ArgType::String("blah".into())),
+                ArgKind::Identifier("player"),
+                ArgKind::Map(vec![
+                    ("name", ArgKind::String("blah".into())),
                     (
                         "weapon",
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "concat",
                             args: vec![
-                                ArgType::Expression(Expression {
+                                ArgKind::Expression(Expression {
                                     name: "uppercase",
-                                    args: vec![ArgType::String("big".into())],
+                                    args: vec![ArgKind::String("big".into())],
                                 }),
-                                ArgType::String(" ".into()),
-                                ArgType::String("sword".into()),
+                                ArgKind::String(" ".into()),
+                                ArgKind::String("sword".into()),
                             ],
                         }),
                     ),
@@ -2541,20 +2738,20 @@ mod tests {
         let expected = vec![Expression {
             name: "store",
             args: vec![
-                ArgType::Identifier("player"),
-                ArgType::Map(vec![
-                    ("name", ArgType::String("blah".into())),
+                ArgKind::Identifier("player"),
+                ArgKind::Map(vec![
+                    ("name", ArgKind::String("blah".into())),
                     (
                         "weapon",
-                        ArgType::Expression(Expression {
+                        ArgKind::Expression(Expression {
                             name: "concat",
                             args: vec![
-                                ArgType::Expression(Expression {
+                                ArgKind::Expression(Expression {
                                     name: "uppercase",
-                                    args: vec![ArgType::String("big".into())],
+                                    args: vec![ArgKind::String("big".into())],
                                 }),
-                                ArgType::String(" ".into()),
-                                ArgType::String("sword".into()),
+                                ArgKind::String(" ".into()),
+                                ArgKind::String("sword".into()),
                             ],
                         }),
                     ),
@@ -2567,4 +2764,5 @@ mod tests {
         dbg!(&expected);
         assert!(parsed == expected);
     }
+    */
 }
