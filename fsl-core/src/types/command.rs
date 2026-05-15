@@ -324,3 +324,25 @@ pub struct UserCommand<'c> {
     pub parameters: VecDeque<Cow<'c, str>>,
     pub commands: Vec<Command<'c>>,
 }
+
+impl<'c> UserCommand<'c> {
+    pub fn declaration(label: Cow<'c, str>) -> Self {
+        Self {
+            label,
+            parameters: VecDeque::new(),
+            commands: Vec::new(),
+        }
+    }
+
+    pub fn definition(
+        label: Cow<'c, str>,
+        parameters: VecDeque<Cow<'c, str>>,
+        commands: Vec<Command<'c>>,
+    ) -> Self {
+        Self {
+            label,
+            parameters,
+            commands,
+        }
+    }
+}

@@ -17,7 +17,7 @@ use crate::{
     },
     parser::{Arg, ArgKind, Expression, Parser},
     types::{
-        command::{ArgRule, Command, CommandDefinition, Handler},
+        command::{ArgRule, Command, CommandDefinition, Handler, UserCommand},
         value::{Value, ValueResult},
     },
 };
@@ -178,6 +178,13 @@ impl FslInterpreter {
         let expressions = Parser::new(source).filter_parse(&[DEF])?;
 
         for expression in expressions.filtered {
+            if expression.name.as_str() == DEF
+                && let Some(label) = expression.args.get(0)
+            {
+                let mut user_commands = data.user_commands.lock().await;
+                let label = Cow::Borrowed(label.token.as_str());
+                user_commands.insert(label.clone(), UserCommand::declaration(label));
+            }
             Self::interpret_command(data.clone(), command_definitions, expression).await?;
         }
 
@@ -1894,6 +1901,29 @@ mod interpreter {
             )
             "#,
             "it just works",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn basic_recursion() {
+        test_interpreter(
+            r#"
+            recurse.def(n,
+            	n.inc()
+            	if(not(n.eq(10))
+            		then(
+            			recurse(n)
+            		)
+            	)
+            	return(n)
+            )
+            
+            n.store(0)
+            
+            print(recurse(n))
+            "#,
+            "10",
         )
         .await;
     }

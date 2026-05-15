@@ -2405,11 +2405,7 @@ pub async fn def<'c>(
     }
 
     let mut user_commands = data.user_commands.lock().await;
-    let user_command = UserCommand {
-        label: label.clone(),
-        parameters,
-        commands: commands,
-    };
+    let user_command = UserCommand::definition(label.clone(), parameters, commands);
     user_commands.insert(label, user_command);
 
     Ok(Value::None)
