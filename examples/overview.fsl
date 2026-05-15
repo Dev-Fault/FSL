@@ -34,13 +34,13 @@ say(mod(4, 2)) # output: 0
 
 # float numbers work just like ints but we include a decimal point
 say(add(1.5, 1.5)) # output: 3
-# If you want to limit how many numbers come after the decimal point you can use precision
+# If we want to limit how many numbers come after the decimal point we can use precision
 say(precision(1.513157895, 2)) # output: 1.51
 # Precision can also be used to round like:
 say(precision(1.51, 0)) # output: 2
 say(precision(1.49, 0)) # output: 1
 
-# If you need to limit a number within a certain range you can use these clamp commands:
+# If we need to limit a number within a certain range we can use these clamp commands:
 say(
 	clamp(
 		1, # Value we want to clamp
@@ -49,7 +49,7 @@ say(
 	)
 ) # output: 2
 
-# If you don't care about what the min, or alternatively max is the following commands are helpful:
+# If we don't care about what the min, or alternatively max is the following commands are helpful:
 say(clamp_min(1, 2)) # output: 2 
 say(clamp_max(1, 0)) # output: 0 
 
@@ -59,19 +59,253 @@ say(clamp_max(1, 0)) # output: 0
 say("The text inside these quotes is a string")
 say("This will print two consecutive lines with this on top\nAnd this on the bottom")
 
-# You can include quotes inside your strings with escaping
+# we can include quotes inside strings with escaping
 say(concat("in \"quotes\""))
 
 # FSL strings support utf8 characters so the following is valid:
 say("🍇")
 
-# To concatenate/combine two strings you can do the following:
+# To concatenate/combine two strings we can do the following:
 say(concat("The first part of the string.", " ", "The second part of the string.")) # output: The first part of the string. The second part of the string.
+
+# There are quite a few useful methods for strings, here's a few:
+say("  spaces  ".trim_whitespace()) # output: spaces
+say("=spaces=".trim("=")) # output: spaces
+say("this will split this string by words".split(" "))
+# output: ["this", "will", "split", "this", "string", "by", "words"]
+# We'll discuss lists later
+# If we need to get the length of a string we can do:
+say("four".length()) # output: 4
 
 # Variables
 
 # We can create variables with the store command, the following creates a variable named "x" and stores the number 1 inside it
 x.store(1)
+# Notice the . here
+# In FSL the . symbol places what is to the left of it as the first argument of the command to the right
+# That means the following is equivalent
+store(x, 1) # Does the exact same thing, the . simply helps readability
 
-# To use variables you can pass them into commands like:
+# To use variables we can pass them into commands like:
 say(add(x, x)) # output: 2
+
+# Note the following
+# This stores the value of x into y, not x itself
+y.store(x)
+x.store(2)
+# y still contains the value 1 even though x has changed
+# If we want to update a value ensuring it already exists we can do:
+x.update(5)
+x.say() # output: 5
+
+# we can create constant variables with the following:
+program_name.const("Overview")
+# Now if we tried to overwrite program_name we would get an error
+# program_name.store("this will cause an error if uncommented")
+# Use constants when we want to ensure a value can never change
+
+# Loops
+
+# FSL supports two simple loops, the repeat loop, and the while loop
+# Repeat looks like the following:
+i.store(0)
+repeat(2,
+	i.inc()
+)  
+say(i) # output: 2
+# Repeat loops take an int as their starting argument and run the code after that many times
+# Notice we've broken the repeat statement into multiple lines
+# FSL doesn't require indentation but for the sake of readability this is usually what we want 
+
+# The following commands are very handy for loop indexing
+i.inc() # This will increment i by 1
+i.inc(3) # This will increment i by 3
+i.dec(3) # This will decrement i by 3
+i.dec() # This will decrement i by 1
+
+# While loop:
+while(true,
+	say("Inside the while loop!") 
+	break() # we can use break() to break out of a loop early
+)
+# While loops take a condition as their starting argument and run the code after until the condition is false
+# or a break statement is reached
+
+# Conditional statements
+
+if(add(1, 1).eq(2),
+	then(
+		say("1 + 1 equals 2!") 
+	)
+) # output: 1 + 1 equals 2!
+
+# If statements take a condition, and then the branches, then(), else_if(), and else()
+if(add(1, 1).gt(2),
+	then(
+		say("1 + 1 is greater than 2")
+	)
+	else_if(add(1, 1).eq(2),
+		say("1 + 1 is equal to 2")
+	)
+	else(
+		say("1 + 1 is not greater than 2")
+	)
+) # output: 1 + 1 is equal to 2
+# If we removed the else_if the output would be: 1 + 1 is not greater than 2
+
+# FSL also supports switch statements which take a value and multiple case branches and a single fall back
+switch(add(1, 1),
+	case(3,
+		say("1 + 1 = 3")
+	)
+	case(4,
+		say("1 + 1 = 4")
+	)
+	fallback(
+		say("1 + 1 = 2")
+	)
+) # output: 1 + 1 = 2
+# Note: commas are not required after () but can improve readability in certain situations
+
+
+# Lists
+
+# FSL supports a list type that can contain mixed data
+list.store([1, "two", 3, true])
+
+# To get individual values from lists we can use:
+say(list.index(1)) # output: two
+# To replace a value we can use:
+list.replace(3, "four")
+say(list) # output: [1, two, 3, four]
+# Lists have many useful methods here are a few:
+say(list.pop()) # output: four
+say(list) # output: [1, two, 3]
+list.push(4)
+say(list) # output: [1, two, 3, 4]
+list.swap(0, 3)
+say(list) # output: [4, two, 3, 1]
+
+# Maps
+
+# Fsl supports a map type to give names for each of its elements
+user.store([
+	user_name: "some_user_name_105",
+	email: "example@site.com",
+	phone_number: "777-777-7777"
+])
+# To get an entry in a map we can do:
+say(user.get("user_name")) # output: some_user_name_105
+# To set an entry in a map we can do:
+user.set("user_name", "new user name") 
+# FSL supports using the . symbol to make accessing map entries easier
+user.user_name.get().say() # output: new user name
+player.store([weapon: [name: "sword"]])
+player.weapon.name.get().say() # output: sword
+# In this case . is doing something subtle
+# The previous command is interpreted as:
+say(get(player, ["weapon", "name"])) # output: sword
+# As you can see, generally . is far more readable and recommended for map access
+
+# Maps and lists can be arbitrarily nested and mixed
+nested.store([
+	names: ["John", "Jake", "Joseph"],
+	weapons: ["Sword", [name: "Sword", damage: 5]]
+])
+nested.weapons.get().index(1).damage.get().say() # output: 5
+
+# Functions/Commands
+
+# Custom commands can be created as so:
+square.def(n,
+	mul(n, n)
+)
+say(square(2)) # output: 4
+# Commands are constructed with the following rules:
+# Parameters always come as the first arguments to def after the name of the command
+# You can use as many parameters as you want but they must come first
+# What the command does comes after its parameters
+# def will run each command consecutively
+say_stuff.def(
+	say("this command")
+	say("says")
+	say("several different")
+	say("things")
+)
+say_stuff()
+*
+output:
+this command
+says
+several different
+things
+*
+
+
+create_vector.def(x, y, z,
+	# Commands will automatically return the result of their last command
+	# But we can use return() to make it explicit or to exit the command early
+	return([x, y, z])
+	say("This will never be said because it's after return()")
+)
+say(create_vector(1, 2, 3)) # output: [1, 2, 3]
+
+# Now that we've seen commands it's worth discussing variables further
+# When using the store() command store() will scope the variable to the local most scope
+# This means the variables we've seen so far are in "global" scope
+scope.def(
+	thing.store("thing")
+	# The thing created here is only accesible from inside this command
+)
+# Trying to get the value of thing here will cause an error
+scope()
+# say(thing) results in error
+
+# store() however, will prefer variables from outer scopes that already exist
+# instead of creating a new one
+scope2.def(
+	x.store(10)
+)
+scope2()
+x.say() # output: 10
+# the reason this is okay is because we've already defined x earlier in this script
+
+# If we want to have an x that is completely local to the current command
+# we can do the following:
+scope.def(
+	x.local(20)
+)
+scope()
+x.say() # output: 10
+# The output here is still the same because the x inside is local to that
+# function only
+
+# Notice we've redefined scope() here multiple times
+# In this case it didn't matter because we didn't run the original scope() command
+# FSL creates commands you've made with def before running any code
+# This means the last command we named scope() overwrites the original
+# before it ever runs
+
+# This also means we can define commands after using them
+out_of_order()
+out_of_order.def(
+	say("We created this command out of order!")
+)
+
+# It's also important to go over what happens when we pass values to commands
+reference.def(thing,
+	thing.store("new thing")
+)
+thing.store("old thing")
+say(thing) # output: old thing
+reference(thing)
+say(thing) # output: new thing
+# When we pass a variable to a command we give it a reference to the variable
+# This means it can make changes to it that are preserved after it runs
+# If we want to avoid this we need to clone the variable
+thing.store("old thing")
+reference(thing.clone())
+say(thing) # output: old thing
+# This still outputs "old thing" because we created a copy of thing before sending it
+# The command updated the copy without affecting the original variable
+
