@@ -757,7 +757,7 @@ fn parse_string(s: &'_ str) -> Cow<'_, str> {
 mod tests {
     use std::borrow::Cow;
 
-    use crate::parser::{ArgKind, Expression, Map, Parser};
+    use crate::parser::{ArgKind, Expression, Parser};
 
     #[derive(Debug, PartialEq)]
     enum Tree<'c> {
@@ -934,74 +934,63 @@ mod tests {
         dbg!(&expected);
         assert!(expected == parsed)
     }
-
-    /*
     #[test]
     fn parse_trailing_comma() {
         let parser = Parser::new("list.store([1,2,3,])");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgKind::Identifier("list"),
-                ArgKind::List(vec![
-                    ArgKind::Number("1"),
-                    ArgKind::Number("2"),
-                    ArgKind::Number("3"),
-                ]),
-            ],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("list"),
+                List[
+                    Number("1"),
+                    Number("2"),
+                    Number("3"),
+                ],
+            }
         }];
-        dbg!(&parsed);
         assert!(expected == parsed)
     }
 
     #[tokio::test]
     async fn parse_empty_list_in_command() {
         let parser = Parser::new("print([])");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "print",
-            args: vec![ArgKind::List(vec![])],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            print {
+                List[],
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
 
     #[test]
     fn parse_nested_list() {
         let parser = Parser::new("matrix.store([[1, [2, 3], 4], [5, 6], 7])");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgKind::Identifier("matrix"),
-                ArgKind::List(vec![
-                    ArgKind::List(vec![
-                        ArgKind::Number("1"),
-                        ArgKind::List(vec![ArgKind::Number("2"), ArgKind::Number("3")]),
-                        ArgKind::Number("4"),
-                    ]),
-                    ArgKind::List(vec![ArgKind::Number("5"), ArgKind::Number("6")]),
-                    ArgKind::Number("7"),
-                ]),
-            ],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("matrix"),
+                List[
+                    List[Number("1"), List[Number("2"), Number("3")], Number("4")],
+                    List[Number("5"), Number("6")],
+                    Number("7"),
+                ],
+            }
         }];
-        dbg!(&parsed);
         assert!(expected == parsed)
     }
+
     #[test]
     fn parse_nested_expression() {
         let parser = Parser::new("print(add(1, 2))");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "print",
-            args: vec![ArgKind::Expression(Expression {
-                name: "add",
-                args: vec![ArgKind::Number("1"), ArgKind::Number("2")],
-            })],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            print {
+                Expression(add {
+                    Number("1"),
+                    Number("2"),
+                }),
+            }
         }];
         assert!(expected == parsed)
     }
@@ -1009,16 +998,10 @@ mod tests {
     #[test]
     fn parse_multiple_expressions() {
         let parser = Parser::new("i.store(0) i.inc()");
-        let parsed = parser.parse().unwrap();
+        let parsed = parser.parse().unwrap().to_tree_vec();
         let expected = vec![
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("i"), ArgKind::Number("0")],
-            },
-            Expression {
-                name: "inc",
-                args: vec![ArgKind::Identifier("i")],
-            },
+            tree! { store { Identifier("i"), Number("0"), } },
+            tree! { inc { Identifier("i"), } },
         ];
         assert!(expected == parsed)
     }
@@ -1026,10 +1009,12 @@ mod tests {
     #[test]
     fn parse_keyword_arg() {
         let parser = Parser::new("loop.store(true)");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![ArgKind::Identifier("loop"), ArgKind::Keyword("true")],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("loop"),
+                Keyword("true"),
+            }
         }];
         assert!(expected == parsed)
     }
@@ -1037,10 +1022,11 @@ mod tests {
     #[test]
     fn parse_empty_expression() {
         let parser = Parser::new("i.inc()");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "inc",
-            args: vec![ArgKind::Identifier("i")],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            inc {
+                Identifier("i"),
+            }
         }];
         assert!(expected == parsed)
     }
@@ -1048,22 +1034,15 @@ mod tests {
     #[test]
     fn parse_expression_in_list() {
         let parser = Parser::new("result.store([add(1, 2), add(3, 4)])");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgKind::Identifier("result"),
-                ArgKind::List(vec![
-                    ArgKind::Expression(Expression {
-                        name: "add",
-                        args: vec![ArgKind::Number("1"), ArgKind::Number("2")],
-                    }),
-                    ArgKind::Expression(Expression {
-                        name: "add",
-                        args: vec![ArgKind::Number("3"), ArgKind::Number("4")],
-                    }),
-                ]),
-            ],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("result"),
+                List[
+                    Expression(add { Number("1"), Number("2"), }),
+                    Expression(add { Number("3"), Number("4"), }),
+                ],
+            }
         }];
         assert!(expected == parsed)
     }
@@ -1071,34 +1050,28 @@ mod tests {
     #[test]
     fn parse_map_in_expression_arg() {
         let parser = Parser::new("create(player, [name: \"hero\", health: 100])");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "create",
-            args: vec![
-                ArgKind::Identifier("player"),
-                ArgKind::Map(Map::from([
-                    ("name", ArgKind::String(Cow::Borrowed("hero"))),
-                    ("health", ArgKind::Number("100")),
-                ])),
-            ],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            create {
+                Identifier("player"),
+                Map[
+                    (name, String("hero")),
+                    (health, Number("100")),
+                ],
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
 
     #[test]
     fn parse_chained_dot_expressions() {
         let parser = Parser::new("player.health.get()");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "get",
-            args: vec![
-                ArgKind::Identifier("player"),
-                ArgKind::List(vec![ArgKind::String(Cow::Borrowed("health"))]),
-            ],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            get {
+                Identifier("player"),
+                List[String("health")],
+            }
         }];
         assert!(expected == parsed)
     }
@@ -1106,10 +1079,12 @@ mod tests {
     #[test]
     fn parse_empty_list() {
         let parser = Parser::new("items.store([])");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![ArgKind::Identifier("items"), ArgKind::List(vec![])],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("items"),
+                List[],
+            }
         }];
         assert!(expected == parsed)
     }
@@ -1117,37 +1092,26 @@ mod tests {
     #[test]
     fn parse_string_arg() {
         let parser = Parser::new("say(\"hello world\")");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "say",
-            args: vec![ArgKind::String(Cow::Borrowed("hello world"))],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            say {
+                String("hello world"),
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
 
     #[test]
     fn parse_deeply_nested_expression() {
         let parser = Parser::new("print(concat(add(1, 2), add(3, 4)))");
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "print",
-            args: vec![ArgKind::Expression(Expression {
-                name: "concat",
-                args: vec![
-                    ArgKind::Expression(Expression {
-                        name: "add",
-                        args: vec![ArgKind::Number("1"), ArgKind::Number("2")],
-                    }),
-                    ArgKind::Expression(Expression {
-                        name: "add",
-                        args: vec![ArgKind::Number("3"), ArgKind::Number("4")],
-                    }),
-                ],
-            })],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            print {
+                Expression(concat {
+                    Expression(add { Number("1"), Number("2"), }),
+                    Expression(add { Number("3"), Number("4"), }),
+                }),
+            }
         }];
         assert!(expected == parsed)
     }
@@ -1156,74 +1120,51 @@ mod tests {
     fn command_as_structure() {
         let parser = Parser::new(
             r#"
-            counter.store(0)
-            repeat(0,
-                counter.store(add(counter, 1))
-            )
-            print(counter)
-        "#
+        counter.store(0)
+        repeat(0,
+            counter.store(add(counter, 1))
+        )
+        print(counter)
+    "#
             .trim_matches(|c: char| c.is_whitespace()),
         );
-        let parsed = parser.parse().unwrap();
+        let parsed = parser.parse().unwrap().to_tree_vec();
         let expected = vec![
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("counter"), ArgKind::Number("0")],
-            },
-            Expression {
-                name: "repeat",
-                args: vec![
-                    ArgKind::Number("0"),
-                    ArgKind::Expression(Expression {
-                        name: "store",
-                        args: vec![
-                            ArgKind::Identifier("counter"),
-                            ArgKind::Expression(Expression {
-                                name: "add",
-                                args: vec![ArgKind::Identifier("counter"), ArgKind::Number("1")],
-                            }),
-                        ],
+            tree! { store { Identifier("counter"), Number("0"), } },
+            tree! {
+                repeat {
+                    Number("0"),
+                    Expression(store {
+                        Identifier("counter"),
+                        Expression(add {
+                            Identifier("counter"),
+                            Number("1"),
+                        }),
                     }),
-                ],
+                }
             },
-            Expression {
-                name: "print",
-                args: vec![ArgKind::Identifier("counter")],
-            },
+            tree! { print { Identifier("counter"), } },
         ];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
 
     #[test]
     fn large_chained_command() {
         let parser = Parser::new(
-            r#"
-                text.remove_whitespace().uppercase().concat("!!!")
-            "#
-            .trim_matches(|c: char| c.is_whitespace()),
+            r#"text.remove_whitespace().uppercase().concat("!!!")"#
+                .trim_matches(|c: char| c.is_whitespace()),
         );
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "concat",
-            args: vec![
-                ArgKind::Expression(Expression {
-                    name: "uppercase",
-                    args: vec![ArgKind::Expression(Expression {
-                        name: "remove_whitespace",
-                        args: vec![ArgKind::Identifier("text")],
-                    })],
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            concat {
+                Expression(uppercase {
+                    Expression(remove_whitespace {
+                        Identifier("text"),
+                    }),
                 }),
-                ArgKind::String(Cow::Borrowed("!!!")),
-            ],
+                String("!!!"),
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
 
@@ -1231,1538 +1172,534 @@ mod tests {
     fn command_with_large_chained_arg() {
         let parser = Parser::new(
             r#"
-            text.store("  hello world  ")
-            result.store(
-                text
-                    .remove_whitespace()
-                    .uppercase()
-                    .concat("!!!")
-            )
-            print(result)
-            "#
+        text.store("  hello world  ")
+        result.store(
+            text
+                .remove_whitespace()
+                .uppercase()
+                .concat("!!!")
+        )
+        print(result)
+        "#
             .trim_matches(|c: char| c.is_whitespace()),
         );
-        let parsed = parser.parse().unwrap();
+        let parsed = parser.parse().unwrap().to_tree_vec();
         let expected = vec![
-            Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("text"),
-                    ArgKind::String(Cow::Borrowed("  hello world  ")),
-                ],
-            },
-            Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("result"),
-                    ArgKind::Expression(Expression {
-                        name: "concat",
-                        args: vec![
-                            ArgKind::Expression(Expression {
-                                name: "uppercase",
-                                args: vec![ArgKind::Expression(Expression {
-                                    name: "remove_whitespace",
-                                    args: vec![ArgKind::Identifier("text")],
-                                })],
+            tree! { store { Identifier("text"), String("  hello world  "), } },
+            tree! {
+                store {
+                    Identifier("result"),
+                    Expression(concat {
+                        Expression(uppercase {
+                            Expression(remove_whitespace {
+                                Identifier("text"),
                             }),
-                            ArgKind::String(Cow::Borrowed("!!!")),
-                        ],
+                        }),
+                        String("!!!"),
                     }),
-                ],
+                }
             },
-            Expression {
-                name: "print",
-                args: vec![ArgKind::Identifier("result")],
-            },
+            tree! { print { Identifier("result"), } },
         ];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
+
     #[test]
     fn multiple_commands_mixed_values() {
         let parser = Parser::new(
             r#"
-                empty.store([])
-                print("Length: ", empty.length())
-                empty.insert(0, 42)
-                print(" After insert: ", empty.index(0))
-            "#,
+            empty.store([])
+            print("Length: ", empty.length())
+            empty.insert(0, 42)
+            print(" After insert: ", empty.index(0))
+        "#,
         );
-        let parsed = parser.parse().unwrap();
+        let parsed = parser.parse().unwrap().to_tree_vec();
         let expected = vec![
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("empty"), ArgKind::List(vec![])],
+            tree! { store { Identifier("empty"), List[], } },
+            tree! {
+                print {
+                    String("Length: "),
+                    Expression(length { Identifier("empty"), }),
+                }
             },
-            Expression {
-                name: "print",
-                args: vec![
-                    ArgKind::String(Cow::Borrowed("Length: ")),
-                    ArgKind::Expression(Expression {
-                        name: "length",
-                        args: vec![ArgKind::Identifier("empty")],
-                    }),
-                ],
-            },
-            Expression {
-                name: "insert",
-                args: vec![
-                    ArgKind::Identifier("empty"),
-                    ArgKind::Number("0"),
-                    ArgKind::Number("42"),
-                ],
-            },
-            Expression {
-                name: "print",
-                args: vec![
-                    ArgKind::String(Cow::Borrowed(" After insert: ")),
-                    ArgKind::Expression(Expression {
-                        name: "index",
-                        args: vec![ArgKind::Identifier("empty"), ArgKind::Number("0")],
-                    }),
-                ],
+            tree! { insert { Identifier("empty"), Number("0"), Number("42"), } },
+            tree! {
+                print {
+                    String(" After insert: "),
+                    Expression(index { Identifier("empty"), Number("0"), }),
+                }
             },
         ];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
+
     #[test]
     fn chained_command_with_list_with_command() {
-        let parser = Parser::new(
-            r#"
-                index([1, add(1, 1), 3], ["one"]).print()
-            "#,
-        );
-        let parsed = parser.parse().unwrap();
-        let expected = vec![Expression {
-            name: "print",
-            args: vec![ArgKind::Expression(Expression {
-                name: "index",
-                args: vec![
-                    ArgKind::List(vec![
-                        ArgKind::Number("1"),
-                        ArgKind::Expression(Expression {
-                            name: "add",
-                            args: vec![ArgKind::Number("1"), ArgKind::Number("1")],
-                        }),
-                        ArgKind::Number("3"),
-                    ]),
-                    ArgKind::List(vec![ArgKind::String(Cow::Borrowed("one"))]),
-                ],
-            })],
+        let parser = Parser::new(r#"index([1, add(1, 1), 3], ["one"]).print()"#);
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            print {
+                Expression(index {
+                    List[
+                        Number("1"),
+                        Expression(add { Number("1"), Number("1"), }),
+                        Number("3"),
+                    ],
+                    List[String("one")],
+                }),
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
         assert!(expected == parsed)
     }
 
     #[test]
     fn deeply_nested_commands() {
-        let result = Parser::new("a(b(c(d(e(f(g(h(i(j(k()))))))))))").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "a",
-                args: vec![ArgKind::Expression(Expression {
-                    name: "b",
-                    args: vec![ArgKind::Expression(Expression {
-                        name: "c",
-                        args: vec![ArgKind::Expression(Expression {
-                            name: "d",
-                            args: vec![ArgKind::Expression(Expression {
-                                name: "e",
-                                args: vec![ArgKind::Expression(Expression {
-                                    name: "f",
-                                    args: vec![ArgKind::Expression(Expression {
-                                        name: "g",
-                                        args: vec![ArgKind::Expression(Expression {
-                                            name: "h",
-                                            args: vec![ArgKind::Expression(Expression {
-                                                name: "i",
-                                                args: vec![ArgKind::Expression(Expression {
-                                                    name: "j",
-                                                    args: vec![ArgKind::Expression(Expression {
-                                                        name: "k",
-                                                        args: vec![]
-                                                    })]
-                                                })]
-                                            })]
-                                        })]
-                                    })]
-                                })]
-                            })]
-                        })]
-                    })]
-                })]
-            }]
-        );
+        let parsed = Parser::new("a(b(c(d(e(f(g(h(i(j(k()))))))))))")
+            .parse()
+            .unwrap()
+            .to_tree_vec();
+        let expected = vec![tree! {
+            a {
+                Expression(b {
+                    Expression(c {
+                        Expression(d {
+                            Expression(e {
+                                Expression(f {
+                                    Expression(g {
+                                        Expression(h {
+                                            Expression(i {
+                                                Expression(j {
+                                                    Expression(k {}),
+                                                }),
+                                            }),
+                                        }),
+                                    }),
+                                }),
+                            }),
+                        }),
+                    }),
+                }),
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn commands_in_lists_in_commands() {
-        let result = Parser::new("process([add(1, 2), sub(5, 3), mul(2, 4)])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "process",
-                args: vec![ArgKind::List(vec![
-                    ArgKind::Expression(Expression {
-                        name: "add",
-                        args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
-                    }),
-                    ArgKind::Expression(Expression {
-                        name: "sub",
-                        args: vec![ArgKind::Number("5"), ArgKind::Number("3"),]
-                    }),
-                    ArgKind::Expression(Expression {
-                        name: "mul",
-                        args: vec![ArgKind::Number("2"), ArgKind::Number("4"),]
-                    })
-                ])]
-            }]
-        );
+        let parsed = Parser::new("process([add(1, 2), sub(5, 3), mul(2, 4)])")
+            .parse()
+            .unwrap()
+            .to_tree_vec();
+        let expected = vec![tree! {
+            process {
+                List[
+                    Expression(add { Number("1"), Number("2"), }),
+                    Expression(sub { Number("5"), Number("3"), }),
+                    Expression(mul { Number("2"), Number("4"), }),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn lists_in_commands_in_lists() {
-        let result = Parser::new("outer([inner([1, 2]), inner([3, 4])])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![ArgKind::List(vec![
-                    ArgKind::Expression(Expression {
-                        name: "inner",
-                        args: vec![ArgKind::List(vec![
-                            ArgKind::Number("1"),
-                            ArgKind::Number("2"),
-                        ])]
-                    }),
-                    ArgKind::Expression(Expression {
-                        name: "inner",
-                        args: vec![ArgKind::List(vec![
-                            ArgKind::Number("3"),
-                            ArgKind::Number("4"),
-                        ])]
-                    })
-                ])]
-            }]
-        );
+        let parsed = Parser::new("outer([inner([1, 2]), inner([3, 4])])")
+            .parse()
+            .unwrap()
+            .to_tree_vec();
+        let expected = vec![tree! {
+            outer {
+                List[
+                    Expression(inner { List[Number("1"), Number("2")], }),
+                    Expression(inner { List[Number("3"), Number("4")], }),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn chain_after_expression() {
-        let result = Parser::new(r#"add(1, 1).add(1)"#).parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "add",
-                args: vec![
-                    ArgKind::Expression(Expression {
-                        name: "add",
-                        args: vec![ArgKind::Number("1"), ArgKind::Number("1"),]
-                    }),
-                    ArgKind::Number("1")
-                ]
-            }]
-        );
+        let parsed = Parser::new("add(1, 1).add(1)")
+            .parse()
+            .unwrap()
+            .to_tree_vec();
+        let expected = vec![tree! {
+            add {
+                Expression(add { Number("1"), Number("1"), }),
+                Number("1"),
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn chain_after_command_with_list() {
-        let result = Parser::new(r#"index(["john", "joseph"], 1).print()"#).parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "print",
-                args: vec![ArgKind::Expression(Expression {
-                    name: "index",
-                    args: vec![
-                        ArgKind::List(vec![
-                            ArgKind::String(Cow::Borrowed("john")),
-                            ArgKind::String(Cow::Borrowed("joseph")),
-                        ]),
-                        ArgKind::Number("1")
-                    ]
-                })]
-            }]
-        );
+        let parsed = Parser::new(r#"index(["john", "joseph"], 1).print()"#)
+            .parse()
+            .unwrap()
+            .to_tree_vec();
+        let expected = vec![tree! {
+            print {
+                Expression(index {
+                    List[String("john"), String("joseph")],
+                    Number("1"),
+                }),
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn multiple_statements_with_method_chains() {
-        let result = Parser::new(
+        let parsed = Parser::new(
             r#"names.store(["John", "James", "Joseph", "Alexander"])
         i.store(0)
         repeat(names.length(), names.index(i).print(), print("\n"), i.store(i.add(1)))
         "#,
         )
-        .parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![
-                Expression {
-                    name: "store",
-                    args: vec![
-                        ArgKind::Identifier("names"),
-                        ArgKind::List(vec![
-                            ArgKind::String(Cow::Borrowed("John")),
-                            ArgKind::String(Cow::Borrowed("James")),
-                            ArgKind::String(Cow::Borrowed("Joseph")),
-                            ArgKind::String(Cow::Borrowed("Alexander")),
-                        ])
-                    ]
-                },
-                Expression {
-                    name: "store",
-                    args: vec![ArgKind::Identifier("i"), ArgKind::Number("0")]
-                },
-                Expression {
-                    name: "repeat",
-                    args: vec![
-                        ArgKind::Expression(Expression {
-                            name: "length",
-                            args: vec![ArgKind::Identifier("names")]
-                        }),
-                        ArgKind::Expression(Expression {
-                            name: "print",
-                            args: vec![ArgKind::Expression(Expression {
-                                name: "index",
-                                args: vec![ArgKind::Identifier("names"), ArgKind::Identifier("i")]
-                            })]
-                        }),
-                        ArgKind::Expression(Expression {
-                            name: "print",
-                            args: vec![ArgKind::String(Cow::Borrowed("\n"))]
-                        }),
-                        ArgKind::Expression(Expression {
-                            name: "store",
-                            args: vec![
-                                ArgKind::Identifier("i"),
-                                ArgKind::Expression(Expression {
-                                    name: "add",
-                                    args: vec![ArgKind::Identifier("i"), ArgKind::Number("1")]
-                                })
-                            ]
-                        })
-                    ]
+        .parse()
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![
+            tree! {
+                store {
+                    Identifier("names"),
+                    List[
+                        String("John"),
+                        String("James"),
+                        String("Joseph"),
+                        String("Alexander"),
+                    ],
                 }
-            ]
-        );
-    }
-
-    #[test]
-    fn dot_after_command_no_chain() {
-        let result = Parser::new("store(1).").parse();
-        dbg!(&result);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn command_without_parens() {
-        let result = Parser::new("print").parse();
-        dbg!(&result);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn unbalanced_open_paren() {
-        let result = Parser::new("add(1, 2").parse();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn unbalanced_close_paren() {
-        let result = Parser::new("add 1, 2)").parse();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn unbalanced_brackets() {
-        let result = Parser::new("store([1, 2)").parse();
-        assert!(result.is_err());
-    }
-    #[test]
-    fn dot_arg() {
-        let result = Parser::new("i.store(0)").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert!(
-            expressions
-                == vec![Expression {
-                    name: "store",
-                    args: vec![ArgKind::Identifier("i"), ArgKind::Number("0")]
-                }]
-        );
-    }
-
-    #[test]
-    fn dot_arg_object() {
-        let result = Parser::new("character.weapon.name.set(\"sword\")").parse();
-        let parsed = result.unwrap();
-        let expected = vec![Expression {
-            name: "set",
-            args: vec![
-                ArgKind::Identifier("character"),
-                ArgKind::List(vec![
-                    ArgKind::String(Cow::Borrowed("weapon")),
-                    ArgKind::String(Cow::Borrowed("name")),
-                ]),
-                ArgKind::String(Cow::Borrowed("sword")),
-            ],
-        }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
-        assert!(parsed == expected);
-    }
-
-    #[test]
-    fn dot_arg_invalid_object() {
-        let result = Parser::new("character.\"weapon\".\"name\".store(\"sword\")").parse();
-        dbg!(&result);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn dot_arg_chain() {
-        let result =
-            Parser::new("names.index(0).ends_with(\"2\").if_then(print(\"it's name 2!!\"))")
-                .parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "if_then",
-                args: vec![
-                    ArgKind::Expression(Expression {
-                        name: "ends_with",
-                        args: vec![
-                            ArgKind::Expression(Expression {
-                                name: "index",
-                                args: vec![ArgKind::Identifier("names"), ArgKind::Number("0")]
-                            }),
-                            ArgKind::String(Cow::Borrowed("2"))
-                        ]
+            },
+            tree! { store { Identifier("i"), Number("0"), } },
+            tree! {
+                repeat {
+                    Expression(length { Identifier("names"), }),
+                    Expression(print {
+                        Expression(index { Identifier("names"), Identifier("i"), }),
                     }),
-                    ArgKind::Expression(Expression {
-                        name: "print",
-                        args: vec![ArgKind::String(Cow::Borrowed("it's name 2!!"))]
-                    })
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn nested_command() {
-        let result = Parser::new("quadruple.def(add(double(x), double(x)))").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "def",
-                args: vec![
-                    ArgKind::Identifier("quadruple"),
-                    ArgKind::Expression(Expression {
-                        name: "add",
-                        args: vec![
-                            ArgKind::Expression(Expression {
-                                name: "double",
-                                args: vec![ArgKind::Identifier("x")]
-                            }),
-                            ArgKind::Expression(Expression {
-                                name: "double",
-                                args: vec![ArgKind::Identifier("x")]
-                            })
-                        ]
-                    })
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn empty_args() {
-        let result = Parser::new("print()").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "print",
-                args: vec![]
-            }]
-        );
-    }
-
-    #[test]
-    fn multiple_args() {
-        let result = Parser::new("add(1, 2, 3, 4)").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "add",
-                args: vec![
-                    ArgKind::Number("1"),
-                    ArgKind::Number("2"),
-                    ArgKind::Number("3"),
-                    ArgKind::Number("4"),
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn list_with_expressions() {
-        let result = Parser::new("list.store([1, add(2, 3), 4])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("list"),
-                    ArgKind::List(vec![
-                        ArgKind::Number("1"),
-                        ArgKind::Expression(Expression {
-                            name: "add",
-                            args: vec![ArgKind::Number("2"), ArgKind::Number("3"),]
-                        }),
-                        ArgKind::Number("4"),
-                    ])
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn nested_lists() {
-        let result = Parser::new("matrix.store([[1, 2, 3], [4, 5, 6], [7, 8, 9]])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("matrix"),
-                    ArgKind::List(vec![
-                        ArgKind::List(vec![
-                            ArgKind::Number("1"),
-                            ArgKind::Number("2"),
-                            ArgKind::Number("3"),
-                        ]),
-                        ArgKind::List(vec![
-                            ArgKind::Number("4"),
-                            ArgKind::Number("5"),
-                            ArgKind::Number("6"),
-                        ]),
-                        ArgKind::List(vec![
-                            ArgKind::Number("7"),
-                            ArgKind::Number("8"),
-                            ArgKind::Number("9"),
-                        ]),
-                    ])
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn deeply_nested_lists() {
-        let result = Parser::new("data.store([1, [2, [3, [4, 5]]]])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("data"),
-                    ArgKind::List(vec![
-                        ArgKind::Number("1"),
-                        ArgKind::List(vec![
-                            ArgKind::Number("2"),
-                            ArgKind::List(vec![
-                                ArgKind::Number("3"),
-                                ArgKind::List(vec![ArgKind::Number("4"), ArgKind::Number("5"),])
-                            ])
-                        ])
-                    ])
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn list_with_mixed_content() {
-        let result =
-            Parser::new("data.store([x, \"hello\", 42, add(1, 2), [nested, list]])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("data"),
-                    ArgKind::List(vec![
-                        ArgKind::Identifier("x"),
-                        ArgKind::String(Cow::Borrowed("hello")),
-                        ArgKind::Number("42"),
-                        ArgKind::Expression(Expression {
-                            name: "add",
-                            args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
-                        }),
-                        ArgKind::List(vec![
-                            ArgKind::Identifier("nested"),
-                            ArgKind::Identifier("list"),
-                        ])
-                    ])
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn deeply_nested_commands_lists_mixed() {
-        let result = Parser::new(
-        "transform(data.map([filter([1, 2, 3], is_even()), sort([b, a, c])]), [process(x), process(y)])"
-    ).parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "transform",
-                args: vec![
-                    ArgKind::Expression(Expression {
-                        name: "map",
-                        args: vec![
-                            ArgKind::Identifier("data"),
-                            ArgKind::List(vec![
-                                ArgKind::Expression(Expression {
-                                    name: "filter",
-                                    args: vec![
-                                        ArgKind::List(vec![
-                                            ArgKind::Number("1"),
-                                            ArgKind::Number("2"),
-                                            ArgKind::Number("3"),
-                                        ]),
-                                        ArgKind::Expression(Expression {
-                                            name: "is_even",
-                                            args: vec![]
-                                        })
-                                    ]
-                                }),
-                                ArgKind::Expression(Expression {
-                                    name: "sort",
-                                    args: vec![ArgKind::List(vec![
-                                        ArgKind::Identifier("b"),
-                                        ArgKind::Identifier("a"),
-                                        ArgKind::Identifier("c"),
-                                    ])]
-                                })
-                            ])
-                        ]
+                    Expression(print { String("\n"), }),
+                    Expression(store {
+                        Identifier("i"),
+                        Expression(add { Identifier("i"), Number("1"), }),
                     }),
-                    ArgKind::List(vec![
-                        ArgKind::Expression(Expression {
-                            name: "process",
-                            args: vec![ArgKind::Identifier("x")]
-                        }),
-                        ArgKind::Expression(Expression {
-                            name: "process",
-                            args: vec![ArgKind::Identifier("y")]
-                        })
-                    ])
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn matrix_of_commands() {
-        let result =
-            Parser::new("grid.store([[add(1,2), sub(3,4)], [mul(5,6), div(7,8)]])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("grid"),
-                    ArgKind::List(vec![
-                        ArgKind::List(vec![
-                            ArgKind::Expression(Expression {
-                                name: "add",
-                                args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
-                            }),
-                            ArgKind::Expression(Expression {
-                                name: "sub",
-                                args: vec![ArgKind::Number("3"), ArgKind::Number("4"),]
-                            })
-                        ]),
-                        ArgKind::List(vec![
-                            ArgKind::Expression(Expression {
-                                name: "mul",
-                                args: vec![ArgKind::Number("5"), ArgKind::Number("6"),]
-                            }),
-                            ArgKind::Expression(Expression {
-                                name: "div",
-                                args: vec![ArgKind::Number("7"), ArgKind::Number("8"),]
-                            })
-                        ])
-                    ])
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn command_with_list_containing_nested_command_with_list() {
-        let result = Parser::new("outer([a, inner([b, deeper([c, d])]), e])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![ArgKind::List(vec![
-                    ArgKind::Identifier("a"),
-                    ArgKind::Expression(Expression {
-                        name: "inner",
-                        args: vec![ArgKind::List(vec![
-                            ArgKind::Identifier("b"),
-                            ArgKind::Expression(Expression {
-                                name: "deeper",
-                                args: vec![ArgKind::List(vec![
-                                    ArgKind::Identifier("c"),
-                                    ArgKind::Identifier("d"),
-                                ])]
-                            })
-                        ])]
-                    }),
-                    ArgKind::Identifier("e"),
-                ])]
-            }]
-        );
-    }
-
-    #[test]
-    fn triple_nested_list_command_list() {
-        let result = Parser::new("outer([inner([[a, b]])])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![ArgKind::List(vec![ArgKind::Expression(Expression {
-                    name: "inner",
-                    args: vec![ArgKind::List(vec![ArgKind::List(vec![
-                        ArgKind::Identifier("a"),
-                        ArgKind::Identifier("b"),
-                    ])])]
-                })])]
-            }]
-        );
-    }
-
-    #[test]
-    fn inner_thing() {
-        let result = Parser::new("outer(inner2([c, [d]]))").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![ArgKind::Expression(Expression {
-                    name: "inner2",
-                    args: vec![ArgKind::List(vec![
-                        ArgKind::Identifier("c"),
-                        ArgKind::List(vec![ArgKind::Identifier("d"),])
-                    ])]
-                })]
-            }]
-        );
-    }
-
-    #[test]
-    fn command_list_command_command() {
-        let result = Parser::new("outer([inner(deepest())])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![ArgKind::List(vec![ArgKind::Expression(Expression {
-                    name: "inner",
-                    args: vec![ArgKind::Expression(Expression {
-                        name: "deepest",
-                        args: vec![]
-                    })]
-                })])]
-            }]
-        );
-    }
-
-    #[test]
-    fn multiple_lists_same_level() {
-        let result = Parser::new("outer([a], [b], inner([c]))").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![
-                    ArgKind::List(vec![ArgKind::Identifier("a")]),
-                    ArgKind::List(vec![ArgKind::Identifier("b")]),
-                    ArgKind::Expression(Expression {
-                        name: "inner",
-                        args: vec![ArgKind::List(vec![ArgKind::Identifier("c")])]
-                    })
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn parallel_nested_structures() {
-        let result = Parser::new("outer([a, inner1([b])], inner2([c, [d]]))").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![
-                    ArgKind::List(vec![
-                        ArgKind::Identifier("a"),
-                        ArgKind::Expression(Expression {
-                            name: "inner1",
-                            args: vec![ArgKind::List(vec![ArgKind::Identifier("b")])]
-                        })
-                    ]),
-                    ArgKind::Expression(Expression {
-                        name: "inner2",
-                        args: vec![ArgKind::List(vec![
-                            ArgKind::Identifier("c"),
-                            ArgKind::List(vec![ArgKind::Identifier("d")])
-                        ])]
-                    })
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn command_after_list_in_command() {
-        let result = Parser::new("outer([a, b], inner())").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "outer",
-                args: vec![
-                    ArgKind::List(vec![ArgKind::Identifier("a"), ArgKind::Identifier("b"),]),
-                    ArgKind::Expression(Expression {
-                        name: "inner",
-                        args: vec![]
-                    })
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn empty_list() {
-        let result = Parser::new("data.store([])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("data"), ArgKind::List(vec![])]
-            }]
-        );
-    }
-
-    #[test]
-    fn trailing_comma_list() {
-        let result = Parser::new("data.store([1, 2,])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("data"),
-                    ArgKind::List(vec![ArgKind::Number("1"), ArgKind::Number("2"),])
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn multiple_trailing_commas() {
-        // For now allow multiple trailing commas since it's a non issue to the parser and would add complexity for little gain to handle
-        let parsed = Parser::new("data.store([1, 2,,,,,])").parse().unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgKind::Identifier("data"),
-                ArgKind::List(vec![ArgKind::Number("1"), ArgKind::Number("2")]),
-            ],
-        }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
-        assert!(parsed == expected);
-    }
-
-    #[test]
-    fn trailing_comma_command() {
-        let result = Parser::new("add(1, 2,)").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "add",
-                args: vec![ArgKind::Number("1"), ArgKind::Number("2"),]
-            }]
-        );
-    }
-
-    #[test]
-    fn chain_after_nested_expression() {
-        let result = Parser::new("outer(inner(x)).method(y)").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "method",
-                args: vec![
-                    ArgKind::Expression(Expression {
-                        name: "outer",
-                        args: vec![ArgKind::Expression(Expression {
-                            name: "inner",
-                            args: vec![ArgKind::Identifier("x")]
-                        })]
-                    }),
-                    ArgKind::Identifier("y")
-                ]
-            }]
-        );
-    }
-
-    #[test]
-    fn dot_at_start_should_error() {
-        let result = Parser::new(".store(1)").parse();
-        dbg!(&result);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn consecutive_dots_should_error() {
-        let result = Parser::new("a..b.store(1)").parse();
-        dbg!(&result);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn literal_at_top_level_should_error() {
-        let result = Parser::new("42").parse();
-        dbg!(&result);
-        assert!(result.is_ok() && result.clone().unwrap().is_empty() || result.is_err());
+                }
+            },
+        ];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn mixed_state_transitions() {
-        let result = Parser::new("a([b(c), d([e, f])])").parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "a",
-                args: vec![ArgKind::List(vec![
-                    ArgKind::Expression(Expression {
-                        name: "b",
-                        args: vec![ArgKind::Identifier("c")]
-                    }),
-                    ArgKind::Expression(Expression {
-                        name: "d",
-                        args: vec![ArgKind::List(vec![
-                            ArgKind::Identifier("e"),
-                            ArgKind::Identifier("f"),
-                        ])]
-                    })
-                ])]
-            }]
-        );
+        let parsed = Parser::new("a([b(c), d([e, f])])")
+            .parse()
+            .unwrap()
+            .to_tree_vec();
+        let expected = vec![tree! {
+            a {
+                List[
+                    Expression(b { Identifier("c"), }),
+                    Expression(d { List[Identifier("e"), Identifier("f")], }),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn map_with_mixed_content() {
-        let result = Parser::new(
+        let parsed = Parser::new(
             r#"
-                player.store([
-                name: "blah",
-                health: 100,
-                dodge: 0,
-                strength: 0
-                ])
-            "#,
+            player.store([
+            name: "blah",
+            health: 100,
+            dodge: 0,
+            strength: 0
+            ])
+        "#,
         )
-        .parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("player"),
-                    ArgKind::Map(vec![
-                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
-                        ("health", ArgKind::Number("100")),
-                        ("dodge", ArgKind::Number("0")),
-                        ("strength", ArgKind::Number("0")),
-                    ])
-                ]
-            }]
-        );
+        .parse()
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("player"),
+                Map[
+                    (name, String("blah")),
+                    (health, Number("100")),
+                    (dodge, Number("0")),
+                    (strength, Number("0")),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn map_with_list() {
-        let result = Parser::new(
+        let parsed = Parser::new(
             r#"
-                player.store([
-                name: "blah",
-                items: [x, y, z]
-                ])
-            "#,
+            player.store([
+            name: "blah",
+            items: [x, y, z]
+            ])
+        "#,
         )
-        .parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("player"),
-                    ArgKind::Map(vec![
-                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
-                        (
-                            "items",
-                            ArgKind::List(vec![
-                                ArgKind::Identifier("x"),
-                                ArgKind::Identifier("y"),
-                                ArgKind::Identifier("z"),
-                            ])
-                        ),
-                    ])
-                ]
-            }]
-        );
+        .parse()
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("player"),
+                Map[
+                    (name, String("blah")),
+                    (items, List[Identifier("x"), Identifier("y"), Identifier("z")]),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn map_inside_list_inside_map() {
-        let result = Parser::new(
+        let parsed = Parser::new(
             r#"
-                player.store([
-                name: "blah",
-                inventory: [
-                    [
-                        name: "sword",
-                        damage: 10
-                    ],
-                    [
-                        name: "shield",
-                        defense: 5
-                    ]
-                ]
-                ])
-            "#,
+            player.store([
+            name: "blah",
+            inventory: [
+                [name: "sword", damage: 10],
+                [name: "shield", defense: 5]
+            ]
+            ])
+        "#,
         )
-        .parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("player"),
-                    ArgKind::Map(vec![
-                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
-                        (
-                            "inventory",
-                            ArgKind::List(vec![
-                                ArgKind::Map(vec![
-                                    ("name", ArgKind::String(Cow::Borrowed("sword"))),
-                                    ("damage", ArgKind::Number("10")),
-                                ]),
-                                ArgKind::Map(vec![
-                                    ("name", ArgKind::String(Cow::Borrowed("shield"))),
-                                    ("defense", ArgKind::Number("5")),
-                                ]),
-                            ])
-                        ),
-                    ])
-                ]
-            }]
-        );
+        .parse()
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("player"),
+                Map[
+                    (name, String("blah")),
+                    (inventory, List[
+                        Map[(name, String("sword")), (damage, Number("10"))],
+                        Map[(name, String("shield")), (defense, Number("5"))],
+                    ]),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn map_inside_map() {
-        let result = Parser::new(
+        let parsed = Parser::new(
             r#"
-                player.store([
-                name: "blah",
-                stats: [
-                    health: 100,
-                    strength: 10
-                ]
-                ])
-            "#,
+            player.store([
+            name: "blah",
+            stats: [health: 100, strength: 10]
+            ])
+        "#,
         )
-        .parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("player"),
-                    ArgKind::Map(vec![
-                        ("name", ArgKind::String(Cow::Borrowed("blah"))),
-                        (
-                            "stats",
-                            ArgKind::Map(vec![
-                                ("health", ArgKind::Number("100")),
-                                ("strength", ArgKind::Number("10")),
-                            ])
-                        ),
-                    ])
-                ]
-            }]
-        );
+        .parse()
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("player"),
+                Map[
+                    (name, String("blah")),
+                    (stats, Map[(health, Number("100")), (strength, Number("10"))]),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn deeply_nested_maps() {
-        let result = Parser::new(
+        let parsed = Parser::new(
             r#"
-                world.store([
-                player: [
-                    name: "blah",
-                    location: [
-                        x: 0,
-                        y: 0
-                    ]
-                ]
-                ])
-            "#,
+            world.store([
+            player: [
+                name: "blah",
+                location: [x: 0, y: 0]
+            ]
+            ])
+        "#,
         )
-        .parse();
-        dbg!(&result);
-        let expressions = result.unwrap();
-        assert_eq!(
-            expressions,
-            vec![Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("world"),
-                    ArgKind::Map(vec![(
-                        "player",
-                        ArgKind::Map(vec![
-                            ("name", ArgKind::String(Cow::Borrowed("blah"))),
-                            (
-                                "location",
-                                ArgKind::Map(vec![
-                                    ("x", ArgKind::Number("0")),
-                                    ("y", ArgKind::Number("0")),
-                                ])
-                            ),
-                        ])
-                    )])
-                ]
-            }]
-        );
+        .parse()
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("world"),
+                Map[
+                    (player, Map[
+                        (name, String("blah")),
+                        (location, Map[(x, Number("0")), (y, Number("0"))]),
+                    ]),
+                ],
+            }
+        }];
+        assert!(expected == parsed)
     }
 
     #[test]
     fn map_value_is_expression() {
         let parsed = Parser::new(
             r#"
-                player.store([
-                name: get_name(),
-                health: add(50, 50)
-                ])
-            "#,
+            player.store([
+            name: get_name(),
+            health: add(50, 50)
+            ])
+        "#,
         )
         .parse()
-        .unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgKind::Identifier("player"),
-                ArgKind::Map(vec![
-                    (
-                        "name",
-                        ArgKind::Expression(Expression {
-                            name: "get_name",
-                            args: vec![],
-                        }),
-                    ),
-                    (
-                        "health",
-                        ArgKind::Expression(Expression {
-                            name: "add",
-                            args: vec![ArgKind::Number("50"), ArgKind::Number("50")],
-                        }),
-                    ),
-                ]),
-            ],
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("player"),
+                Map[
+                    (name, Expression(get_name {})),
+                    (health, Expression(add { Number("50"), Number("50"), })),
+                ],
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
-        assert_eq!(parsed, expected);
+        assert!(expected == parsed)
     }
 
     #[test]
     fn parameters() {
         let parsed = Parser::new(
-            r#"
-            C_MODS.store(0)
-            P_MOD.store(0)
-            P_DUR.store(1)
-            attacker_mods.store([])
-            attacker.store([attacker_mods])
-            potion.store([1, 1])
-            mods.store([])
-            add_potion_modifier.def(potion,
-			    mods.store(attacker.index(C_MODS).clone())
-			    mods.push([potion.index(P_MOD).clone(), potion.index(P_DUR).clone()])
-			    attacker.index(C_MODS).store(mods.clone())
-            )
-            add_potion_modifier([50, 3])
-			print("potion: [1, 1]\n", concat("mods: ", mods, "\nattacker_mods: ", attacker.index(C_MODS)))
-            "#,
+        r#"
+        C_MODS.store(0)
+        P_MOD.store(0)
+        P_DUR.store(1)
+        attacker_mods.store([])
+        attacker.store([attacker_mods])
+        potion.store([1, 1])
+        mods.store([])
+        add_potion_modifier.def(potion,
+            mods.store(attacker.index(C_MODS).clone())
+            mods.push([potion.index(P_MOD).clone(), potion.index(P_DUR).clone()])
+            attacker.index(C_MODS).store(mods.clone())
         )
-        .parse()
-        .unwrap();
+        add_potion_modifier([50, 3])
+        print("potion: [1, 1]\n", concat("mods: ", mods, "\nattacker_mods: ", attacker.index(C_MODS)))
+        "#,
+    ).parse().unwrap().to_tree_vec();
         let expected = vec![
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("C_MODS"), ArgKind::Number("0")],
-            },
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("P_MOD"), ArgKind::Number("0")],
-            },
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("P_DUR"), ArgKind::Number("1")],
-            },
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("attacker_mods"), ArgKind::List(vec![])],
-            },
-            Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("attacker"),
-                    ArgKind::List(vec![ArgKind::Identifier("attacker_mods")]),
-                ],
-            },
-            Expression {
-                name: "store",
-                args: vec![
-                    ArgKind::Identifier("potion"),
-                    ArgKind::List(vec![ArgKind::Number("1"), ArgKind::Number("1")]),
-                ],
-            },
-            Expression {
-                name: "store",
-                args: vec![ArgKind::Identifier("mods"), ArgKind::List(vec![])],
-            },
-            Expression {
-                name: "def",
-                args: vec![
-                    ArgKind::Identifier("add_potion_modifier"),
-                    ArgKind::Identifier("potion"),
-                    ArgKind::Expression(Expression {
-                        name: "store",
-                        args: vec![
-                            ArgKind::Identifier("mods"),
-                            ArgKind::Expression(Expression {
-                                name: "clone",
-                                args: vec![ArgKind::Expression(Expression {
-                                    name: "index",
-                                    args: vec![
-                                        ArgKind::Identifier("attacker"),
-                                        ArgKind::Identifier("C_MODS"),
-                                    ],
-                                })],
+            tree! { store { Identifier("C_MODS"), Number("0"), } },
+            tree! { store { Identifier("P_MOD"), Number("0"), } },
+            tree! { store { Identifier("P_DUR"), Number("1"), } },
+            tree! { store { Identifier("attacker_mods"), List[], } },
+            tree! { store { Identifier("attacker"), List[Identifier("attacker_mods")], } },
+            tree! { store { Identifier("potion"), List[Number("1"), Number("1")], } },
+            tree! { store { Identifier("mods"), List[], } },
+            tree! {
+                def {
+                    Identifier("add_potion_modifier"),
+                    Identifier("potion"),
+                    Expression(store {
+                        Identifier("mods"),
+                        Expression(clone {
+                            Expression(index { Identifier("attacker"), Identifier("C_MODS"), }),
+                        }),
+                    }),
+                    Expression(push {
+                        Identifier("mods"),
+                        List[
+                            Expression(clone {
+                                Expression(index { Identifier("potion"), Identifier("P_MOD"), }),
+                            }),
+                            Expression(clone {
+                                Expression(index { Identifier("potion"), Identifier("P_DUR"), }),
                             }),
                         ],
                     }),
-                    ArgKind::Expression(Expression {
-                        name: "push",
-                        args: vec![
-                            ArgKind::Identifier("mods"),
-                            ArgKind::List(vec![
-                                ArgKind::Expression(Expression {
-                                    name: "clone",
-                                    args: vec![ArgKind::Expression(Expression {
-                                        name: "index",
-                                        args: vec![
-                                            ArgKind::Identifier("potion"),
-                                            ArgKind::Identifier("P_MOD"),
-                                        ],
-                                    })],
-                                }),
-                                ArgKind::Expression(Expression {
-                                    name: "clone",
-                                    args: vec![ArgKind::Expression(Expression {
-                                        name: "index",
-                                        args: vec![
-                                            ArgKind::Identifier("potion"),
-                                            ArgKind::Identifier("P_DUR"),
-                                        ],
-                                    })],
-                                }),
-                            ]),
-                        ],
+                    Expression(store {
+                        Expression(index { Identifier("attacker"), Identifier("C_MODS"), }),
+                        Expression(clone { Identifier("mods"), }),
                     }),
-                    ArgKind::Expression(Expression {
-                        name: "store",
-                        args: vec![
-                            ArgKind::Expression(Expression {
-                                name: "index",
-                                args: vec![
-                                    ArgKind::Identifier("attacker"),
-                                    ArgKind::Identifier("C_MODS"),
-                                ],
-                            }),
-                            ArgKind::Expression(Expression {
-                                name: "clone",
-                                args: vec![ArgKind::Identifier("mods")],
-                            }),
-                        ],
-                    }),
-                ],
+                }
             },
-            Expression {
-                name: "add_potion_modifier",
-                args: vec![ArgKind::List(vec![
-                    ArgKind::Number("50"),
-                    ArgKind::Number("3"),
-                ])],
-            },
-            Expression {
-                name: "print",
-                args: vec![
-                    ArgKind::String(Cow::Borrowed("potion: [1, 1]\n")),
-                    ArgKind::Expression(Expression {
-                        name: "concat",
-                        args: vec![
-                            ArgKind::String(Cow::Borrowed("mods: ")),
-                            ArgKind::Identifier("mods"),
-                            ArgKind::String(Cow::Borrowed("\nattacker_mods: ")),
-                            ArgKind::Expression(Expression {
-                                name: "index",
-                                args: vec![
-                                    ArgKind::Identifier("attacker"),
-                                    ArgKind::Identifier("C_MODS"),
-                                ],
-                            }),
-                        ],
+            tree! { add_potion_modifier { List[Number("50"), Number("3")], } },
+            tree! {
+                print {
+                    String("potion: [1, 1]\n"),
+                    Expression(concat {
+                        String("mods: "),
+                        Identifier("mods"),
+                        String("\nattacker_mods: "),
+                        Expression(index { Identifier("attacker"), Identifier("C_MODS"), }),
                     }),
-                ],
+                }
             },
         ];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    fn mixed_list_and_map_is_error() {
-        let result = Parser::new(
-            r#"
-            player.store([
-                "blah",
-                name: "blah"
-            ])
-        "#,
-        )
-        .parse();
-        dbg!(&result);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn key_without_value_is_error() {
-        let result = Parser::new(
-            r#"
-            player.store([
-                name: "blah",
-                weapon:
-            ])
-        "#,
-        )
-        .parse();
-        dbg!(&result);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn comma_outside_of_container() {
-        let result = Parser::new(
-            r#"
-            print("invalid"),
-            print("comma")
-            "#,
-        )
-        .parse();
-        dbg!(&result);
-        assert!(result.is_err());
+        assert!(expected == parsed)
     }
 
     #[test]
     fn map_dot_arg() {
         let parsed = Parser::new(
             r#"
-            player.store([
-                name: "blah",
-                weapon: "big".uppercase().concat(" ", "sword")
-            ])
-        "#,
+        player.store([
+            name: "blah",
+            weapon: "big".uppercase().concat(" ", "sword")
+        ])
+    "#,
         )
         .parse()
-        .unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgKind::Identifier("player"),
-                ArgKind::Map(vec![
-                    ("name", ArgKind::String("blah".into())),
-                    (
-                        "weapon",
-                        ArgKind::Expression(Expression {
-                            name: "concat",
-                            args: vec![
-                                ArgKind::Expression(Expression {
-                                    name: "uppercase",
-                                    args: vec![ArgKind::String("big".into())],
-                                }),
-                                ArgKind::String(" ".into()),
-                                ArgKind::String("sword".into()),
-                            ],
-                        }),
-                    ),
-                ]),
-            ],
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("player"),
+                Map[
+                    (name, String("blah")),
+                    (weapon, Expression(concat {
+                        Expression(uppercase { String("big"), }),
+                        String(" "),
+                        String("sword"),
+                    })),
+                ],
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
-        assert!(parsed == expected);
+        assert!(expected == parsed)
     }
 
     #[test]
     fn map_dot_arg_with_trailing_commas() {
         let parsed = Parser::new(
             r#"
-            player.store([
-                name: "blah",
-                weapon: "big".uppercase().concat(" ", "sword"),
-            ],)
-        "#,
+        player.store([
+            name: "blah",
+            weapon: "big".uppercase().concat(" ", "sword"),
+        ],)
+    "#,
         )
         .parse()
-        .unwrap();
-        let expected = vec![Expression {
-            name: "store",
-            args: vec![
-                ArgKind::Identifier("player"),
-                ArgKind::Map(vec![
-                    ("name", ArgKind::String("blah".into())),
-                    (
-                        "weapon",
-                        ArgKind::Expression(Expression {
-                            name: "concat",
-                            args: vec![
-                                ArgKind::Expression(Expression {
-                                    name: "uppercase",
-                                    args: vec![ArgKind::String("big".into())],
-                                }),
-                                ArgKind::String(" ".into()),
-                                ArgKind::String("sword".into()),
-                            ],
-                        }),
-                    ),
-                ]),
-            ],
+        .unwrap()
+        .to_tree_vec();
+        let expected = vec![tree! {
+            store {
+                Identifier("player"),
+                Map[
+                    (name, String("blah")),
+                    (weapon, Expression(concat {
+                        Expression(uppercase { String("big"), }),
+                        String(" "),
+                        String("sword"),
+                    })),
+                ],
+            }
         }];
-        println!("==GOT==\n");
-        dbg!(&parsed);
-        println!("==EXPECTED==\n");
-        dbg!(&expected);
-        assert!(parsed == expected);
+        assert!(expected == parsed)
     }
-    */
 }
