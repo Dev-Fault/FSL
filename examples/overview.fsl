@@ -131,6 +131,12 @@ while(true,
 # While loops take a condition as their starting argument and run the code after until the condition is false
 # or a break statement is reached
 
+# You can also use continue() to skip iterations
+repeat(10,
+	continue()
+	say("This wont say anything because it got skipped!")
+)
+
 # Conditional statements
 
 if(add(1, 1).eq(2),
@@ -241,7 +247,6 @@ several different
 things
 *
 
-
 create_vector.def(x, y, z,
 	# Commands will automatically return the result of their last command
 	# But we can use return() to make it explicit or to exit the command early
@@ -309,3 +314,19 @@ say(thing) # output: old thing
 # This still outputs "old thing" because we created a copy of thing before sending it
 # The command updated the copy without affecting the original variable
 
+# FSL also supports recursion
+
+recurse.def(n,
+	n.inc()
+	if(n.lt(10), # Recurse until n is equal to 10
+		then(
+			say(n)
+			recurse(n)
+		)
+	)
+	return(n)
+)
+
+n.store(0)
+
+say(recurse(n)) # output: 10
