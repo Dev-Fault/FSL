@@ -3,13 +3,18 @@ use std::{
     borrow::Cow,
     collections::VecDeque,
     ops::Range,
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use futures::future::BoxFuture;
+use tokio::sync::Mutex;
 
 use crate::{
     InterpreterData,
+    data::UserDefinitions,
     error::CommandError,
     types::{FslType, value::Value},
 };
@@ -73,13 +78,13 @@ impl Handler {
 }
 
 #[derive(Clone)]
-pub struct CommandDefinition {
+pub struct CommandDef {
     label: &'static str,
     arg_rules: &'static [ArgRule],
     handler: Handler,
 }
 
-impl fmt::Debug for CommandDefinition {
+impl fmt::Debug for CommandDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Command")
             .field("label", &self.label)
@@ -87,7 +92,7 @@ impl fmt::Debug for CommandDefinition {
     }
 }
 
-impl CommandDefinition {
+impl CommandDef {
     pub fn new(label: &'static str, arg_rules: &'static [ArgRule], handler: Handler) -> Self {
         Self {
             label,
@@ -104,8 +109,8 @@ pub struct Command<'c> {
     handler: Handler,
 }
 
-impl<'c> From<&CommandDefinition> for Command<'c> {
-    fn from(value: &CommandDefinition) -> Self {
+impl<'c> From<&CommandDef> for Command<'c> {
+    fn from(value: &CommandDef) -> Self {
         Self {
             label: value.label,
             arg_rules: value.arg_rules,
@@ -318,31 +323,32 @@ impl<'c> Clone for Command<'c> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct UserCommand<'c> {
+#[derive(Debug, Default)]
+pub struct UserDef<'c> {
     pub label: Cow<'c, str>,
-    pub parameters: VecDeque<Cow<'c, str>>,
-    pub commands: Vec<Command<'c>>,
+    pub parameters: Mutex<VecDeque<Cow<'c, str>>>,
+    pub commands: Mutex<Vec<Command<'c>>>,
+    pub local_defs: Arc<Mutex<UserDefinitions<'c>>>,
+    is_defined: AtomicBool,
 }
 
-impl<'c> UserCommand<'c> {
+impl<'c> UserDef<'c> {
     pub fn declaration(label: Cow<'c, str>) -> Self {
         Self {
             label,
-            parameters: VecDeque::new(),
-            commands: Vec::new(),
+            ..Default::default()
         }
     }
 
-    pub fn definition(
-        label: Cow<'c, str>,
-        parameters: VecDeque<Cow<'c, str>>,
-        commands: Vec<Command<'c>>,
-    ) -> Self {
-        Self {
-            label,
-            parameters,
-            commands,
-        }
+    pub async fn define(&self, parameters: VecDeque<Cow<'c, str>>, commands: Vec<Command<'c>>) {
+        let mut old_parameters = self.parameters.lock().await;
+        *old_parameters = parameters;
+        let mut old_commands = self.commands.lock().await;
+        *old_commands = commands;
+        self.is_defined.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.is_defined.load(Ordering::Relaxed)
     }
 }

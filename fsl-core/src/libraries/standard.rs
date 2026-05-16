@@ -16,7 +16,7 @@ use crate::{
     register_command,
     types::{
         FslType,
-        command::{ArgPos, ArgRule, Command, Handler, UserCommand},
+        command::{ArgPos, ArgRule, Command, Handler},
         value::{FslMap, Value},
     },
     vars::VarEntry,
@@ -2404,9 +2404,12 @@ pub async fn def<'c>(
         }
     }
 
-    let mut user_commands = data.user_commands.lock().await;
-    let user_command = UserCommand::definition(label.clone(), parameters, commands);
-    user_commands.insert(label, user_command);
+    let def = data
+        .find_user_def(&label)
+        .await
+        .expect("definitions should be pre declared");
+
+    def.define(parameters, commands).await;
 
     Ok(Value::None)
 }
@@ -2445,15 +2448,21 @@ pub async fn run<'c>(
 
     let command_label = values.pop_front().unwrap().get_var_label()?;
 
-    let commands_lock = data.user_commands.lock().await;
+    {
+        let mut call_stack = data.user_call_stack.lock().await;
+        call_stack.push(command_label.clone());
+    }
 
-    let mut parameter_labels = commands_lock
-        .get(&command_label)
-        .unwrap()
-        .parameters
-        .clone();
-    let commands = commands_lock.get(&command_label).unwrap().commands.clone();
-    drop(commands_lock);
+    let (mut parameter_labels, commands) = {
+        let def = data
+            .find_user_def(&command_label)
+            .await
+            .expect("command should be defined");
+
+        let parameter_labels = def.parameters.lock().await.clone();
+        let commands = def.commands.lock().await.clone();
+        (parameter_labels, commands)
+    };
 
     if values.len() != parameter_labels.len() {
         return Err(CommandError::WrongArgCount(format!(
@@ -2491,6 +2500,11 @@ pub async fn run<'c>(
         }
     }
     data.vars.pop();
+
+    {
+        let mut call_stack = data.user_call_stack.lock().await;
+        call_stack.pop();
+    }
 
     Ok(final_value)
 }

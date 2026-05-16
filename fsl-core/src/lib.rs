@@ -4,10 +4,11 @@ use std::{
     sync::Arc,
 };
 
+use async_recursion::async_recursion;
 use futures::FutureExt;
 
 use crate::{
-    data::{InterpreterData, UserCommands},
+    data::{InterpreterData, UserDefinitions},
     error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
     libraries::{
         Library,
@@ -17,7 +18,7 @@ use crate::{
     },
     parser::{Arg, ArgKind, Expression, Parser},
     types::{
-        command::{ArgRule, Command, CommandDefinition, Handler, UserCommand},
+        command::{ArgRule, Command, CommandDef, Handler, UserDef},
         value::{Value, ValueResult},
     },
 };
@@ -30,7 +31,7 @@ mod parser;
 pub mod types;
 mod vars;
 
-pub type CommandDefinitions = HashMap<&'static str, CommandDefinition>;
+pub type CommandDefinitions = HashMap<&'static str, CommandDef>;
 
 #[derive(Debug)]
 pub struct FslInterpreter {
@@ -71,7 +72,7 @@ impl FslInterpreter {
     /// Register command to interpreter allowing it to execute it, overwrites commands with same name if they exist
     pub fn register(&mut self, label: &'static str, rules: &'static [ArgRule], executor: Handler) {
         self.command_definitions
-            .insert(label, CommandDefinition::new(label, rules, executor));
+            .insert(label, CommandDef::new(label, rules, executor));
     }
 
     pub fn register_library(&mut self, library: Library) {
@@ -170,38 +171,95 @@ impl FslInterpreter {
         Ok(output)
     }
 
-    fn forward_declare_defs<'c>(expression: &Expression<'c>, user_commands: &mut UserCommands<'c>) {
+    #[async_recursion]
+    async fn forward_declare_defs<'c>(
+        expression: &Expression<'c>,
+        user_defs: &mut UserDefinitions<'c>,
+    ) {
         if expression.name.as_str() == DEF {
             if let Some(label) = expression.args.get(0) {
                 let label = Cow::Borrowed(label.token.as_str());
-                user_commands.insert(label.clone(), UserCommand::declaration(label));
+                let def = Arc::new(UserDef::declaration(label.clone()));
+                for arg in &expression.args {
+                    if let ArgKind::Expression(inner) = &arg.kind {
+                        let mut user_defs = def.local_defs.lock().await;
+                        Self::forward_declare_defs(inner, &mut user_defs).await;
+                    }
+                }
+                user_defs.insert(label, def);
             }
-        }
-        for arg in &expression.args {
-            if let ArgKind::Expression(inner) = &arg.kind {
-                Self::forward_declare_defs(inner, user_commands);
+        } else {
+            for arg in &expression.args {
+                if let ArgKind::Expression(inner) = &arg.kind {
+                    Self::forward_declare_defs(inner, user_defs).await;
+                }
             }
         }
     }
 
+    #[async_recursion]
+    async fn execute_defs<'c, 'd: 'c, 'e>(
+        data: Arc<InterpreterData<'c>>,
+        defs: &'d CommandDefinitions,
+        expressions: &'e Vec<Expression<'c>>,
+    ) -> Result<(), InterpreterError> {
+        for expression in expressions {
+            if expression.name.as_str() == DEF {
+                {
+                    let mut call_stack = data.user_call_stack.lock().await;
+                    let def_label = match expression.args.get(0) {
+                        Some(label) => label.token.as_str(),
+                        None => {
+                            return Err(InterpreterErrorType::Command(
+                                CommandError::InvalidArgument(format!(
+                                    "def command missing label on line {}:\n{}",
+                                    expression.start.line_number(),
+                                    expression.start.line()
+                                )),
+                            )
+                            .into());
+                        }
+                    };
+                    call_stack.push(Cow::Borrowed(def_label));
+                }
+            }
+            for arg in &expression.args {
+                if let ArgKind::Expression(inner) = &arg.kind {
+                    Self::execute_defs(data.clone(), defs, &vec![inner.clone()]).await?;
+                }
+            }
+            if expression.name.as_str() == DEF {
+                Self::interpret_command(data.clone(), defs, expression.clone()).await?;
+                data.user_call_stack.lock().await.pop();
+            }
+        }
+        Ok(())
+    }
+
     async fn execute_expressions<'c, 'd: 'c>(
         data: Arc<InterpreterData<'c>>,
-        command_definitions: &'d CommandDefinitions,
+        defs: &'d CommandDefinitions,
         source: &'c str,
     ) -> Result<String, InterpreterError> {
-        let expressions = Parser::new(source).filter_parse(&[DEF])?;
+        let expressions = Parser::new(source).parse()?;
 
-        for expression in expressions.filtered {
+        for expression in &expressions {
             {
-                let mut user_commands = data.user_commands.lock().await;
-                Self::forward_declare_defs(&expression, &mut user_commands);
+                let mut user_commands = data.user_defs.lock().await;
+                Self::forward_declare_defs(&expression, &mut user_commands).await;
             }
-            Self::interpret_command(data.clone(), command_definitions, expression).await?;
         }
 
-        for expression in expressions.unfiltered {
-            let result =
-                Self::interpret_command(data.clone(), command_definitions, expression).await;
+        dbg!(&data.user_defs);
+
+        Self::execute_defs(data.clone(), defs, &expressions).await?;
+
+        dbg!("FINISHED EXECUTING DEF EXPRESSIONS");
+        dbg!(&data.call_stack);
+
+        // TODO not working because we are recalling defs
+        for expression in expressions {
+            let result = Self::interpret_command(data.clone(), defs, expression).await;
             if let Err(e) = result {
                 match e.error_type == InterpreterErrorType::Exit {
                     true => break,
@@ -216,10 +274,10 @@ impl FslInterpreter {
 
     async fn interpret_command<'c, 'd: 'c>(
         data: Arc<InterpreterData<'c>>,
-        command_definitions: &'d CommandDefinitions,
+        defs: &'d CommandDefinitions,
         expression: Expression<'c>,
     ) -> Result<(), InterpreterError> {
-        let result = Self::process_expression(data.clone(), command_definitions, expression).await;
+        let result = Self::process_expression(data.clone(), defs, expression).await;
         match result {
             Ok(value) => match value {
                 Value::Command(command) => match command.execute(data.clone()).await {
@@ -235,7 +293,7 @@ impl FslInterpreter {
                     }
                 },
                 _ => {
-                    unreachable!("parse expression should always return a command")
+                    //unreachable!("parse expression should always return a command")
                 }
             },
             Err(e) => {
@@ -250,31 +308,39 @@ impl FslInterpreter {
 
     async fn process_expression<'c, 'd: 'c>(
         data: Arc<InterpreterData<'c>>,
-        command_definitions: &'d CommandDefinitions,
+        defs: &'d CommandDefinitions,
         expression: Expression<'c>,
     ) -> Result<Value<'c>, InterpreterError> {
-        let command_def = command_definitions.get(expression.name.as_str());
-        if let Some(command_def) = command_def {
-            let mut command = Command::from(command_def);
+        if expression.name.as_str() == DEF {
+            if let Some(label) = expression.args.get(0) {
+                let user_defs = data.user_defs.lock().await;
+                if let Some(def) = user_defs.get(label.token.as_str()) {
+                    if def.is_defined() {
+                        dbg!("SKIPPING DEF");
+                        return Ok(Value::None);
+                    }
+                }
+            }
+        }
+
+        let def = defs.get(expression.name.as_str());
+
+        if let Some(def) = def {
+            let mut command = Command::from(def);
 
             let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
 
             for arg in expression.args {
-                args.push_back(Self::process_arg(data.clone(), command_definitions, arg).await?);
+                args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
             }
 
             command.set_args(args);
 
             Ok(Value::from_command(command))
         } else {
-            let user_command_label = {
-                let user_commands = data.user_commands.lock().await;
-                user_commands
-                    .get(expression.name.as_str())
-                    .map(|uc| uc.label.clone())
-            };
+            let user_def = data.find_user_def(expression.name.as_str()).await;
 
-            if let Some(label) = user_command_label {
+            if let Some(def) = user_def {
                 let mut command = Command::new(
                     expression.name.as_str(),
                     RUN_RULES,
@@ -282,12 +348,10 @@ impl FslInterpreter {
                 );
 
                 let mut args = VecDeque::new();
-                args.push_back(Value::Var(label));
+                args.push_back(Value::Var(def.label.clone()));
 
                 for arg in expression.args {
-                    args.push_back(
-                        Self::process_arg(data.clone(), command_definitions, arg).await?,
-                    );
+                    args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
                 }
 
                 command.set_args(args);
@@ -305,7 +369,7 @@ impl FslInterpreter {
 
     fn process_arg<'c, 'd: 'c>(
         data: Arc<InterpreterData<'c>>,
-        command_definitions: &'d CommandDefinitions,
+        defs: &'d CommandDefinitions,
         arg: Arg<'c>,
     ) -> ValueResult<'c, Value<'c>, InterpreterError> {
         Box::pin(async {
@@ -344,8 +408,7 @@ impl FslInterpreter {
                 ArgKind::List(args) => {
                     let mut list: Vec<Value> = vec![];
                     for arg in args.data {
-                        let parsed_arg =
-                            Self::process_arg(data.clone(), command_definitions, arg).await?;
+                        let parsed_arg = Self::process_arg(data.clone(), defs, arg).await?;
                         list.push(parsed_arg);
                     }
                     Ok(Value::List(list))
@@ -356,14 +419,14 @@ impl FslInterpreter {
                     for (key, value) in map.data {
                         value_map.insert(
                             key.as_str().into(),
-                            Self::process_arg(data.clone(), command_definitions, value).await?,
+                            Self::process_arg(data.clone(), defs, value).await?,
                         );
                     }
 
                     Ok(Value::Map(value_map))
                 }
                 ArgKind::Expression(expression) => {
-                    Ok(Self::process_expression(data, command_definitions, expression).await?)
+                    Ok(Self::process_expression(data, defs, expression).await?)
                 }
             }
         })
@@ -1917,6 +1980,24 @@ mod interpreter {
     }
 
     #[tokio::test]
+    async fn out_of_order_def_nested() {
+        test_interpreter(
+            r#"
+            if(true,
+                then(
+                    test(true)
+                    test.def(bool,
+                        print(bool)
+                    )
+                )
+            )
+            "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn basic_recursion() {
         test_interpreter(
             r#"
@@ -1984,6 +2065,195 @@ mod interpreter {
             print(outer())
             "#,
             "6",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inner_inner_def_double() {
+        test_interpreter(
+            r#"
+            outer.def(
+            	n.store(1)
+            	inner.def(x,
+            		x.inc()
+            		x.inc()
+            		x.inc()
+            		inner_inner.def(y,
+            		    y.inc()
+            		    y.inc()
+            		)
+            		inner_inner(x)
+            	)
+            	inner(n)
+            	return(n)
+            )
+            
+            print(outer())
+
+            outer2.def(
+            	n.store(1)
+            	inner2.def(x,
+            		x.inc()
+            		x.inc()
+            		x.inc()
+            		inner_inner2.def(y,
+            		    y.inc()
+            		    y.inc()
+            		)
+            		inner_inner2(x)
+            	)
+            	inner2(n)
+            	return(n)
+            )
+            
+            print(outer2())
+            "#,
+            "66",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inner_def_recursion() {
+        test_interpreter(
+            r#"
+            outer.def(
+                n.store(0)
+                inner.def(x,
+                    x.inc()
+                    if(not(x.eq(5))
+                        then(
+                            inner(x)
+                        )
+                    )
+                    return(x)
+                )
+                return(inner(n))
+            )
+            print(outer())
+            "#,
+            "5",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn inner_inner_def_recursion() {
+        test_interpreter(
+            r#"
+        outer.def(
+            n.store(0)
+            inner.def(x,
+                inner_inner.def(y,
+                    y.inc()
+                    if(not(y.eq(3))
+                        then(
+                            inner_inner(y)
+                        )
+                    )
+                    return(y)
+                )
+                return(inner_inner(x))
+            )
+            return(inner(n))
+        )
+        print(outer())
+        "#,
+            "3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn out_of_order_defs() {
+        test_interpreter(
+            r#"
+        outer.def(
+            return(inner())
+        )
+        inner.def(
+            return(1)
+        )
+        print(outer())
+        "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn out_of_order_inner_defs() {
+        test_interpreter(
+            r#"
+        outer.def(
+            inner.def(x,
+                return(deep(x))
+            )
+            deep.def(x,
+                x.inc()
+                return(x)
+            )
+            n.store(0)
+            return(inner(n))
+        )
+        print(outer())
+        "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn multiple_outer_defs_isolated_inners() {
+        test_interpreter(
+            r#"
+        a.def(
+            helper.def(x,
+                x.inc()
+                return(x)
+            )
+            n.store(1)
+            return(helper(n))
+        )
+        b.def(
+            helper.def(x,
+                x.inc()
+                x.inc()
+                return(x)
+            )
+            n.store(1)
+            return(helper(n))
+        )
+        print(a())
+        print(b())
+        "#,
+            "23",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn recursive_outer_with_inner() {
+        test_interpreter(
+            r#"
+        outer.def(n,
+            inner.def(x,
+                x.inc()
+                return(x)
+            )
+            n.store(inner(n))
+            if(not(n.eq(5))
+                then(
+                    outer(n)
+                )
+            )
+            return(n)
+        )
+        n.store(0)
+        print(outer(n))
+        "#,
+            "5",
         )
         .await;
     }

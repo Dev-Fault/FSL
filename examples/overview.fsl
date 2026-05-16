@@ -330,3 +330,42 @@ recurse.def(n,
 n.store(0)
 
 say(recurse(n)) # output: 10
+
+# Commands can have local commands defined inside themselves
+
+outer.def(
+	inner.def(
+		say("Inside outer!")
+	)
+	inner()
+)
+outer() # output: Inside outer!
+
+# Commands can also be conditionally defined
+# You must declare the command upfront before doing so, but only the name the contents can change
+
+run.def()
+os.const("bsd")
+switch(os,
+	case("linux",
+		run.def(
+			say("Code to run when on linux")
+		)
+	)
+	case("windows",
+		run.def(
+			say("Code to run when on windows")
+		)
+	)
+	case("mac",
+		run.def(
+			say("Code to run when on case")
+		)
+	)
+	fallback(
+		run.def(
+			say(os, " is not supported at this time")
+		)
+	)
+)
+run() # output: bsd is not supported at thsi time

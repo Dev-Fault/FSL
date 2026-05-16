@@ -14,11 +14,11 @@ use tokio::sync::Mutex;
 
 use crate::{
     error::{CommandError, ValueError},
-    types::{command::UserCommand, value::Value},
+    types::{command::UserDef, value::Value},
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
 
-pub type UserCommands<'c> = HashMap<Cow<'c, str>, UserCommand<'c>>;
+pub type UserDefinitions<'c> = HashMap<Cow<'c, str>, Arc<UserDef<'c>>>;
 
 #[derive(Debug, Default)]
 pub struct MemoryLimit {
@@ -118,12 +118,13 @@ impl InterpreterLimits {
 #[derive(Debug, Default)]
 pub struct InterpreterData<'c> {
     pub call_stack: Mutex<Vec<&'c str>>,
+    pub user_call_stack: Mutex<Vec<Cow<'c, str>>>,
 
     pub args: Arc<Mutex<Vec<Value<'static>>>>,
     pub output: Mutex<String>,
 
     pub vars: VarStack<'c>,
-    pub user_commands: Mutex<UserCommands<'c>>,
+    pub user_defs: Arc<Mutex<UserDefinitions<'c>>>,
 
     pub loop_depth: AtomicUsize,
     pub total_loops: AtomicUsize,
@@ -206,5 +207,35 @@ impl<'c> InterpreterData<'c> {
             }
         }
         output
+    }
+
+    pub async fn find_user_def(&self, label: &str) -> Option<Arc<UserDef<'c>>> {
+        let root = self.user_defs.clone();
+        let call_stack = self.user_call_stack.lock().await;
+        dbg!(&call_stack);
+
+        let mut levels = vec![root.clone()];
+        let mut current = root.clone();
+
+        for call in call_stack.iter() {
+            let mut defs = None;
+            match current.lock().await.get(call) {
+                Some(def) => {
+                    defs = Some(def.local_defs.clone());
+                }
+                None => break,
+            }
+            if let Some(defs) = defs {
+                current = defs.clone();
+                levels.push(defs);
+            }
+        }
+
+        for level in levels.iter().rev() {
+            if let Some(def) = level.lock().await.get(label).cloned() {
+                return Some(def);
+            }
+        }
+        None
     }
 }
