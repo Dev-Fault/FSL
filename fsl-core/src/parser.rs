@@ -720,6 +720,15 @@ pub struct ParseFilter<'c> {
     pub unfiltered: Vec<Expression<'c>>,
 }
 
+impl<'c> ParseFilter<'c> {
+    pub fn all(
+        &self,
+    ) -> std::iter::Chain<std::slice::Iter<'_, Expression<'c>>, std::slice::Iter<'_, Expression<'c>>>
+    {
+        self.unfiltered.iter().chain(self.filtered.iter())
+    }
+}
+
 fn parse_string(s: &'_ str) -> Cow<'_, str> {
     if !s.contains('\\') {
         Cow::Borrowed(s)

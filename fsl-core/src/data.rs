@@ -212,7 +212,6 @@ impl<'c> InterpreterData<'c> {
     pub async fn find_user_def(&self, label: &str) -> Option<Arc<UserDef<'c>>> {
         let root = self.user_defs.clone();
         let call_stack = self.user_call_stack.lock().await;
-        dbg!(&call_stack);
 
         let mut levels = vec![root.clone()];
         let mut current = root.clone();

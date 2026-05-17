@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 use async_recursion::async_recursion;
@@ -198,40 +198,37 @@ impl FslInterpreter {
     }
 
     #[async_recursion]
-    async fn execute_defs<'c, 'd: 'c, 'e>(
+    async fn execute_def<'c, 'd: 'c, 'e>(
         data: Arc<InterpreterData<'c>>,
         defs: &'d CommandDefinitions,
-        expressions: &'e Vec<Expression<'c>>,
+        expression: &'e Expression<'c>,
     ) -> Result<(), InterpreterError> {
-        for expression in expressions {
-            if expression.name.as_str() == DEF {
-                {
-                    let mut call_stack = data.user_call_stack.lock().await;
-                    let def_label = match expression.args.get(0) {
-                        Some(label) => label.token.as_str(),
-                        None => {
-                            return Err(InterpreterErrorType::Command(
-                                CommandError::InvalidArgument(format!(
-                                    "def command missing label on line {}:\n{}",
-                                    expression.start.line_number(),
-                                    expression.start.line()
-                                )),
-                            )
-                            .into());
-                        }
-                    };
-                    call_stack.push(Cow::Borrowed(def_label));
-                }
+        if expression.name.as_str() == DEF {
+            {
+                let mut call_stack = data.user_call_stack.lock().await;
+                let def_label = match expression.args.get(0) {
+                    Some(label) => label.token.as_str(),
+                    None => {
+                        return Err(InterpreterErrorType::Command(CommandError::InvalidArgument(
+                            format!(
+                                "def command missing label on line {}:\n{}",
+                                expression.start.line_number(),
+                                expression.start.line()
+                            ),
+                        ))
+                        .into());
+                    }
+                };
+                call_stack.push(Cow::Borrowed(def_label));
             }
-            for arg in &expression.args {
-                if let ArgKind::Expression(inner) = &arg.kind {
-                    Self::execute_defs(data.clone(), defs, &vec![inner.clone()]).await?;
-                }
+        }
+        for arg in &expression.args {
+            if let ArgKind::Expression(inner) = &arg.kind {
+                Self::execute_def(data.clone(), defs, &inner).await?;
             }
-            if expression.name.as_str() == DEF {
-                Self::interpret_command(data.clone(), defs, expression.clone()).await?;
-                data.user_call_stack.lock().await.pop();
-            }
+        }
+        if expression.name.as_str() == DEF {
+            Self::interpret_command(data.clone(), defs, expression.clone()).await?;
         }
         Ok(())
     }
@@ -241,24 +238,19 @@ impl FslInterpreter {
         defs: &'d CommandDefinitions,
         source: &'c str,
     ) -> Result<String, InterpreterError> {
-        let expressions = Parser::new(source).parse()?;
+        let expressions = Parser::new(source).filter_parse(&[DEF])?;
 
-        for expression in &expressions {
-            {
-                let mut user_commands = data.user_defs.lock().await;
-                Self::forward_declare_defs(&expression, &mut user_commands).await;
-            }
+        for expression in expressions.all() {
+            let mut user_commands = data.user_defs.lock().await;
+            Self::forward_declare_defs(&expression, &mut user_commands).await;
         }
 
-        dbg!(&data.user_defs);
+        for expression in expressions.all() {
+            Self::execute_def(data.clone(), defs, &expression).await?;
+            data.user_call_stack.lock().await.clear();
+        }
 
-        Self::execute_defs(data.clone(), defs, &expressions).await?;
-
-        dbg!("FINISHED EXECUTING DEF EXPRESSIONS");
-        dbg!(&data.call_stack);
-
-        // TODO not working because we are recalling defs
-        for expression in expressions {
+        for expression in expressions.unfiltered {
             let result = Self::interpret_command(data.clone(), defs, expression).await;
             if let Err(e) = result {
                 match e.error_type == InterpreterErrorType::Exit {
@@ -311,18 +303,6 @@ impl FslInterpreter {
         defs: &'d CommandDefinitions,
         expression: Expression<'c>,
     ) -> Result<Value<'c>, InterpreterError> {
-        if expression.name.as_str() == DEF {
-            if let Some(label) = expression.args.get(0) {
-                let user_defs = data.user_defs.lock().await;
-                if let Some(def) = user_defs.get(label.token.as_str()) {
-                    if def.is_defined() {
-                        dbg!("SKIPPING DEF");
-                        return Ok(Value::None);
-                    }
-                }
-            }
-        }
-
         let def = defs.get(expression.name.as_str());
 
         if let Some(def) = def {
@@ -2142,24 +2122,24 @@ mod interpreter {
     async fn inner_inner_def_recursion() {
         test_interpreter(
             r#"
-        outer.def(
-            n.store(0)
-            inner.def(x,
-                inner_inner.def(y,
-                    y.inc()
-                    if(not(y.eq(3))
-                        then(
-                            inner_inner(y)
+            outer.def(
+                n.store(0)
+                inner.def(x,
+                    inner_inner.def(y,
+                        y.inc()
+                        if(not(y.eq(3))
+                            then(
+                                inner_inner(y)
+                            )
                         )
+                        return(y)
                     )
-                    return(y)
+                    return(inner_inner(x))
                 )
-                return(inner_inner(x))
+                return(inner(n))
             )
-            return(inner(n))
-        )
-        print(outer())
-        "#,
+            print(outer())
+            "#,
             "3",
         )
         .await;
@@ -2237,24 +2217,235 @@ mod interpreter {
     async fn recursive_outer_with_inner() {
         test_interpreter(
             r#"
-        outer.def(n,
-            inner.def(x,
-                x.inc()
-                return(x)
-            )
-            n.store(inner(n))
-            if(not(n.eq(5))
-                then(
-                    outer(n)
+            outer.def(n,
+                inner.def(x,
+                    x.inc()
+                    return(x)
                 )
+                n.store(inner(n))
+                if(not(n.eq(5))
+                    then(
+                        outer(n)
+                    )
+                )
+                return(n)
             )
-            return(n)
-        )
-        n.store(0)
-        print(outer(n))
-        "#,
+            n.store(0)
+            print(outer(n))
+            "#,
             "5",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn conditional_def_not_overwritten() {
+        // The def in the else branch should not overwrite the one in then
+        // because condition is true, only then should execute
+        test_interpreter(
+            r#"
+            if(true,
+                then(
+                    run.def(
+                        return(1)
+                    )
+                )
+                else(
+                    run.def(
+                        return(2)
+                    )
+                )
+            )
+            print(run())
+            "#,
+            "1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn conditional_def_false_branch() {
+        test_interpreter(
+            r#"
+            if(false,
+                then(
+                    run.def(
+                        return(1)
+                    )
+                )
+                else(
+                    run.def(
+                        return(2)
+                    )
+                )
+            )
+            print(run())
+            "#,
+            "2",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn def_inside_loop_not_redefined_each_iteration() {
+        // inner should always behave the same regardless of how many
+        // times the loop runs and potentially redefines it
+        test_interpreter(
+            r#"
+            outer.def(
+                result.store(0)
+                inner.def(x,
+                    x.inc()
+                    return(x)
+                )
+                repeat(3,
+                    result.store(inner(result))
+                )
+                return(result)
+            )
+            print(outer())
+            "#,
+            "3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn def_redefined_in_loop_uses_latest() {
+        // each iteration redefines run with a different increment
+        // the last definition (inc by 3) should win after the loop
+        test_interpreter(
+            r#"
+            i.store(0)
+            while(i.lt(3),
+                switch(i,
+                    case(0,
+                        run.def(x, x.inc())
+                    )
+                    case(1,
+                        run.def(x, x.inc() x.inc())
+                    )
+                    case(2,
+                        run.def(x, x.inc() x.inc() x.inc())
+                    )
+                    fallback()
+                )
+                i.inc()
+            )
+            n.store(0)
+            print(run(n))
+            "#,
+            "3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn sibling_inner_defs_dont_bleed() {
+        // a's inner helper increments once, b's increments twice
+        // calling a then b should give 1 then 2, not 2 and 2
+        test_interpreter(
+            r#"
+            a.def(
+                helper.def(x,
+                    x.inc()
+                    return(x)
+                )
+                n.store(0)
+                return(helper(n))
+            )
+            b.def(
+                n.store(0)
+                return(helper(n))
+
+                # defined out of order but still works
+                helper.def(x,
+                    x.inc()
+                    x.inc()
+                    return(x)
+                )
+            )
+            print(a())
+            print(b())
+            "#,
+            "12",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn def_inside_switch_case() {
+        test_interpreter(
+            r#"
+            os.const("linux")
+            switch(os,
+                case("linux",
+                    run.def(
+                        return("linux")
+                    )
+                )
+                case("windows",
+                    run.def(
+                        return("windows")
+                    )
+                )
+                fallback(
+                    run.def(
+                        return("unknown")
+                    )
+                )
+            )
+            print(run())
+        "#,
+            "linux",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn recursive_inner_doesnt_redefine_on_each_call() {
+        // outer is called recursively 3 times
+        // inner should behave consistently across all calls
+        test_interpreter(
+            r#"
+            outer.def(n,
+                inner.def(x,
+                    x.inc()
+                    return(x)
+                )
+                n.store(inner(n))
+                if(not(n.eq(3))
+                    then(
+                        outer(n)
+                    )
+                )
+                return(n)
+            )
+            n.store(0)
+            print(outer(n))
+            "#,
+            "3",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn def_after_return_not_registered() {
+        let result = test_interpreter_err_type(
+            r#"
+            outer.def(
+                return(1)
+                unreachable_def.def(
+                    return(99)
+                )
+            )
+            unreachable_def()
+            "#,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            InterpreterErrorType::Command(CommandError::NonExistantCommand(_))
+        ))
     }
 }
