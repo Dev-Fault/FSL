@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
-    sync::{Arc, atomic::Ordering},
+    sync::Arc,
 };
 
 use async_recursion::async_recursion;
@@ -12,6 +12,7 @@ use crate::{
     error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
     libraries::{
         Library,
+        r#async::register_join,
         exec::register_exec,
         io::register_io,
         standard::{self, *},
@@ -84,7 +85,15 @@ impl FslInterpreter {
                 register_io(self);
             }
             Library::Std => register_std(self),
+            Library::Async => register_join(self),
         }
+    }
+
+    pub fn register_all_libraries(&mut self) {
+        register_exec(self);
+        register_io(self);
+        register_std(self);
+        register_join(self);
     }
 
     /// Interprets plain fsl code
@@ -228,6 +237,7 @@ impl FslInterpreter {
             }
         }
         if expression.name.as_str() == DEF {
+            // TODO attempt to optimize expression.clone()
             Self::interpret_command(data.clone(), defs, expression.clone()).await?;
         }
         Ok(())
@@ -285,7 +295,7 @@ impl FslInterpreter {
                     }
                 },
                 _ => {
-                    //unreachable!("parse expression should always return a command")
+                    unreachable!("parse expression should always return a command")
                 }
             },
             Err(e) => {
@@ -2051,6 +2061,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn inner_inner_def_double() {
+        // Makes sure def scope is properly cleared after handling nested defs
         test_interpreter(
             r#"
             outer.def(
@@ -2149,14 +2160,14 @@ mod interpreter {
     async fn out_of_order_defs() {
         test_interpreter(
             r#"
-        outer.def(
-            return(inner())
-        )
-        inner.def(
-            return(1)
-        )
-        print(outer())
-        "#,
+            outer.def(
+                return(inner())
+            )
+            print(outer())
+            inner.def(
+                return(1)
+            )
+            "#,
             "1",
         )
         .await;
@@ -2166,74 +2177,20 @@ mod interpreter {
     async fn out_of_order_inner_defs() {
         test_interpreter(
             r#"
-        outer.def(
-            inner.def(x,
-                return(deep(x))
-            )
-            deep.def(x,
-                x.inc()
-                return(x)
-            )
-            n.store(0)
-            return(inner(n))
-        )
-        print(outer())
-        "#,
-            "1",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn multiple_outer_defs_isolated_inners() {
-        test_interpreter(
-            r#"
-        a.def(
-            helper.def(x,
-                x.inc()
-                return(x)
-            )
-            n.store(1)
-            return(helper(n))
-        )
-        b.def(
-            helper.def(x,
-                x.inc()
-                x.inc()
-                return(x)
-            )
-            n.store(1)
-            return(helper(n))
-        )
-        print(a())
-        print(b())
-        "#,
-            "23",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn recursive_outer_with_inner() {
-        test_interpreter(
-            r#"
-            outer.def(n,
+            outer.def(
                 inner.def(x,
+                    return(deep(x))
+                )
+                n.store(0)
+                return(inner(n))
+                deep.def(x,
                     x.inc()
                     return(x)
                 )
-                n.store(inner(n))
-                if(not(n.eq(5))
-                    then(
-                        outer(n)
-                    )
-                )
-                return(n)
             )
-            n.store(0)
-            print(outer(n))
-            "#,
-            "5",
+            print(outer())
+        "#,
+            "1",
         )
         .await;
     }

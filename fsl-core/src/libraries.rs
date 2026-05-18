@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use crate::error::{InterpreterError, InterpreterErrorType};
 
+pub mod r#async;
 pub mod exec;
 pub mod io;
 pub mod standard;
@@ -10,6 +11,7 @@ pub enum Library {
     Exec,
     Io,
     Std,
+    Async,
 }
 
 impl Library {
@@ -18,6 +20,7 @@ impl Library {
             "exec" => Ok(Library::Exec),
             "io" => Ok(Library::Io),
             "std" => Ok(Library::Std),
+            "async" => Ok(Library::Async),
             _ => Err(InterpreterErrorType::Import(format!("cannot unknown library {str}")).into()),
         }
     }
@@ -29,6 +32,7 @@ impl Display for Library {
             Library::Exec => "exec",
             Library::Io => "io",
             Library::Std => "std",
+            Library::Async => "async",
         };
 
         write!(f, "{}", output)

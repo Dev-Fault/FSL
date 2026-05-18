@@ -174,6 +174,12 @@ impl CommandError {
     }
 }
 
+impl From<tokio::task::JoinError> for CommandError {
+    fn from(e: tokio::task::JoinError) -> Self {
+        CommandError::Custom(format!("join error: {}", e))
+    }
+}
+
 impl From<ValueError> for CommandError {
     fn from(value: ValueError) -> Self {
         CommandError::ValueError(value)

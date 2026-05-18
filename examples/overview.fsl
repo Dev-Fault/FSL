@@ -342,9 +342,7 @@ outer.def(
 outer() # output: Inside outer!
 
 # Commands can also be conditionally defined
-# You must declare the command upfront before doing so, but only the name the contents can change
 
-run.def()
 os.const("bsd")
 switch(os,
 	case("linux",
@@ -365,7 +363,7 @@ switch(os,
 	fallback(
 		run.def(
 			say(os, " is not supported at this time")
-		)
+		) # this branch wins out in this case so the run def is finalized here
 	)
 )
 run() # output: bsd is not supported at thsi time

@@ -217,7 +217,7 @@ impl<'c> InterpreterData<'c> {
         let mut current = root.clone();
 
         for call in call_stack.iter() {
-            let mut defs = None;
+            let defs;
             match current.lock().await.get(call) {
                 Some(def) => {
                     defs = Some(def.local_defs.clone());

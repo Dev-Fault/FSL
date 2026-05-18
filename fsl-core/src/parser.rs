@@ -834,37 +834,37 @@ mod tests {
     }
 
     macro_rules! leaf {
-    // Expression (recursive tree)
-    (Expression ( $name:ident { $($rest:tt)* } )) => {
-        tree!($name { $($rest)* })
-    };
-    // Lists
-    ($parent:ident [ $( $type:ident $value:tt ),* $(,)? ]) => {
-        Tree::$parent(vec![ $(leaf!($type $value)),* ])
-    };
-    // Maps
-    ($parent:ident [ $( ($key:tt, $type:ident $value:tt) ),* $(,)? ]) => {
-        Tree::$parent(vec![ $( (stringify!($key), leaf!($type $value)) ),* ])
-    };
-    // String literal
-    (String ($value:literal)) => {
-        Tree::String(Cow::Borrowed($value))
-    };
+        // Expression (recursive tree)
+        (Expression ( $name:ident { $($rest:tt)* } )) => {
+            tree!($name { $($rest)* })
+        };
+        // Lists
+        ($parent:ident [ $( $type:ident $value:tt ),* $(,)? ]) => {
+            Tree::$parent(vec![ $(leaf!($type $value)),* ])
+        };
+        // Maps
+        ($parent:ident [ $( ($key:tt, $type:ident $value:tt) ),* $(,)? ]) => {
+            Tree::$parent(vec![ $( (stringify!($key), leaf!($type $value)) ),* ])
+        };
+        // String literal
+        (String ($value:literal)) => {
+            Tree::String(Cow::Borrowed($value))
+        };
 
-    // Other literals (ident, number, keyword - passed as string literals in macro)
-    ($type:ident ($value:literal)) => {
-        Tree::$type($value)
-    };
+        // Other literals (ident, number, keyword - passed as string literals in macro)
+        ($type:ident ($value:literal)) => {
+            Tree::$type($value)
+        };
     }
 
     macro_rules! tree {
-    ($name:ident { $( $child:tt $child_rest:tt ),* $(,)? }) => {
-        Tree::Expression((
-            stringify!($name),
-            vec![ $( leaf!($child $child_rest) ),* ]
-        ))
-    };
-}
+        ($name:ident { $( $child:tt $child_rest:tt ),* $(,)? }) => {
+            Tree::Expression((
+                stringify!($name),
+                vec![ $( leaf!($child $child_rest) ),* ]
+            ))
+        };
+    }
     #[test]
     fn parse_simple() {
         let parser = Parser::new("print(\"hello world\")");
@@ -886,8 +886,9 @@ mod tests {
         let parser = Parser::new("i.store(0)");
         let parsed = parser.parse().unwrap().to_tree_vec();
         let expected = vec![tree! {
-             store{
-            Identifier("i"), Number("0"),}
+            store {
+                Identifier("i"), Number("0"),
+            }
         }];
         println!("==GOT==\n");
         dbg!(&parsed);

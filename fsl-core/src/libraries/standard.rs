@@ -2574,7 +2574,9 @@ pub mod tests {
     };
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
-        let result = FslInterpreter::new()
+        let mut interpreter = FslInterpreter::new();
+        interpreter.register_all_libraries();
+        let result = interpreter
             .interpret(code, InterpreterData::default())
             .await;
 
