@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
     mem,
-    sync::{Arc, atomic::Ordering},
+    sync::Arc,
     time::Duration,
 };
 
@@ -1060,28 +1060,26 @@ pub async fn while_command<'c>(
 
     let mut final_value = Value::None;
 
-    data.loop_depth.fetch_add(1, Ordering::Relaxed);
+    data.inc_loop_depth().await;
 
     'outer: while while_condition.clone().as_bool(data.clone()).await? {
         for command in &values {
             let command = command.clone().as_command()?;
             final_value = command.execute(data.clone()).await?;
 
-            if data.flags.continue_flag.load(Ordering::Relaxed) {
-                data.flags.continue_flag.store(false, Ordering::Relaxed);
-                continue 'outer;
-            }
-            if data.flags.break_flag.load(Ordering::Relaxed)
-                || data.flags.return_flag.load(Ordering::Relaxed)
-            {
-                data.flags.break_flag.store(false, Ordering::Relaxed);
+            if data.get_break_flag().await || data.get_return_flag().await {
+                data.set_break_flag(false).await;
                 break 'outer;
             }
+            if data.get_continue_flag().await {
+                data.set_continue_flag(false).await;
+                continue 'outer;
+            }
         }
-        data.increment_loops().await?;
+        data.inc_total_loops()?;
     }
 
-    data.loop_depth.fetch_sub(1, Ordering::Relaxed);
+    data.dec_loop_depth().await;
 
     Ok(final_value)
 }
@@ -1099,28 +1097,26 @@ pub async fn repeat<'c>(
     let repetitions = values.pop_front().unwrap().as_int(data.clone()).await?;
     let mut final_value = Value::None;
 
-    data.loop_depth.fetch_add(1, Ordering::Relaxed);
+    data.inc_loop_depth().await;
 
     'outer: for _ in 0..repetitions {
         for command in &values {
             let command = command.clone().as_command()?;
             final_value = command.execute(data.clone()).await?;
 
-            if data.flags.continue_flag.load(Ordering::Relaxed) {
-                data.flags.continue_flag.store(false, Ordering::Relaxed);
-                continue 'outer;
-            }
-            if data.flags.break_flag.load(Ordering::Relaxed)
-                || data.flags.return_flag.load(Ordering::Relaxed)
-            {
-                data.flags.break_flag.store(false, Ordering::Relaxed);
+            if data.get_break_flag().await || data.get_return_flag().await {
+                data.set_break_flag(false).await;
                 break 'outer;
             }
+            if data.get_continue_flag().await {
+                data.set_continue_flag(false).await;
+                continue 'outer;
+            }
         }
-        data.increment_loops().await?;
+        data.inc_total_loops()?;
     }
 
-    data.loop_depth.fetch_sub(1, Ordering::Relaxed);
+    data.dec_loop_depth().await;
 
     Ok(final_value)
 }
@@ -2448,10 +2444,7 @@ pub async fn run<'c>(
 
     let command_label = values.pop_front().unwrap().get_var_label()?;
 
-    {
-        let mut call_stack = data.user_call_stack.lock().await;
-        call_stack.push(command_label.clone());
-    }
+    data.push_def(command_label.clone()).await;
 
     let (mut parameter_labels, commands) = {
         let def = data
@@ -2494,17 +2487,14 @@ pub async fn run<'c>(
             alias_parameter(arg, &aliases);
         }
         final_value = command.execute(data.clone()).await?;
-        if data.flags.return_flag.load(Ordering::Relaxed) {
-            data.flags.return_flag.store(false, Ordering::Relaxed);
+        if data.get_return_flag().await {
+            data.set_return_flag(false).await;
             break;
         }
     }
     data.vars.pop();
 
-    {
-        let mut call_stack = data.user_call_stack.lock().await;
-        call_stack.pop();
-    }
+    data.pop_def().await;
 
     Ok(final_value)
 }
@@ -2514,8 +2504,8 @@ pub async fn r#break<'c>(
     _: Command<'c>,
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
-    if data.loop_depth.load(Ordering::Relaxed) > 0 {
-        data.flags.break_flag.store(true, Ordering::Relaxed);
+    if data.loop_depth().await > 0 {
+        data.set_break_flag(true).await;
     } else {
         return Err(CommandError::BreakOutsideLoop);
     }
@@ -2527,8 +2517,8 @@ pub async fn r#continue<'c>(
     _: Command<'c>,
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
-    if data.loop_depth.load(Ordering::Relaxed) > 0 {
-        data.flags.continue_flag.store(true, Ordering::Relaxed);
+    if data.loop_depth().await > 0 {
+        data.set_continue_flag(true).await;
     } else {
         return Err(CommandError::ContinueOutsideLoop);
     }
@@ -2546,11 +2536,11 @@ pub async fn r#return<'c>(
     match return_value {
         Some(value) => {
             let value = value.as_raw_unchecked(data.clone()).await?;
-            data.flags.return_flag.store(true, Ordering::Relaxed);
+            data.set_return_flag(true).await;
             Ok(value)
         }
         None => {
-            data.flags.return_flag.store(true, Ordering::Relaxed);
+            data.set_return_flag(true).await;
             Ok(Value::None)
         }
     }

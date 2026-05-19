@@ -134,7 +134,7 @@ impl FslInterpreter {
                                 &code,
                             )
                             .await;
-                            data.increment_loops_by(&inner_data.total_loops).await?;
+                            data.inc_loops_by(&inner_data.total_loops)?;
                             match result {
                                 Ok(result) => match code_stack.last_mut() {
                                     Some(code) => code.push_str(&result),
@@ -214,7 +214,6 @@ impl FslInterpreter {
     ) -> Result<(), InterpreterError> {
         if expression.name.as_str() == DEF {
             {
-                let mut call_stack = data.user_call_stack.lock().await;
                 let def_label = match expression.args.get(0) {
                     Some(label) => label.token.as_str(),
                     None => {
@@ -228,7 +227,8 @@ impl FslInterpreter {
                         .into());
                     }
                 };
-                call_stack.push(Cow::Borrowed(def_label));
+                let mut ctx = data.ctx.lock().await;
+                ctx.def_stack.push(Cow::Borrowed(def_label));
             }
         }
         for arg in &expression.args {
@@ -257,7 +257,8 @@ impl FslInterpreter {
 
         for expression in expressions.all() {
             Self::execute_def(data.clone(), defs, &expression).await?;
-            data.user_call_stack.lock().await.clear();
+            let mut ctx = data.ctx.lock().await;
+            ctx.def_stack.clear();
         }
 
         for expression in expressions.unfiltered {

@@ -43,8 +43,7 @@ async fn main() {
 
     let mut interpreter = FslInterpreter::new();
 
-    interpreter.register_library(Library::Exec);
-    interpreter.register_library(Library::Io);
+    interpreter.register_all_libraries();
 
     let result = if args.embeded {
         interpreter

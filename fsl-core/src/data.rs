@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -66,11 +66,11 @@ impl MemoryLimit {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct InterpreterFlags {
-    pub break_flag: AtomicBool,
-    pub continue_flag: AtomicBool,
-    pub return_flag: AtomicBool,
+    pub break_flag: bool,
+    pub continue_flag: bool,
+    pub return_flag: bool,
 }
 
 impl Default for InterpreterFlags {
@@ -115,23 +115,25 @@ impl InterpreterLimits {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct ExecutionContext<'c> {
+    pub call_stack: Vec<&'c str>,
+    pub def_stack: Vec<Cow<'c, str>>,
+    pub flags: InterpreterFlags,
+    pub loop_depth: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct InterpreterData<'c> {
-    pub call_stack: Mutex<Vec<&'c str>>,
-    pub user_call_stack: Mutex<Vec<Cow<'c, str>>>,
-
     pub args: Arc<Mutex<Vec<Value<'static>>>>,
-    pub output: Mutex<String>,
+    pub user_defs: Arc<Mutex<UserDefinitions<'c>>>,
+    pub output: Arc<Mutex<String>>,
+    pub total_loops: Arc<AtomicUsize>,
+    pub limits: Arc<InterpreterLimits>,
 
     pub vars: VarStack<'c>,
-    pub user_defs: Arc<Mutex<UserDefinitions<'c>>>,
 
-    pub loop_depth: AtomicUsize,
-    pub total_loops: AtomicUsize,
-
-    pub flags: InterpreterFlags,
-
-    pub limits: InterpreterLimits,
+    pub ctx: Mutex<ExecutionContext<'c>>,
 }
 
 impl<'c> InterpreterData<'c> {
@@ -142,7 +144,7 @@ impl<'c> InterpreterData<'c> {
 
     pub fn with_limits(mut self, limits: InterpreterLimits) -> Self {
         self.vars = VarStack::new(limits.memory_limit.clone());
-        self.limits = limits;
+        self.limits = Arc::new(limits);
         self
     }
 
@@ -155,7 +157,20 @@ impl<'c> InterpreterData<'c> {
         }
     }
 
-    pub async fn increment_loops(&self) -> Result<(), CommandError> {
+    pub async fn fork(&self) -> Arc<InterpreterData<'c>> {
+        InterpreterData {
+            args: self.args.clone(),
+            limits: self.limits.clone(),
+            user_defs: self.user_defs.clone(),
+            total_loops: self.total_loops.clone(),
+            output: self.output.clone(),
+            vars: self.vars.clone(),
+            ctx: Mutex::new(self.ctx.lock().await.clone()),
+        }
+        .into()
+    }
+
+    pub fn inc_total_loops(&self) -> Result<(), CommandError> {
         match self.limits.max_loops {
             Some(limit) => {
                 let prev_loops = self.total_loops.fetch_add(1, Ordering::Relaxed);
@@ -169,7 +184,7 @@ impl<'c> InterpreterData<'c> {
         }
     }
 
-    pub async fn increment_loops_by(&self, loops: &AtomicUsize) -> Result<(), CommandError> {
+    pub fn inc_loops_by(&self, loops: &AtomicUsize) -> Result<(), CommandError> {
         match self.limits.max_loops {
             Some(limit) => {
                 let loops = loops.load(Ordering::Relaxed);
@@ -185,22 +200,32 @@ impl<'c> InterpreterData<'c> {
     }
 
     pub async fn push_call(&self, command_label: &'c str) {
-        let mut call_stack = self.call_stack.lock().await;
-        call_stack.push(command_label);
+        let mut ctx = self.ctx.lock().await;
+        ctx.call_stack.push(command_label);
     }
 
     pub async fn pop_call(&self) {
-        let mut call_stack = self.call_stack.lock().await;
-        call_stack.pop();
+        let mut ctx = self.ctx.lock().await;
+        ctx.call_stack.pop();
+    }
+
+    pub async fn push_def(&self, def: Cow<'c, str>) {
+        let mut ctx = self.ctx.lock().await;
+        ctx.def_stack.push(def);
+    }
+
+    pub async fn pop_def(&self) {
+        let mut ctx = self.ctx.lock().await;
+        ctx.def_stack.pop();
     }
 
     pub async fn call_stack_to_string(&self) -> String {
-        let call_stack = self.call_stack.lock().await;
+        let ctx = self.ctx.lock().await;
         let mut output = String::new();
-        for (i, call) in call_stack.iter().enumerate() {
+        for (i, call) in ctx.call_stack.iter().enumerate() {
             let call = if call.is_empty() { "scope" } else { call };
 
-            if i < call_stack.len() - 1 {
+            if i < ctx.call_stack.len() - 1 {
                 output.push_str(&format!("{} > ", call));
             } else {
                 output.push_str(&format!("{}", call));
@@ -209,14 +234,64 @@ impl<'c> InterpreterData<'c> {
         output
     }
 
+    pub async fn inc_loop_depth(&self) {
+        let mut ctx = self.ctx.lock().await;
+        ctx.loop_depth += 1;
+    }
+
+    pub async fn dec_loop_depth(&self) {
+        let mut ctx = self.ctx.lock().await;
+        ctx.loop_depth -= 1;
+    }
+
+    pub async fn loop_depth(&self) -> usize {
+        let ctx = self.ctx.lock().await;
+        ctx.loop_depth
+    }
+
+    pub async fn get_return_flag(&self) -> bool {
+        let ctx = self.ctx.lock().await;
+        ctx.flags.return_flag
+    }
+
+    pub async fn set_return_flag(&self, value: bool) {
+        let mut ctx = self.ctx.lock().await;
+        ctx.flags.return_flag = value;
+    }
+
+    pub async fn get_continue_flag(&self) -> bool {
+        let ctx = self.ctx.lock().await;
+        ctx.flags.continue_flag
+    }
+
+    pub async fn set_continue_flag(&self, value: bool) {
+        let mut ctx = self.ctx.lock().await;
+        ctx.flags.continue_flag = value;
+    }
+
+    pub async fn get_break_flag(&self) -> bool {
+        let ctx = self.ctx.lock().await;
+        ctx.flags.break_flag
+    }
+
+    pub async fn set_break_flag(&self, value: bool) {
+        let mut ctx = self.ctx.lock().await;
+        ctx.flags.break_flag = value;
+    }
+
+    pub async fn should_execute(&self) -> bool {
+        let ctx = self.ctx.lock().await;
+        ctx.flags.return_flag || ctx.flags.continue_flag || ctx.flags.break_flag
+    }
+
     pub async fn find_user_def(&self, label: &str) -> Option<Arc<UserDef<'c>>> {
+        let ctx = self.ctx.lock().await;
         let root = self.user_defs.clone();
-        let call_stack = self.user_call_stack.lock().await;
 
         let mut levels = vec![root.clone()];
         let mut current = root.clone();
 
-        for call in call_stack.iter() {
+        for call in ctx.def_stack.iter() {
             let defs;
             match current.lock().await.get(call) {
                 Some(def) => {

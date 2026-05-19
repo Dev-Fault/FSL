@@ -277,11 +277,7 @@ impl<'c> Command<'c> {
     pub async fn execute(self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, CommandError> {
         self.validate_args()?;
 
-        let return_flag = data.flags.return_flag.load(Ordering::Relaxed);
-        let break_flag = data.flags.break_flag.load(Ordering::Relaxed);
-        let continue_flag = data.flags.continue_flag.load(Ordering::Relaxed);
-
-        if return_flag || break_flag || continue_flag {
+        if data.should_execute().await {
             return Ok(Value::None);
         }
 

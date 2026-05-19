@@ -196,6 +196,15 @@ pub struct VarStack<'c> {
     bound: Arc<MemoryLimit>,
 }
 
+impl<'c> Clone for VarStack<'c> {
+    fn clone(&self) -> Self {
+        Self {
+            stack: Mutex::new(self.stack.lock().unwrap().clone()),
+            bound: self.bound.clone(),
+        }
+    }
+}
+
 impl<'c> Default for VarStack<'c> {
     fn default() -> Self {
         Self {
