@@ -12,6 +12,8 @@ const HASHTAG: char = '#';
 const STAR: char = '*';
 const ESCAPE: char = '\\';
 
+pub const SYMBOLS: &[&str] = &["\"", "(", ")", "[", "]", ":", ".", ",", "#", "*", "\\"];
+
 pub const TRUE: &str = "true";
 pub const FALSE: &str = "false";
 
@@ -29,6 +31,27 @@ pub enum Symbol {
     Comma,
     Hashtag,
     Star,
+}
+
+trait IsSymbol {
+    fn is_symbol(&self) -> bool;
+}
+
+impl IsSymbol for &str {
+    fn is_symbol(&self) -> bool {
+        SYMBOLS.contains(self)
+    }
+}
+
+impl IsSymbol for char {
+    fn is_symbol(&self) -> bool {
+        for symbol in SYMBOLS {
+            if symbol.starts_with(*self) {
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 impl From<&str> for Symbol {
@@ -90,6 +113,11 @@ pub struct Token<'c> {
 }
 
 impl<'c> Token<'c> {
+    pub fn span(start: Token<'c>, end: Token<'c>) -> &'c str {
+        let source = start.source;
+        &source[start.location..=end.location]
+    }
+
     pub fn symbol(source: &'c str, symbol: &'c str, location: usize) -> Token<'c> {
         Token {
             token_type: TokenType::Symbol(symbol),
@@ -173,22 +201,15 @@ impl<'c> Token<'c> {
     }
 
     pub fn line(&self) -> &str {
-        let slice = if let Some(start_of_line) = &self.source[..self.location].rfind('\n') {
-            if let Some(end_of_line) = &self.source[self.location..].find('\n') {
-                &self.source
-                    [self.location - start_of_line - self.len()..self.location + end_of_line]
-            } else {
-                &self.source[self.location - start_of_line - self.len()..self.location + self.len()]
-            }
-        } else {
-            if let Some(end_of_line) = &self.source[self.location..].find('\n') {
-                &self.source[..self.location + end_of_line]
-            } else {
-                &self.source[..self.location + self.len()]
-            }
-        };
-        let line = slice.lines().last();
-        line.unwrap_or(self.source)
+        let start = self.source[..self.location]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let end = self.source[self.location..]
+            .find('\n')
+            .map(|i| self.location + i)
+            .unwrap_or(self.source.len());
+        &self.source[start..end]
     }
 
     pub fn line_number(&self) -> usize {
@@ -264,7 +285,16 @@ impl<'c> Display for LexError<'c> {
                     token.line()
                 )
             }
-            LexError::InvalidNumber(token) => write!(f, "Invalid Number: {}", token.token_type),
+            LexError::InvalidNumber(token) => {
+                write!(
+                    f,
+                    "Invalid Number \"{}\" on line {}\n{}: {}",
+                    token.token_type,
+                    token.line_number(),
+                    token.line_number(),
+                    token.line()
+                )
+            }
             LexError::UnclosedString(token) => {
                 write!(
                     f,
@@ -291,7 +321,7 @@ impl<'c> std::error::Error for LexError<'c> {}
 
 #[derive(Debug)]
 pub struct Lexer<'c> {
-    input: &'c str,
+    source: &'c str,
     rest: Peekable<CharIndices<'c>>,
     location: usize,
     context: Context<'c>,
@@ -302,7 +332,7 @@ pub struct Lexer<'c> {
 impl<'c> Lexer<'c> {
     pub fn new(input: &'c str) -> Self {
         Self {
-            input,
+            source: input,
             rest: input.char_indices().peekable(),
             location: 0,
             context: Context::None,
@@ -358,6 +388,11 @@ impl<'c> Lexer<'c> {
     pub fn reading_float(&self) -> bool {
         matches!(self.context, Context::Float(_))
     }
+
+    pub fn flush_partial(&mut self) {
+        self.location += self.partial.len();
+        self.partial = "";
+    }
 }
 
 impl<'c> Iterator for Lexer<'c> {
@@ -371,16 +406,22 @@ impl<'c> Iterator for Lexer<'c> {
         while let Some((i, ch)) = self.rest.next() {
             let token = match ch {
                 ch if ch.is_whitespace() && self.no_context() => {
-                    self.location += 1;
+                    self.location += ch.len_utf8();
+                    if !self.partial.is_empty() {
+                        let token =
+                            Token::parse(self.source, self.partial, self.location - ch.len_utf8());
+                        self.flush_partial();
+                        return Some(Ok(token));
+                    }
                     continue;
                 }
                 QUOTE if !self.ignore_quote() => {
-                    let mut token = Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
+                    let mut token =
+                        Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                     if let Context::String(_) = self.context {
                         self.pending = Some(token);
-                        token = Token::string(self.input, self.partial, self.location);
-                        self.location += self.partial.len();
-                        self.partial = "";
+                        token = Token::string(self.source, self.partial, self.location);
+                        self.flush_partial();
                         self.context = Context::None;
                     } else {
                         self.context = Context::String(token);
@@ -389,15 +430,15 @@ impl<'c> Iterator for Lexer<'c> {
                 }
                 HASHTAG if !self.ignore_hashtag() => {
                     self.context = Context::SingleLineComment;
-                    Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i)
+                    Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i)
                 }
                 STAR if !self.ignore_star() => {
-                    let mut token = Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
+                    let mut token =
+                        Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                     if let Context::MultiLineComment(_) = self.context {
                         self.pending = Some(token);
-                        token = Token::comment(self.input, self.partial, self.location);
-                        self.location += self.partial.len();
-                        self.partial = "";
+                        token = Token::comment(self.source, self.partial, self.location);
+                        self.flush_partial();
                         self.context = Context::None;
                     } else {
                         self.context = Context::MultiLineComment(token);
@@ -405,29 +446,27 @@ impl<'c> Iterator for Lexer<'c> {
                     token
                 }
                 OPEN_PAREN if self.no_context() => {
-                    let token = Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
+                    let token = Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                     self.pending = Some(token);
-                    let token = Token::command(self.input, self.partial, self.location);
-                    self.location += self.partial.len();
-                    self.partial = "";
+                    let token = Token::command(self.source, self.partial, self.location);
+                    self.flush_partial();
                     token
                 }
                 OPEN_BRACKET if self.no_context() => {
-                    Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i)
+                    Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i)
                 }
                 COLON if self.no_context() => {
-                    let token = Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
+                    let token = Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                     self.pending = Some(token);
-                    let token = Token::identifier(self.input, self.partial, self.location);
-                    self.location += self.partial.len();
-                    self.partial = "";
+                    let token = Token::identifier(self.source, self.partial, self.location);
+                    self.flush_partial();
                     token
                 }
                 DOT if self.no_context() => {
-                    let token = Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
+                    let token = Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                     self.pending = Some(token);
                     if self.partial.len() > 0 {
-                        let token = Token::parse(self.input, self.partial, self.location);
+                        let token = Token::parse(self.source, self.partial, self.location);
                         if matches!(token.token_type, TokenType::Number(_))
                             && self.rest.peek().is_some_and(|(_, c)| c.is_ascii_digit())
                         {
@@ -436,8 +475,7 @@ impl<'c> Iterator for Lexer<'c> {
                             self.pending.take();
                             continue;
                         }
-                        self.location += self.partial.len();
-                        self.partial = "";
+                        self.flush_partial();
                         token
                     } else {
                         self.pending.take().unwrap()
@@ -445,39 +483,39 @@ impl<'c> Iterator for Lexer<'c> {
                 }
                 CLOSED_PAREN | CLOSED_BRACKET | COMMA if self.no_context() => {
                     if self.partial.len() > 0 {
-                        let token = Token::parse(self.input, self.partial, self.location);
-                        self.location += self.partial.len();
-                        self.partial = "";
+                        let token = Token::parse(self.source, self.partial, self.location);
+                        self.flush_partial();
                         let symbol =
-                            Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
+                            Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                         self.pending = Some(symbol);
                         token
                     } else {
                         if let Some(token) = self.pending {
                             return Some(Err(LexError::UnexpectedToken(token)));
                         }
-                        Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i)
+                        Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i)
                     }
                 }
                 '\n' if !self.ignore_new_line() => {
                     self.context = Context::None;
-                    let token = Token::comment(self.input, self.partial, self.location);
-                    self.location += self.partial.len();
-                    self.partial = "";
+                    let token = Token::comment(self.source, self.partial, self.location);
+                    self.flush_partial();
                     token
                 }
-                ch if self.reading_float() && !ch.is_ascii_digit() => {
-                    let token = Token::symbol(self.input, &self.input[i..i + ch.len_utf8()], i);
-                    self.pending = Some(token);
+                ch if self.reading_float() && !ch.is_ascii_digit() && !ch.is_whitespace() => {
+                    if ch.is_symbol() {
+                        let token =
+                            Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
+                        self.pending = Some(token);
+                    }
                     self.context = Context::None;
-                    let token = match Token::number(self.input, self.partial, self.location) {
+                    let token = match Token::number(self.source, self.partial, self.location) {
                         Ok(token) => token,
                         Err(e) => {
                             return Some(Err(e));
                         }
                     };
-                    self.location += self.partial.len();
-                    self.partial = "";
+                    self.flush_partial();
                     token
                 }
                 _ => {
@@ -486,11 +524,25 @@ impl<'c> Iterator for Lexer<'c> {
                             self.rest.next();
                             // Include escape and quote in partial string
                             self.partial =
-                                &self.input[self.location..(i + ch.len_utf8()) + QUOTE.len_utf8()];
+                                &self.source[self.location..(i + ch.len_utf8()) + QUOTE.len_utf8()];
                             continue;
                         }
+                    } else if matches!(self.context, Context::Float(_)) {
+                        if ch.is_whitespace() {
+                            self.context = Context::None;
+                            let token =
+                                match Token::number(self.source, self.partial, self.location) {
+                                    Ok(token) => token,
+                                    Err(e) => {
+                                        return Some(Err(e));
+                                    }
+                                };
+                            self.flush_partial();
+                            self.location += ch.len_utf8();
+                            return Some(Ok(token));
+                        }
                     }
-                    self.partial = &self.input[self.location..i + ch.len_utf8()];
+                    self.partial = &self.source[self.location..i + ch.len_utf8()];
                     continue;
                 }
             };
@@ -514,7 +566,7 @@ impl<'c> Iterator for Lexer<'c> {
 
         if !self.partial.is_empty() {
             return Some(Err(LexError::UnexpectedToken(Token::invalid(
-                self.input,
+                self.source,
                 self.partial,
                 self.location,
             ))));
@@ -543,6 +595,54 @@ macro_rules! tokens {
 #[cfg(test)]
 mod tests {
     use crate::lexer::{LexError, Lexer, TokenType};
+
+    #[test]
+    fn tokenize_location_multi_char_partial_before_newline() {
+        let lexer = Lexer::new("ab\ncd(");
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<_>>();
+        // "ab" starts at byte 0
+        assert_eq!(tokens[0].location, 0);
+        // "cd" starts at byte 3 (0='a', 1='b', 2='\n', 3='c')
+        assert_eq!(tokens[1].location, 3);
+    }
+
+    #[test]
+    fn tokenize_location_multi_char_partial_before_crlf() {
+        let lexer = Lexer::new("ab\r\ncd(");
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<_>>();
+        // "ab" starts at byte 0
+        assert_eq!(tokens[0].location, 0);
+        // "cd" starts at byte 4 (0='a', 1='b', 2='\r', 3='\n', 4='c')
+        assert_eq!(tokens[1].location, 4);
+    }
+
+    #[test]
+    fn tokenize_location_multiple_newlines() {
+        let lexer = Lexer::new("ab\ncd\nef(");
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<_>>();
+        // "ab" starts at byte 0
+        assert_eq!(tokens[0].location, 0);
+        // "cd" starts at byte 3
+        assert_eq!(tokens[1].location, 3);
+        // "ef" starts at byte 6
+        assert_eq!(tokens[2].location, 6);
+    }
+
+    #[test]
+    fn tokenize_location_after_crlf() {
+        let lexer = Lexer::new("3\r\nprint(");
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<_>>();
+        // "print" starts at byte 3 (0='3', 1='\r', 2='\n', 3='p')
+        assert_eq!(tokens[0].location, 0);
+    }
+
+    #[test]
+    fn tokenize_location_after_whitespace() {
+        let lexer = Lexer::new("3\nprint(");
+        let tokens = lexer.map(|t| t.unwrap()).collect::<Vec<_>>();
+        // "print" starts at byte 2 (0='3', 1='\n', 2='p')
+        assert_eq!(tokens[0].location, 0);
+    }
 
     #[test]
     fn tokenize_symbols() {

@@ -149,11 +149,20 @@ impl<'c> PendingArg<'c> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TokenSpan<'c> {
+    pub start: Token<'c>,
+    pub end: Option<Token<'c>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParseError<'c> {
     LexError(LexError<'c>),
     OutOfPlaceSymbol(Token<'c>),
     OutOfPlaceValue(Token<'c>),
-    UnfinishedExpression((Token<'c>, Token<'c>)),
+    UnfinishedExpression(Expression<'c>),
+    UnfinishedList(List<'c>),
+    UnfinishedMap(Map<'c>),
+    ValueOutsideOfExpression(TokenSpan<'c>),
 }
 
 impl<'c> Display for ParseError<'c> {
@@ -180,21 +189,53 @@ impl<'c> Display for ParseError<'c> {
                     token.line(),
                 )
             }
-            ParseError::UnfinishedExpression((start, end)) => {
+            ParseError::UnfinishedExpression(expr) => {
                 write!(
                     f,
-                    "
-                    Unfinished expression started with \"{}\" on line {}\n{}: {}\n
-                    Ending with with \"{}\" on line {}\n{}: {}
+                    "Unfinished expression \"{}{}\" on line {}\n{}: {}\n
                     ",
-                    start.token_type,
+                    expr.name.as_str(),
+                    expr.start.token_type,
+                    expr.start.line_number(),
+                    expr.start.line_number(),
+                    expr.start.line(),
+                )
+            }
+            ParseError::ValueOutsideOfExpression(span) => {
+                let start = span.start;
+                let value = match span.end {
+                    Some(end) => Token::span(start, end).to_string(),
+                    None => start.token_type.to_string(),
+                };
+                write!(
+                    f,
+                    "Value outside of expression \"{}\" on line {}\n{}: {}",
+                    value,
                     start.line_number(),
                     start.line_number(),
                     start.line(),
-                    end.token_type,
-                    end.line_number(),
-                    end.line_number(),
-                    end.line(),
+                )
+            }
+            ParseError::UnfinishedList(list) => {
+                write!(
+                    f,
+                    "Unfinished list \"{}\" on line {}\n{}: {}\n
+                    ",
+                    list.start.token_type,
+                    list.start.line_number(),
+                    list.start.line_number(),
+                    list.start.line(),
+                )
+            }
+            ParseError::UnfinishedMap(map) => {
+                write!(
+                    f,
+                    "Unfinished map \"{}\" on line {}\n{}: {}\n
+                    ",
+                    map.start.token_type,
+                    map.start.line_number(),
+                    map.start.line_number(),
+                    map.start.line(),
                 )
             }
         }
@@ -382,13 +423,11 @@ impl<'c> Parser<'c> {
                     Ok(())
                 }
                 _ => {
-                    // Likely impossible since lexer always pushes a command token even if empty before (
-                    Err(ParseError::OutOfPlaceSymbol(token))
+                    unreachable!("Lexer should have inserted empty command token before (")
                 }
             },
             None => {
-                // Likely impossible since lexer always pushes a command token even if empty before (
-                Err(ParseError::OutOfPlaceSymbol(token))
+                unreachable!("Lexer should have inserted empty command token before (")
             }
         }
     }
@@ -439,19 +478,8 @@ impl<'c> Parser<'c> {
         }
     }
 
-    fn parse_open_bracket(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
-        match self.pending.last() {
-            Some(pending) => match &pending {
-                PendingArg::Key(_) => Ok(()),
-                PendingArg::Expression(_) => Ok(()),
-                PendingArg::List(_) => Ok(()),
-                PendingArg::UnitializedCollection(_) => Ok(()),
-                _ => Err(ParseError::OutOfPlaceSymbol(token)),
-            },
-            None => Ok(()),
-        }?;
-
-        Ok(self.pend_uninit_collection(token))
+    fn parse_open_bracket(&mut self, token: Token<'c>) {
+        self.pend_uninit_collection(token);
     }
 
     fn parse_closed_bracket(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
@@ -611,7 +639,7 @@ impl<'c> Parser<'c> {
         match symbol {
             Symbol::OpenParen => self.parse_open_paren(token),
             Symbol::ClosedParen => self.parse_closed_paren(token),
-            Symbol::OpenBracket => self.parse_open_bracket(token),
+            Symbol::OpenBracket => Ok(self.parse_open_bracket(token)),
             Symbol::ClosedBracket => self.parse_closed_bracket(token),
             Symbol::Colon => self.parse_colon(token),
             Symbol::Dot => self.parse_dot(token),
@@ -667,6 +695,43 @@ impl<'c> Parser<'c> {
         Ok(())
     }
 
+    fn generate_pending_err(pending: PendingArg<'c>) -> ParseError<'c> {
+        match pending {
+            PendingArg::Done(arg) => {
+                let mut start = arg.token;
+                let mut end = None;
+                match arg.kind {
+                    ArgKind::List(list) => {
+                        start = list.start;
+                        end = list.end;
+                    }
+                    ArgKind::Map(map) => {
+                        start = map.start;
+                        end = map.end;
+                    }
+                    _ => {}
+                }
+                ParseError::ValueOutsideOfExpression(TokenSpan { start, end })
+            }
+            PendingArg::DotArg(arg) => ParseError::ValueOutsideOfExpression(TokenSpan {
+                start: arg.token,
+                end: None,
+            }),
+            PendingArg::PathArg(path) => ParseError::ValueOutsideOfExpression(TokenSpan {
+                start: path.data.get(0).expect("path should contain token").token,
+                end: None,
+            }),
+            PendingArg::Key(token) => ParseError::ValueOutsideOfExpression(TokenSpan {
+                start: token,
+                end: None,
+            }),
+            PendingArg::Expression(expression) => ParseError::UnfinishedExpression(expression),
+            PendingArg::List(list) => ParseError::UnfinishedList(list),
+            PendingArg::Map(map) => ParseError::UnfinishedMap(map),
+            PendingArg::UnitializedCollection(token) => ParseError::OutOfPlaceSymbol(token),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn parse(mut self) -> Result<Vec<Expression<'c>>, ParseError<'c>> {
         self.parse_tokens()?;
@@ -680,7 +745,7 @@ impl<'c> Parser<'c> {
                     parsed.push(expr);
                 }
                 _ => {
-                    return Err(ParseError::OutOfPlaceValue(pending.start()));
+                    return Err(Self::generate_pending_err(pending));
                 }
             }
         }
@@ -704,10 +769,11 @@ impl<'c> Parser<'c> {
                     }
                 }
                 _ => {
-                    return Err(ParseError::OutOfPlaceValue(pending.start()));
+                    return Err(Self::generate_pending_err(pending));
                 }
             }
         }
+        // dbg!(&unfiltered);
         Ok(ParseFilter {
             filtered,
             unfiltered,
