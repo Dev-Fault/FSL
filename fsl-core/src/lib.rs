@@ -707,7 +707,7 @@ mod interpreter {
     #[tokio::test]
     async fn print_var_list() {
         test_interpreter(
-            r#"a.store(0) b.store(0), c.store(0), print([a, b, c])"#,
+            r#"a.store(0) b.store(0) c.store(0) print([a, b, c])"#,
             r#"[0, 0, 0]"#,
         )
         .await;

@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
-use fsl_core::{FslInterpreter, data::InterpreterData, libraries::Library, types::value::Value};
+use fsl_core::{FslInterpreter, data::InterpreterData, types::value::Value};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {

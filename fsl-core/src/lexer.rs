@@ -142,12 +142,17 @@ impl<'c> Token<'c> {
         }
     }
 
-    pub fn identifier(source: &'c str, identifier: &'c str, location: usize) -> Token<'c> {
-        Token {
+    pub fn identifier(
+        source: &'c str,
+        identifier: &'c str,
+        location: usize,
+    ) -> Result<Token<'c>, LexError<'c>> {
+        let token = Token {
             token_type: TokenType::Identifier(identifier),
             source,
             location,
-        }
+        };
+        Ok(token)
     }
 
     pub fn comment(source: &'c str, comment: &'c str, location: usize) -> Token<'c> {
@@ -268,6 +273,7 @@ enum Context<'c> {
 pub enum LexError<'c> {
     UnexpectedToken(Token<'c>),
     InvalidNumber(Token<'c>),
+    InvalidIdentifier(Token<'c>),
     UnclosedString(Token<'c>),
     UnclosedComment(Token<'c>),
 }
@@ -308,6 +314,16 @@ impl<'c> Display for LexError<'c> {
                 write!(
                     f,
                     "Unclosed comment detected on line {}\n{}: {}",
+                    token.line_number(),
+                    token.line_number(),
+                    token.line()
+                )
+            }
+            LexError::InvalidIdentifier(token) => {
+                write!(
+                    f,
+                    "Invalid identifier \"{}\" on line {}\n{}: {}",
+                    token.token_type,
                     token.line_number(),
                     token.line_number(),
                     token.line()
@@ -457,10 +473,20 @@ impl<'c> Iterator for Lexer<'c> {
                 }
                 COLON if self.no_context() => {
                     let token = Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
-                    self.pending = Some(token);
-                    let token = Token::identifier(self.source, self.partial, self.location);
-                    self.flush_partial();
-                    token
+                    match Token::identifier(self.source, self.partial, self.location) {
+                        Ok(identifier) => {
+                            if identifier.as_str().is_empty() {
+                                token
+                            } else {
+                                self.pending = Some(token);
+                                self.flush_partial();
+                                identifier
+                            }
+                        }
+                        Err(e) => {
+                            return Some(Err(e));
+                        }
+                    }
                 }
                 DOT if self.no_context() => {
                     let token = Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
@@ -657,7 +683,6 @@ mod tests {
             (Symbol, ")"),
             (Symbol, "["),
             (Symbol, "]"),
-            (Identifier, ""),
             (Symbol, ":"),
             (Symbol, "."),
             (Symbol, ","),

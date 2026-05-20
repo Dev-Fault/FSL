@@ -192,8 +192,7 @@ impl<'c> Display for ParseError<'c> {
             ParseError::UnfinishedExpression(expr) => {
                 write!(
                     f,
-                    "Unfinished expression \"{}{}\" on line {}\n{}: {}\n
-                    ",
+                    "Unfinished expression \"{}{}\" on line {}\n{}: {}\n",
                     expr.name.as_str(),
                     expr.start.token_type,
                     expr.start.line_number(),
@@ -219,8 +218,7 @@ impl<'c> Display for ParseError<'c> {
             ParseError::UnfinishedList(list) => {
                 write!(
                     f,
-                    "Unfinished list \"{}\" on line {}\n{}: {}\n
-                    ",
+                    "Unfinished list \"{}\" on line {}\n{}: {}\n",
                     list.start.token_type,
                     list.start.line_number(),
                     list.start.line_number(),
@@ -230,8 +228,7 @@ impl<'c> Display for ParseError<'c> {
             ParseError::UnfinishedMap(map) => {
                 write!(
                     f,
-                    "Unfinished map \"{}\" on line {}\n{}: {}\n
-                    ",
+                    "Unfinished map \"{}\" on line {}\n{}: {}\n",
                     map.start.token_type,
                     map.start.line_number(),
                     map.start.line_number(),
@@ -523,7 +520,7 @@ impl<'c> Parser<'c> {
                     kind: ArgKind::Identifier(_),
                     token,
                 }) => Ok(self.pend_key(token)),
-                _ => Err(ParseError::OutOfPlaceValue(pending.start())),
+                _ => Err(ParseError::OutOfPlaceSymbol(token)),
             },
             None => Err(ParseError::OutOfPlaceSymbol(token)),
         }
@@ -613,12 +610,15 @@ impl<'c> Parser<'c> {
                         PendingArg::Key(key) => {
                             Ok(self.try_pend_map_with_value(token, key, value.into())?)
                         }
-                        PendingArg::Done(done) => {
-                            self.pend_done(done);
-                            self.pend_done(value);
-                            Ok(())
+                        PendingArg::Done(_) => {
+                            // Top level commas not allowed
+                            Err(ParseError::OutOfPlaceSymbol(token))
                         }
-                        _ => Err(ParseError::OutOfPlaceValue(parent.start())),
+                        PendingArg::DotArg(arg) => Err(ParseError::OutOfPlaceValue(arg.token)),
+                        PendingArg::PathArg(path) => Err(ParseError::OutOfPlaceValue(path.start)),
+                        PendingArg::Map(_) => {
+                            unreachable!("map should be listed as done if comma is encountered")
+                        }
                     },
                     None => {
                         // Top level commas not allowed

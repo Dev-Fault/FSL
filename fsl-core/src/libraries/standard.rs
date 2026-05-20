@@ -2767,7 +2767,7 @@ pub mod tests {
     #[tokio::test]
     async fn clone_var() {
         test_interpreter(
-            "a.store([1, 2, 3]) b.store(a), print(b.clone())",
+            "a.store([1, 2, 3]) b.store(a) print(b.clone())",
             "[1, 2, 3]",
         )
         .await;
