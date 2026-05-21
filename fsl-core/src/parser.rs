@@ -618,6 +618,7 @@ impl<'c> Parser<'c> {
                     Some(pending) => match pending {
                         PendingArg::DotArg(parent_dot_arg) => {
                             let mut path = Path::new(parent_dot_arg.token);
+                            path.end = Some(arg.token);
                             path.data.push_back(parent_dot_arg);
                             path.data.push_back(arg);
                             self.pend_path(path);

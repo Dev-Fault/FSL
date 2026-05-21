@@ -1882,7 +1882,7 @@ mod interpreter {
 	            	weapon: [name: "sword"]
 	            ])
 
-	            player.weapon.name.set("saber")
+	            player.name.set("saber")
             "#,
         )
         .await;
