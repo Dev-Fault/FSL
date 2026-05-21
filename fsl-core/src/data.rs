@@ -13,7 +13,7 @@ pub const DEFAULT_LOOP_LIMIT: usize = u16::MAX as usize;
 use tokio::sync::Mutex;
 
 use crate::{
-    error::{CommandError, ValueError},
+    error::CommandError,
     types::{command::UserDef, value::Value},
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
@@ -34,7 +34,7 @@ impl MemoryLimit {
         }
     }
 
-    pub fn allocate(&self, size: Option<usize>) -> Result<(), ValueError> {
+    pub fn allocate(&self, size: Option<usize>) -> Result<(), CommandError> {
         let Some(limit) = self.limit else {
             return Ok(());
         };
@@ -45,14 +45,14 @@ impl MemoryLimit {
                 match mem.checked_add(size) {
                     Some(new_mem) => {
                         if new_mem > limit {
-                            return Err(ValueError::VarMemoryLimitReached);
+                            return Err(CommandError::VarMemoryLimitReached);
                         }
                         self.allocated.store(new_mem, Ordering::Relaxed);
                     }
-                    None => return Err(ValueError::VarMemoryLimitReached),
+                    None => return Err(CommandError::VarMemoryLimitReached),
                 };
             }
-            None => return Err(ValueError::VarMemoryLimitReached),
+            None => return Err(CommandError::VarMemoryLimitReached),
         }
         Ok(())
     }

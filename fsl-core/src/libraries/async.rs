@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::{CommandError, ValueError},
+    error::CommandError,
     register_command,
     types::{
         FslType,
@@ -27,9 +27,9 @@ pub async fn join<'c>(
 ) -> Result<Value<'c>, CommandError> {
     let args = command.take_args();
     let args = args.into_iter();
-    let args: Result<Vec<Command<'c>>, ValueError> = args
+    let args: Result<Vec<Command<'c>>, CommandError> = args
         .map(|arg| arg.as_command())
-        .collect::<Result<Vec<Command<'c>>, ValueError>>();
+        .collect::<Result<Vec<Command<'c>>, CommandError>>();
     let commands = args?;
     let mut executors = Vec::new();
     for command in commands {

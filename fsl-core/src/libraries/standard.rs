@@ -12,7 +12,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     FslInterpreter, InterpreterData,
-    error::{CommandError, ExecutionError, ValueError},
+    error::CommandError,
     register_command,
     types::{
         FslType,
@@ -252,7 +252,7 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
 pub async fn take_if_var<'c>(
     value: &mut Value<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Option<(Cow<'c, str>, VarEntry<'c>)>, ExecutionError> {
+) -> Result<Option<(Cow<'c, str>, VarEntry<'c>)>, CommandError> {
     if value.is_type(FslType::Var) {
         let tmp_value = mem::take(value);
         let label = tmp_value.as_var_label(data.clone()).await?;
@@ -269,7 +269,7 @@ pub fn update_if_var<'c>(
     var: Option<(Cow<'c, str>, VarEntry<'c>)>,
     value: Value<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ValueError> {
+) -> Result<Value<'c>, CommandError> {
     if let Some((label, mut var_entry)) = var {
         var_entry.value = value;
         data.vars.insert_entry(label.clone(), var_entry)?;
@@ -1128,9 +1128,7 @@ async fn get_index<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     match indices {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [i] => {
             let i = i.clone().as_usize(data.clone()).await?;
             let return_value = list.get(i).cloned();
@@ -1140,12 +1138,10 @@ async fn get_index<'c>(
             let i = i.clone().as_usize(data.clone()).await?;
             match list.get(i) {
                 Some(Value::List(inner_list)) => get_index(inner_list, rest, data).await,
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAList(format!(
+                Some(_) => Err(CommandError::NotAList(format!(
                     "cannot index into value that is not a list",
-                )))),
-                None => Err(CommandError::ValueError(ValueError::IndexOutOfBounds(
-                    format!("index {} was not present in list {:?}", i, list),
                 ))),
+                None => Err(CommandError::IndexOutOfBounds),
             }
         }
     }
@@ -1158,28 +1154,22 @@ async fn get_mut_index<'c, 'a>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<&'a mut Value<'c>, CommandError> {
     match indices {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [i] => {
             let i = i.clone().as_usize(data.clone()).await?;
             match list.get_mut(i) {
                 Some(i) => Ok(i),
-                None => Err(CommandError::ValueError(ValueError::IndexOutOfBounds(
-                    format!("index {} was not present in list", i),
-                ))),
+                None => Err(CommandError::IndexOutOfBounds),
             }
         }
         [i, rest @ ..] => {
             let i = i.clone().as_usize(data.clone()).await?;
             match list.get_mut(i) {
                 Some(Value::List(inner_list)) => get_mut_index(inner_list, rest, data).await,
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAList(format!(
+                Some(_) => Err(CommandError::NotAList(format!(
                     "cannot index into value that is not a list",
-                )))),
-                None => Err(CommandError::ValueError(ValueError::IndexOutOfBounds(
-                    format!("index {} was not present in list", i),
                 ))),
+                None => Err(CommandError::IndexOutOfBounds),
             }
         }
     }
@@ -1192,28 +1182,22 @@ async fn remove_index<'c, 'a>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     match indices {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [i] => {
             let i = i.clone().as_usize(data.clone()).await?;
             match list.get(i) {
                 Some(_) => Ok(list.remove(i)),
-                None => Err(CommandError::ValueError(ValueError::IndexOutOfBounds(
-                    format!("index {} was not present in list", i),
-                ))),
+                None => Err(CommandError::IndexOutOfBounds),
             }
         }
         [i, rest @ ..] => {
             let i = i.clone().as_usize(data.clone()).await?;
             match list.get_mut(i) {
                 Some(Value::List(inner_list)) => remove_index(inner_list, rest, data).await,
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAList(format!(
+                Some(_) => Err(CommandError::NotAList(format!(
                     "cannot index into value that is not a list",
-                )))),
-                None => Err(CommandError::ValueError(ValueError::IndexOutOfBounds(
-                    format!("index {} was not present in list", i),
                 ))),
+                None => Err(CommandError::IndexOutOfBounds),
             }
         }
     }
@@ -1227,18 +1211,14 @@ async fn insert_at_index<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<(), CommandError> {
     match indices {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [i] => {
             let i = i.clone().as_usize(data.clone()).await?;
             if i <= list.len() {
                 list.insert(i, value_to_insert);
                 Ok(())
             } else {
-                Err(CommandError::ValueError(ValueError::IndexOutOfBounds(
-                    format!("index {} was not present in list", i),
-                )))
+                Err(CommandError::IndexOutOfBounds)
             }
         }
         [i, rest @ ..] => {
@@ -1247,12 +1227,10 @@ async fn insert_at_index<'c>(
                 Some(Value::List(inner_list)) => {
                     insert_at_index(inner_list, rest, value_to_insert, data).await
                 }
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAList(format!(
+                Some(_) => Err(CommandError::NotAList(format!(
                     "cannot index into value that is not a list",
-                )))),
-                None => Err(CommandError::ValueError(ValueError::IndexOutOfBounds(
-                    format!("index {} was not present in list", i),
                 ))),
+                None => Err(CommandError::IndexOutOfBounds),
             }
         }
     }
@@ -1298,9 +1276,7 @@ async fn get_nested<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     match keys {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
             let return_value = map.get(&*key).cloned();
@@ -1310,12 +1286,13 @@ async fn get_nested<'c>(
             let key = key.clone().as_text(data.clone()).await?;
             match map.get(&*key) {
                 Some(Value::Map(inner_map)) => get_nested(inner_map, rest, data).await,
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                Some(_) => Err(CommandError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
                     key
-                )))),
-                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
-                    format!("non existant key \"{}\" in map", key),
+                ))),
+                None => Err(CommandError::NonExistantKey(format!(
+                    "non existant key \"{}\" in map",
+                    key
                 ))),
             }
         }
@@ -1348,17 +1325,16 @@ async fn set_nested<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     match keys {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
             if let Some(_) = map.get(&*key) {
                 let return_value = map.insert(key, value);
                 Ok(return_value.unwrap_or(Value::None))
             } else {
-                Err(CommandError::ValueError(ValueError::NonExistantKey(
-                    format!("non existant key \"{}\" in map", key),
+                Err(CommandError::NonExistantKey(format!(
+                    "non existant key \"{}\" in map",
+                    key
                 )))
             }
         }
@@ -1366,12 +1342,13 @@ async fn set_nested<'c>(
             let key = key.clone().as_text(data.clone()).await?;
             match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => set_nested(inner_map, rest, value, data).await,
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                Some(_) => Err(CommandError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
                     key
-                )))),
-                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
-                    format!("non existant key \"{}\" in map", key),
+                ))),
+                None => Err(CommandError::NonExistantKey(format!(
+                    "non existant key \"{}\" in map",
+                    key
                 ))),
             }
         }
@@ -1385,9 +1362,7 @@ async fn remove_nested<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     match keys {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
             let return_value = map.remove(&*key);
@@ -1397,12 +1372,13 @@ async fn remove_nested<'c>(
             let key = key.clone().as_text(data.clone()).await?;
             match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => remove_nested(inner_map, rest, data).await,
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                Some(_) => Err(CommandError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
                     key
-                )))),
-                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
-                    format!("non existant key \"{}\" in map", key),
+                ))),
+                None => Err(CommandError::NonExistantKey(format!(
+                    "non existant key \"{}\" in map",
+                    key
                 ))),
             }
         }
@@ -1417,9 +1393,7 @@ async fn insert_nested<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     match keys {
-        [] => Err(CommandError::ValueError(ValueError::NotAMap(
-            "".to_string(),
-        ))),
+        [] => Err(CommandError::NotAMap("".to_string())),
         [key] => {
             let key = key.clone().as_text(data.clone()).await?;
             let return_value = map.insert(key, value);
@@ -1429,12 +1403,13 @@ async fn insert_nested<'c>(
             let key = key.clone().as_text(data.clone()).await?;
             match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => insert_nested(inner_map, rest, value, data).await,
-                Some(_) => Err(CommandError::ValueError(ValueError::NotAMap(format!(
+                Some(_) => Err(CommandError::NotAMap(format!(
                     "Can't use key \"{}\" to access a value that is not a map",
                     key
-                )))),
-                None => Err(CommandError::ValueError(ValueError::NonExistantKey(
-                    format!("non existant key \"{}\" in map", key),
+                ))),
+                None => Err(CommandError::NonExistantKey(format!(
+                    "non existant key \"{}\" in map",
+                    key
                 ))),
             }
         }
@@ -2559,8 +2534,7 @@ pub mod tests {
     use std::time::{Duration, SystemTime};
 
     use crate::{
-        CommandError, FslInterpreter, InterpreterError, InterpreterErrorType,
-        data::InterpreterData, error::ValueError,
+        CommandError, FslInterpreter, InterpreterError, InterpreterErrorType, data::InterpreterData,
     };
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
@@ -2778,7 +2752,7 @@ pub mod tests {
         let err = test_interpreter_err_type("a.store(1) print(a) a.take() print(a)").await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_)))
+            InterpreterErrorType::Command(CommandError::NonExistantVar(_))
         ));
     }
 
@@ -2809,7 +2783,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_)))
+            InterpreterErrorType::Command(CommandError::NonExistantVar(_))
         ))
     }
 
@@ -2899,7 +2873,7 @@ pub mod tests {
         let err = test_interpreter_err_type(r#"print(eq(1, "a"))"#).await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::FailedParse(_)))
+            InterpreterErrorType::Command(CommandError::FailedParse(_))
         ));
     }
 
@@ -3540,9 +3514,7 @@ pub mod tests {
         let err = test_interpreter_err_type("var.store(true) length(var).print()").await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::InvalidConversion(
-                _
-            )))
+            InterpreterErrorType::Command(CommandError::InvalidConversion(_))
         ))
     }
 
@@ -3939,7 +3911,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_)))
+            InterpreterErrorType::Command(CommandError::NonExistantVar(_))
         ))
     }
 
@@ -4087,7 +4059,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantKey(_)))
+            InterpreterErrorType::Command(CommandError::NonExistantKey(_))
         ))
     }
 
@@ -4945,7 +4917,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::FailedParse(_))),
+            InterpreterErrorType::Command(CommandError::FailedParse(_)),
         ))
     }
 
@@ -4962,7 +4934,7 @@ pub mod tests {
         .await;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(ValueError::NonExistantVar(_))),
+            InterpreterErrorType::Command(CommandError::NonExistantVar(_)),
         ))
     }
 }

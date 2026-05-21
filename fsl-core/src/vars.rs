@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     data::MemoryLimit,
-    error::ValueError,
+    error::CommandError,
     types::{FslType, value::Value},
 };
 
@@ -53,18 +53,18 @@ impl<'c> VarMap<'c> {
         label: Cow<'c, str>,
         value: Value<'c>,
         make_entry: F,
-    ) -> Result<(), ValueError>
+    ) -> Result<(), CommandError>
     where
         F: FnOnce(Value<'c>) -> VarEntry<'c>,
     {
         match value {
             Value::Var(_) => {
-                return Err(ValueError::InvalidVarValue(
+                return Err(CommandError::InvalidVarValue(
                     "cannot store var in var".into(),
                 ));
             }
             Value::Command(_) => {
-                return Err(ValueError::InvalidVarValue(
+                return Err(CommandError::InvalidVarValue(
                     "cannot store command in var".into(),
                 ));
             }
@@ -72,7 +72,7 @@ impl<'c> VarMap<'c> {
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
                 if map.get(&label).is_some_and(|entry| entry.constant) {
-                    return Err(ValueError::AttemptToOverwriteConstant(format!(
+                    return Err(CommandError::AttemptToOverwriteConstant(format!(
                         "cannot overwrite constant var {}",
                         label
                     )));
@@ -83,20 +83,20 @@ impl<'c> VarMap<'c> {
         }
     }
 
-    pub fn insert(&self, label: Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+    pub fn insert(&self, label: Cow<'c, str>, value: Value<'c>) -> Result<(), CommandError> {
         self.insert_with(label, value, VarEntry::new)
     }
 
-    pub fn insert_const(&self, label: Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+    pub fn insert_const(&self, label: Cow<'c, str>, value: Value<'c>) -> Result<(), CommandError> {
         self.insert_with(label, value, VarEntry::new_const)
     }
 
-    pub fn remove_value(&self, label: &str) -> Result<Option<Value<'c>>, ValueError> {
+    pub fn remove_value(&self, label: &str) -> Result<Option<Value<'c>>, CommandError> {
         let lock = self.map.lock();
         let mut map = lock.unwrap();
 
         if map.get(label).is_some_and(|entry| entry.constant) {
-            return Err(ValueError::AttemptToFreeConstant(format!(
+            return Err(CommandError::AttemptToFreeConstant(format!(
                 "cannot remove constant var {}",
                 label
             )));
@@ -104,7 +104,7 @@ impl<'c> VarMap<'c> {
         Ok(map.remove(label).map(|entry| entry.value))
     }
 
-    pub fn get_cloned(&self, label: &str) -> Result<Value<'c>, ValueError> {
+    pub fn get_cloned(&self, label: &str) -> Result<Value<'c>, CommandError> {
         let entry = self.map.lock().unwrap().get(label).cloned();
 
         if let Some(entry) = entry {
@@ -114,20 +114,20 @@ impl<'c> VarMap<'c> {
                 Ok(entry.value)
             }
         } else {
-            Err(ValueError::NonExistantVar(format!(
+            Err(CommandError::NonExistantVar(format!(
                 "cannot not get value of non existant var {}",
                 label
             )))
         }
     }
 
-    pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, ValueError> {
+    pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, CommandError> {
         let mut vars = self.map.lock().unwrap();
         let entry = vars.get_mut(label);
 
         if let Some(entry) = entry {
             if entry.constant {
-                return Err(ValueError::AttemptToOverwriteConstant(format!(
+                return Err(CommandError::AttemptToOverwriteConstant(format!(
                     "cannot overwrite constant var {}",
                     label
                 )));
@@ -135,7 +135,7 @@ impl<'c> VarMap<'c> {
             let var_entry = mem::take(entry);
             Ok(var_entry)
         } else {
-            Err(ValueError::NonExistantVar(format!(
+            Err(CommandError::NonExistantVar(format!(
                 "cannot not get value of non existant var {}",
                 label
             )))
@@ -242,14 +242,14 @@ impl<'c> VarStack<'c> {
         }
     }
 
-    fn find_stack_with_var(&self, label: &Cow<'c, str>) -> Result<VarMap<'c>, ValueError> {
+    fn find_stack_with_var(&self, label: &Cow<'c, str>) -> Result<VarMap<'c>, CommandError> {
         let stack = self.stack.lock().unwrap();
         for map in stack.iter().rev() {
             if map.contains(&label) {
                 return Ok(map.clone());
             }
         }
-        Err(ValueError::NonExistantVar(format!(
+        Err(CommandError::NonExistantVar(format!(
             "var {} does not exist",
             label
         )))
@@ -261,7 +261,7 @@ impl<'c> VarStack<'c> {
     }
 
     /// Inserts var local first
-    pub fn insert(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+    pub fn insert(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), CommandError> {
         let size = value.mem_size();
         let stack = self.get_last_stack();
         self.bound.deallocate(stack.get_size(&label));
@@ -271,7 +271,7 @@ impl<'c> VarStack<'c> {
     }
 
     /// Updates var local first, throws error if var doesn't exist
-    pub fn update_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+    pub fn update_var(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), CommandError> {
         let size = value.mem_size();
         let stack = self.find_stack_with_var(label)?;
         self.bound.deallocate(stack.get_size(&label));
@@ -285,7 +285,7 @@ impl<'c> VarStack<'c> {
         &self,
         label: &Cow<'c, str>,
         value: Value<'c>,
-    ) -> Result<(), ValueError> {
+    ) -> Result<(), CommandError> {
         let size = value.mem_size();
         match self.find_stack_with_var(label) {
             Ok(stack) => {
@@ -304,7 +304,7 @@ impl<'c> VarStack<'c> {
     }
 
     /// Inserts const var local first
-    pub fn insert_const(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), ValueError> {
+    pub fn insert_const(&self, label: &Cow<'c, str>, value: Value<'c>) -> Result<(), CommandError> {
         let size = value.mem_size();
         let locals = self.get_last_stack();
         self.bound.allocate(size)?;
@@ -312,7 +312,7 @@ impl<'c> VarStack<'c> {
     }
 
     /// Removes var local first and returns removed value
-    pub fn remove(&self, label: &Cow<'c, str>) -> Result<Option<Value<'c>>, ValueError> {
+    pub fn remove(&self, label: &Cow<'c, str>) -> Result<Option<Value<'c>>, CommandError> {
         let stack = self.find_stack_with_var(label)?;
         let size = stack.get_size(&label);
         let return_value = stack.remove_value(&label)?;
@@ -320,33 +320,37 @@ impl<'c> VarStack<'c> {
         Ok(return_value)
     }
 
-    pub fn get(&self, label: &str) -> Result<Value<'c>, ValueError> {
+    pub fn get(&self, label: &str) -> Result<Value<'c>, CommandError> {
         let stack = self.stack.lock().unwrap();
         for map in stack.iter().rev() {
             if map.contains(label) {
                 return map.get_cloned(label);
             }
         }
-        Err(ValueError::NonExistantVar(format!(
+        Err(CommandError::NonExistantVar(format!(
             "cannot get value of non existant var {}",
             label
         )))
     }
 
-    pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, ValueError> {
+    pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, CommandError> {
         let stack = self.stack.lock().unwrap();
         for map in stack.iter().rev() {
             if map.contains(label) {
                 return map.take_entry(label);
             }
         }
-        Err(ValueError::NonExistantVar(format!(
+        Err(CommandError::NonExistantVar(format!(
             "cannot get value of non existant var {}",
             label
         )))
     }
 
-    pub fn insert_entry(&self, label: Cow<'c, str>, entry: VarEntry<'c>) -> Result<(), ValueError> {
+    pub fn insert_entry(
+        &self,
+        label: Cow<'c, str>,
+        entry: VarEntry<'c>,
+    ) -> Result<(), CommandError> {
         let stack = self.stack.lock().unwrap();
         for map in stack.iter().rev() {
             if map.contains(&label) {
@@ -354,7 +358,7 @@ impl<'c> VarStack<'c> {
                 return Ok(());
             }
         }
-        Err(ValueError::NonExistantVar(format!(
+        Err(CommandError::NonExistantVar(format!(
             "cannot get value of non existant var {}",
             label
         )))

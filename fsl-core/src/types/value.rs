@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     InterpreterData,
-    error::{ExecutionError, ValueError},
+    error::CommandError,
     standard::NUMBER,
     types::{FslType, command::Command},
 };
@@ -101,7 +101,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn eq(&self, other: &Value) -> Result<bool, ValueError> {
+    pub fn eq(&self, other: &Value) -> Result<bool, CommandError> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
             (Value::Float(a), Value::Int(b)) => Ok(*a == *b as f64),
@@ -126,7 +126,7 @@ impl<'c> Value<'c> {
                 Ok(true)
             }
             (Value::None, Value::None) => Ok(true),
-            _ => Err(ValueError::InvalidComparison(format!(
+            _ => Err(CommandError::InvalidComparison(format!(
                 "cannot compare {} with {}",
                 self.as_type().as_str(),
                 other.as_type().as_str()
@@ -134,7 +134,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, ExecutionError> {
+    pub fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, CommandError> {
         Box::pin(async {
             let to_type = FslType::Int;
             match self {
@@ -160,11 +160,11 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub async fn as_usize(self, data: Arc<InterpreterData<'c>>) -> Result<usize, ExecutionError> {
+    pub async fn as_usize(self, data: Arc<InterpreterData<'c>>) -> Result<usize, CommandError> {
         let integer = self.as_int(data).await?;
         if integer < 0 {
             Err(
-                ValueError::NegativeIndex(format!("cannot use a negative value as an index"))
+                CommandError::NegativeIndex(format!("cannot use a negative value as an index"))
                     .into(),
             )
         } else {
@@ -172,7 +172,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, ExecutionError> {
+    pub fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, CommandError> {
         Box::pin(async {
             let to_type = FslType::Float;
             match self {
@@ -198,7 +198,7 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, ExecutionError> {
+    pub fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, CommandError> {
         Box::pin(async {
             let to_type = FslType::Bool;
             match self {
@@ -227,7 +227,7 @@ impl<'c> Value<'c> {
     pub fn as_var_label(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Cow<'c, str>, ExecutionError> {
+    ) -> ValueResult<'c, Cow<'c, str>, CommandError> {
         Box::pin(async move {
             let to_type = FslType::Var;
             match self {
@@ -253,7 +253,7 @@ impl<'c> Value<'c> {
     pub fn as_text(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Cow<'c, str>, ExecutionError> {
+    ) -> ValueResult<'c, Cow<'c, str>, CommandError> {
         Box::pin(async {
             match self {
                 Value::Int(value) => Ok(Cow::Owned(value.to_string())),
@@ -308,7 +308,7 @@ impl<'c> Value<'c> {
     pub fn as_list(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Vec<Value<'c>>, ExecutionError> {
+    ) -> ValueResult<'c, Vec<Value<'c>>, CommandError> {
         Box::pin(async {
             let to_type = FslType::List;
             match self {
@@ -339,7 +339,7 @@ impl<'c> Value<'c> {
     pub fn as_map(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, ExecutionError> {
+    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, CommandError> {
         Box::pin(async {
             let to_type = FslType::Map;
             match self {
@@ -370,7 +370,7 @@ impl<'c> Value<'c> {
     pub fn as_number(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Value<'c>, ExecutionError> {
+    ) -> ValueResult<'c, Value<'c>, CommandError> {
         Box::pin(async move {
             match self {
                 Value::Int(n) => Ok(Value::Int(n)),
@@ -402,7 +402,7 @@ impl<'c> Value<'c> {
         self,
         data: Arc<InterpreterData<'c>>,
         valid_types: &'static [FslType],
-    ) -> ValueResult<'c, Value<'c>, ExecutionError> {
+    ) -> ValueResult<'c, Value<'c>, CommandError> {
         Box::pin(async move {
             let value;
             match self.as_type() {
@@ -439,7 +439,7 @@ impl<'c> Value<'c> {
     pub fn as_raw_unchecked(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Value<'c>, ExecutionError> {
+    ) -> ValueResult<'c, Value<'c>, CommandError> {
         Box::pin(async move {
             let value;
             match self.as_type() {
@@ -473,7 +473,7 @@ impl<'c> Value<'c> {
         self,
         data: Arc<InterpreterData<'c>>,
         key_types: &'static [FslType],
-    ) -> Result<Vec<Value<'c>>, ExecutionError> {
+    ) -> Result<Vec<Value<'c>>, CommandError> {
         let accesor = self.as_raw(data.clone(), key_types).await?;
 
         match accesor {
@@ -482,21 +482,21 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn as_command(self) -> Result<Command<'c>, ValueError> {
+    pub fn as_command(self) -> Result<Command<'c>, CommandError> {
         if let Value::Command(command) = self {
             Ok(*command)
         } else {
-            Err(ValueError::InvalidConversion(
+            Err(CommandError::InvalidConversion(
                 "failed to convert value into command".into(),
             ))
         }
     }
 
-    pub fn get_var_label(&self) -> Result<Cow<'c, str>, ValueError> {
+    pub fn get_var_label(&self) -> Result<Cow<'c, str>, CommandError> {
         if let Value::Var(label) = self {
             Ok(label.clone())
         } else {
-            Err(ValueError::NotAVar(format!(
+            Err(CommandError::NotAVar(format!(
                 "value {} is not a var",
                 self.to_string()
             )))
@@ -511,7 +511,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, ValueError> {
+    pub fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, CommandError> {
         if let Value::Var(label) = self {
             match data.vars.get(label) {
                 Ok(value) => match value {
@@ -528,8 +528,8 @@ impl<'c> Value<'c> {
         }
     }
 
-    fn gen_conversion_err_to_type(&self, to: FslType) -> ValueError {
-        ValueError::InvalidConversion(format!(
+    fn gen_conversion_err_to_type(&self, to: FslType) -> CommandError {
+        CommandError::InvalidConversion(format!(
             "cannot convert value \"{}\" from type {} to type {}",
             self.to_string(),
             self.as_type().as_str(),
@@ -537,8 +537,8 @@ impl<'c> Value<'c> {
         ))
     }
 
-    fn gen_conversion_err_to_types(&self, to: &[FslType]) -> ValueError {
-        ValueError::InvalidConversion(format!(
+    fn gen_conversion_err_to_types(&self, to: &[FslType]) -> CommandError {
+        CommandError::InvalidConversion(format!(
             "cannot convert value \"{}\" from type {} to type {:?}",
             self.to_string(),
             self.as_type().as_str(),
@@ -623,14 +623,14 @@ impl<'c> From<Command<'c>> for Value<'c> {
     }
 }
 
-impl From<ParseIntError> for ValueError {
+impl From<ParseIntError> for CommandError {
     fn from(_: ParseIntError) -> Self {
-        ValueError::FailedParse("failed to convert text to int (whole number)".into())
+        CommandError::FailedParse("failed to convert text to int (whole number)".into())
     }
 }
 
-impl From<ParseFloatError> for ValueError {
+impl From<ParseFloatError> for CommandError {
     fn from(_: ParseFloatError) -> Self {
-        ValueError::FailedParse("failed to convert text to float (decimal)".into())
+        CommandError::FailedParse("failed to convert text to float (decimal)".into())
     }
 }

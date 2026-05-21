@@ -7,7 +7,6 @@ pub enum InterpreterErrorType {
     Lex(String),
     Parse(String),
     Command(CommandError),
-    Value(ValueError),
     Import(String),
     UnmatchedCurlyBraces,
     Exit,
@@ -19,7 +18,6 @@ impl std::fmt::Display for InterpreterErrorType {
             InterpreterErrorType::Lex(output) => output,
             InterpreterErrorType::Parse(output) => output,
             InterpreterErrorType::Command(command_error) => &command_error.to_string(),
-            InterpreterErrorType::Value(value_error) => &value_error.to_string(),
             InterpreterErrorType::UnmatchedCurlyBraces => "unmatched curly braces",
             InterpreterErrorType::Import(output) => output,
             InterpreterErrorType::Exit => "",
@@ -70,15 +68,6 @@ impl From<CommandError> for InterpreterError {
     }
 }
 
-impl From<ValueError> for InterpreterError {
-    fn from(value: ValueError) -> Self {
-        Self {
-            error_type: InterpreterErrorType::Value(value),
-            stack_trace: None,
-        }
-    }
-}
-
 impl std::fmt::Display for InterpreterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.stack_trace {
@@ -92,7 +81,6 @@ pub enum CommandError {
     WrongArgType(String),
     WrongArgCount(String),
     WrongArgOrder(String),
-    ValueError(ValueError),
     DivisionByZero,
     LoopLimitReached,
     OutputLimitExceeded,
@@ -114,6 +102,20 @@ pub enum CommandError {
     ElseIfMustBePairedWithElse,
     InvalidArgument(String),
     Overflow,
+    InvalidComparison(String),
+    InvalidConversion(String),
+    FailedParse(String),
+    NonExistantVar(String),
+    NotAVar(String),
+    InvalidVarValue(String),
+    NegativeIndex(String),
+    VarMemoryLimitReached,
+    AttemptToOverwriteConstant(String),
+    AttemptToFreeConstant(String),
+    EmptyMapPath(String),
+    NotAMap(String),
+    NotAList(String),
+    NonExistantKey(String),
 }
 
 impl std::fmt::Display for CommandError {
@@ -122,7 +124,6 @@ impl std::fmt::Display for CommandError {
             CommandError::WrongArgType(error_text) => error_text,
             CommandError::WrongArgCount(error_text) => error_text,
             CommandError::WrongArgOrder(error_text) => error_text,
-            CommandError::ValueError(value_error) => &value_error.to_string(),
             CommandError::DivisionByZero => "cannot divide by zero",
             CommandError::LoopLimitReached => "maximum loop limit reached",
             CommandError::IndexOutOfBounds => "index out of bounds",
@@ -150,18 +151,25 @@ impl std::fmt::Display for CommandError {
             CommandError::InvalidArgument(error_text) => error_text,
             CommandError::OutputLimitExceeded => "memory limit for print exceeded",
             CommandError::Overflow => "calculation resulted in overflow",
+            CommandError::InvalidComparison(error_text) => error_text,
+            CommandError::InvalidConversion(error_text) => error_text,
+            CommandError::FailedParse(error_text) => error_text,
+            CommandError::NonExistantVar(error_text) => error_text,
+            CommandError::NotAVar(error_text) => error_text,
+            CommandError::NegativeIndex(error_text) => error_text,
+            CommandError::InvalidVarValue(error_text) => error_text,
+            CommandError::VarMemoryLimitReached => {
+                &"interpreter var memory limit reached".to_string()
+            }
+            CommandError::AttemptToOverwriteConstant(error_text) => error_text,
+            CommandError::AttemptToFreeConstant(error_text) => error_text,
+            CommandError::EmptyMapPath(error_text) => error_text,
+            CommandError::NotAMap(error_text) => error_text,
+            CommandError::NotAList(error_text) => error_text,
+            CommandError::NonExistantKey(error_text) => error_text,
         };
 
         write!(f, "{}", output)
-    }
-}
-
-impl From<ExecutionError> for CommandError {
-    fn from(value: ExecutionError) -> Self {
-        match value {
-            ExecutionError::ValueError(value_error) => Self::ValueError(value_error),
-            ExecutionError::CommandError(command_error) => command_error,
-        }
     }
 }
 
@@ -180,88 +188,4 @@ impl From<tokio::task::JoinError> for CommandError {
     }
 }
 
-impl From<ValueError> for CommandError {
-    fn from(value: ValueError) -> Self {
-        CommandError::ValueError(value)
-    }
-}
-
 impl std::error::Error for CommandError {}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExecutionError {
-    ValueError(ValueError),
-    CommandError(CommandError),
-}
-
-impl std::fmt::Display for ExecutionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let output = match self {
-            ExecutionError::ValueError(value_error) => value_error.to_string(),
-            ExecutionError::CommandError(command_error) => command_error.to_string(),
-        };
-
-        write!(f, "{}", output)
-    }
-}
-
-impl std::error::Error for ExecutionError {}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ValueError {
-    InvalidComparison(String),
-    InvalidConversion(String),
-    FailedParse(String),
-    NonExistantVar(String),
-    NotAVar(String),
-    InvalidVarValue(String),
-    NegativeIndex(String),
-    VarMemoryLimitReached,
-    AttemptToOverwriteConstant(String),
-    AttemptToFreeConstant(String),
-    EmptyMapPath(String),
-    NotAMap(String),
-    NotAList(String),
-    NonExistantKey(String),
-    IndexOutOfBounds(String),
-}
-
-impl From<ValueError> for ExecutionError {
-    fn from(value: ValueError) -> Self {
-        Self::ValueError(value)
-    }
-}
-
-impl From<CommandError> for ExecutionError {
-    fn from(value: CommandError) -> Self {
-        Self::CommandError(value)
-    }
-}
-
-impl std::fmt::Display for ValueError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let error_text = match self {
-            ValueError::InvalidComparison(error_text) => error_text,
-            ValueError::InvalidConversion(error_text) => error_text,
-            ValueError::FailedParse(error_text) => error_text,
-            ValueError::NonExistantVar(error_text) => error_text,
-            ValueError::NotAVar(error_text) => error_text,
-            ValueError::NegativeIndex(error_text) => error_text,
-            ValueError::InvalidVarValue(error_text) => error_text,
-            ValueError::VarMemoryLimitReached => {
-                &"interpreter var memory limit reached".to_string()
-            }
-            ValueError::AttemptToOverwriteConstant(error_text) => error_text,
-            ValueError::AttemptToFreeConstant(error_text) => error_text,
-            ValueError::EmptyMapPath(error_text) => error_text,
-            ValueError::NotAMap(error_text) => error_text,
-            ValueError::NotAList(error_text) => error_text,
-            ValueError::NonExistantKey(error_text) => error_text,
-            ValueError::IndexOutOfBounds(error_text) => error_text,
-        };
-
-        write!(f, "{}", error_text)
-    }
-}
-
-impl std::error::Error for ValueError {}

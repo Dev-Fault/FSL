@@ -9,7 +9,7 @@ use futures::FutureExt;
 
 use crate::{
     data::{InterpreterData, UserDefinitions},
-    error::{CommandError, InterpreterError, InterpreterErrorType, ValueError},
+    error::{CommandError, InterpreterError, InterpreterErrorType},
     libraries::{
         Library,
         r#async::register_join,
@@ -369,7 +369,7 @@ impl FslInterpreter {
                     if number.contains('.') {
                         match number.parse::<f64>() {
                             Ok(value) => Ok(Value::Float(value)),
-                            Err(_) => Err(ValueError::FailedParse(
+                            Err(_) => Err(CommandError::FailedParse(
                                 "failed to convert to a number".into(),
                             )
                             .into()),
@@ -381,10 +381,10 @@ impl FslInterpreter {
                             if let Ok(value) = number.parse::<f64>() {
                                 Ok(Value::Float(value))
                             } else {
-                                Err(
-                                    ValueError::FailedParse("failed to convert to a number".into())
-                                        .into(),
+                                Err(CommandError::FailedParse(
+                                    "failed to convert to a number".into(),
                                 )
+                                .into())
                             }
                         }
                     }
@@ -427,7 +427,7 @@ impl FslInterpreter {
 #[cfg(test)]
 mod interpreter {
     use crate::data::{InterpreterData, InterpreterLimits};
-    use crate::error::{CommandError, ValueError};
+    use crate::error::CommandError;
     use crate::libraries::standard::tests::{
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
@@ -480,9 +480,7 @@ mod interpreter {
         let err = result.unwrap_err().error_type;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(
-                ValueError::VarMemoryLimitReached
-            ))
+            InterpreterErrorType::Command(CommandError::VarMemoryLimitReached)
         ))
     }
 
@@ -499,9 +497,7 @@ mod interpreter {
         let err = result.unwrap_err().error_type;
         assert!(matches!(
             err,
-            InterpreterErrorType::Command(CommandError::ValueError(
-                ValueError::VarMemoryLimitReached
-            ))
+            InterpreterErrorType::Command(CommandError::VarMemoryLimitReached)
         ))
     }
 
@@ -1879,10 +1875,7 @@ mod interpreter {
 
         match err {
             InterpreterErrorType::Command(command_error) => match command_error {
-                CommandError::ValueError(value_error) => match value_error {
-                    ValueError::AttemptToOverwriteConstant(_) => {}
-                    _ => panic!("should be overwrite constant err"),
-                },
+                CommandError::AttemptToOverwriteConstant(_) => {}
                 _ => panic!("should be overwrite constant err"),
             },
             _ => panic!("should be overwrite constant err"),
