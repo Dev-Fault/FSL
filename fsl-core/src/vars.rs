@@ -8,7 +8,10 @@ use std::{
 use crate::{
     data::MemoryLimit,
     error::CommandError,
-    types::{FslType, value::Value},
+    types::{
+        FslType,
+        value::{FslValue, Value},
+    },
 };
 
 const MEGABYTE: usize = 1024 * 1024;

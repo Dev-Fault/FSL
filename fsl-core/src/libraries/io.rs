@@ -8,7 +8,7 @@ use crate::{
     standard::NOT_NONE,
     types::{
         command::{ArgPos, ArgRule, Command, Handler},
-        value::Value,
+        value::{FslValue, Value},
     },
 };
 

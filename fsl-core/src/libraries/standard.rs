@@ -16,8 +16,8 @@ use crate::{
     register_command,
     types::{
         FslType,
-        command::{ArgPos, ArgRule, Command, Handler},
-        value::{FslMap, Value},
+        command::{ArgPos, ArgRule, Argument, Command, Handler},
+        value::{FslMap, FslValue, Value},
     },
     vars::VarEntry,
 };
@@ -761,7 +761,7 @@ pub async fn eq<'c>(
         .as_raw(data.clone(), ANY)
         .await?;
 
-    Ok(Value::Bool(a.eq(&b)?))
+    Ok(Value::Bool(a.equal(&b)?))
 }
 
 pub const GT_RULES: &[ArgRule; 2] = &[
@@ -923,9 +923,9 @@ pub async fn r#if<'c>(
     let mut values = command.take_args();
     let condition = values.pop_front().unwrap();
 
-    let mut then_command: Option<Value> = None;
-    let mut else_ifs: VecDeque<Value> = VecDeque::new();
-    let mut else_command: Option<Value> = None;
+    let mut then_command: Option<Argument> = None;
+    let mut else_ifs: VecDeque<Argument> = VecDeque::new();
+    let mut else_command: Option<Argument> = None;
 
     let mut requires_else = false;
 
@@ -997,7 +997,7 @@ pub async fn switch<'c>(
     let expression = expression.as_raw(data.clone(), ANY).await?;
     let commands = args;
 
-    let (cases, mut fallback): (VecDeque<Value>, VecDeque<Value>) =
+    let (cases, mut fallback): (VecDeque<Argument>, VecDeque<Argument>) =
         commands.into_iter().partition(|statement| {
             statement
                 .get_command_label()
@@ -1435,7 +1435,7 @@ pub async fn set<'c>(
 
     let value = value.as_raw(data.clone(), NOT_NONE).await?;
 
-    let var = take_if_var(&mut map, data.clone()).await?;
+    let var = take_if_var(&mut map.value, data.clone()).await?;
 
     let mut map = map.as_map(data.clone()).await?;
 
@@ -1481,7 +1481,7 @@ pub async fn remove<'c>(
 
     let key = key.as_key(data.clone(), KEY).await?;
 
-    let var = take_if_var(&mut array, data.clone()).await?;
+    let var = take_if_var(&mut array.value, data.clone()).await?;
 
     let array = array.as_raw(data.clone(), COLLECTION).await?;
 
@@ -1544,7 +1544,7 @@ pub async fn swap<'c>(
     let i = values.pop_front().unwrap();
     let j = values.pop_front().unwrap();
 
-    let var = take_if_var(&mut array, data.clone()).await?;
+    let var = take_if_var(&mut array.value, data.clone()).await?;
 
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
@@ -1611,7 +1611,7 @@ pub async fn replace<'c>(
 
     let key = key.as_key(data.clone(), LIST_KEY).await?;
 
-    let var = take_if_var(&mut array, data.clone()).await?;
+    let var = take_if_var(&mut array.value, data.clone()).await?;
 
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
@@ -1680,7 +1680,7 @@ pub async fn insert<'c>(
 
     let key = key.as_key(data.clone(), KEY).await?;
 
-    let var = take_if_var(&mut array, data.clone()).await?;
+    let var = take_if_var(&mut array.value, data.clone()).await?;
 
     let array = array.as_raw(data.clone(), COLLECTION).await?;
 
@@ -1748,7 +1748,7 @@ pub async fn push<'c>(
         .as_raw(data.clone(), NOT_NONE)
         .await?;
 
-    let var = take_if_var(&mut array, data.clone()).await?;
+    let var = take_if_var(&mut array.value, data.clone()).await?;
 
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
@@ -1782,7 +1782,7 @@ pub async fn pop<'c>(
     let mut values = command.take_args();
 
     let mut array = values.pop_front().unwrap();
-    let var = take_if_var(&mut array, data.clone()).await?;
+    let var = take_if_var(&mut array.value, data.clone()).await?;
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
         .await?;
@@ -1824,7 +1824,7 @@ pub async fn search_replace<'c>(
     let to_replace = values.pop_front().unwrap().as_text(data.clone()).await?;
     let with = values.pop_front().unwrap().as_text(data.clone()).await?;
 
-    let var = take_if_var(&mut string, data.clone()).await?;
+    let var = take_if_var(&mut string.value, data.clone()).await?;
 
     let string = string.as_text(data.clone()).await?;
 
@@ -1850,7 +1850,7 @@ pub async fn slice_replace<'c>(
     let mut range = values.pop_front().unwrap().as_list(data.clone()).await?;
     let with = values.pop_front().unwrap().as_text(data.clone()).await?;
 
-    let var = take_if_var(&mut string, data.clone()).await?;
+    let var = take_if_var(&mut string.value, data.clone()).await?;
 
     let string = string.as_text(data.clone()).await?;
 
@@ -1887,7 +1887,7 @@ pub async fn reverse<'c>(
     let mut values = command.take_args();
 
     let mut array = values.pop_front().unwrap();
-    let var = take_if_var(&mut array, data.clone()).await?;
+    let var = take_if_var(&mut array.value, data.clone()).await?;
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
         .await?;
@@ -2354,7 +2354,7 @@ pub async fn def<'c>(
     let values_len = values.len();
     let mut encountered_command = false;
     for i in 0..values_len {
-        match values[i] {
+        match values[i].value {
             Value::Var(ref label) => {
                 if encountered_command {
                     return Err(CommandError::WrongArgOrder(format!(
@@ -2399,7 +2399,7 @@ fn alias_parameter<'c>(parameter: &mut Value<'c>, aliases: &HashMap<Cow<'c, str>
         }
         Value::Command(command) => {
             for arg in command.get_args_mut() {
-                alias_parameter(arg, aliases);
+                alias_parameter(&mut arg.value, aliases);
             }
         }
         Value::Var(var) => match aliases.get(var) {
@@ -2445,12 +2445,12 @@ pub async fn run<'c>(
     let mut aliases: HashMap<Cow<'c, str>, Cow<'c, str>> = HashMap::new();
     let parameters = parameter_labels.len();
     for _ in 0..parameters {
-        let mut value = values.pop_front().unwrap();
+        let argument = values.pop_front().unwrap();
         let parameter = parameter_labels.pop_front().unwrap();
-        if let Value::Var(var) = value {
+        if let Value::Var(var) = argument.value {
             aliases.insert(parameter, var);
         } else {
-            value = value.as_raw_unchecked(data.clone()).await?;
+            let value = argument.as_raw_unchecked(data.clone()).await?;
             data.vars.insert(&parameter, value)?;
         }
     }
@@ -2459,7 +2459,7 @@ pub async fn run<'c>(
     for mut command in commands {
         let args = command.get_args_mut();
         for arg in args {
-            alias_parameter(arg, &aliases);
+            alias_parameter(&mut arg.value, &aliases);
         }
         final_value = command.execute(data.clone()).await?;
         if data.get_return_flag().await {

@@ -28,18 +28,82 @@ pub enum Value<'c> {
     None,
 }
 
+pub trait FslValue<'c> {
+    fn as_type(&self) -> FslType;
+
+    fn as_literal_type(&self, data: Arc<InterpreterData>) -> FslType;
+
+    fn is_type(&self, fsl_type: FslType) -> bool;
+
+    fn mem_size(&self) -> Option<usize>;
+
+    fn equal(&self, other: &Value) -> Result<bool, CommandError>;
+
+    fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, CommandError>;
+
+    fn as_usize(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, usize, CommandError>;
+
+    fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, CommandError>;
+
+    fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, CommandError>;
+
+    fn as_var_label(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Cow<'c, str>, CommandError>;
+
+    fn as_text(self, data: Arc<InterpreterData<'c>>)
+    -> ValueResult<'c, Cow<'c, str>, CommandError>;
+
+    fn as_list(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Vec<Value<'c>>, CommandError>;
+
+    fn as_map(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, CommandError>;
+
+    fn as_number(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Value<'c>, CommandError>;
+
+    /// Converts value into it's most raw state ensuring result is of valid type
+    fn as_raw(
+        self,
+        data: Arc<InterpreterData<'c>>,
+        valid_types: &'static [FslType],
+    ) -> ValueResult<'c, Value<'c>, CommandError>;
+
+    /// Converts value into it's most raw state without checking what the result type it is
+    fn as_raw_unchecked(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Value<'c>, CommandError>;
+
+    // Attempts to convert value to a value that can be used to access indices in a map or list
+    fn as_key(
+        self,
+        data: Arc<InterpreterData<'c>>,
+        key_types: &'static [FslType],
+    ) -> ValueResult<'c, Vec<Value<'c>>, CommandError>;
+
+    fn as_command(self) -> Result<Command<'c>, CommandError>;
+
+    fn get_var_label(&self) -> Result<Cow<'c, str>, CommandError>;
+
+    fn get_command_label(&self) -> Option<&str>;
+
+    fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, CommandError>;
+}
+
 impl<'c> Default for Value<'c> {
     fn default() -> Self {
         Self::None
     }
 }
 
-impl<'c> Value<'c> {
-    pub fn from_command(command: Command<'c>) -> Self {
-        Self::Command(Box::new(command))
-    }
-
-    pub fn as_type(&self) -> FslType {
+impl<'c> FslValue<'c> for Value<'c> {
+    fn as_type(&self) -> FslType {
         match self {
             Value::Int(_) => FslType::Int,
             Value::Float(_) => FslType::Float,
@@ -53,7 +117,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn as_literal_type(&self, data: Arc<InterpreterData>) -> FslType {
+    fn as_literal_type(&self, data: Arc<InterpreterData>) -> FslType {
         match self {
             Value::Int(_) => FslType::Int,
             Value::Float(_) => FslType::Float,
@@ -67,11 +131,11 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn is_type(&self, fsl_type: FslType) -> bool {
+    fn is_type(&self, fsl_type: FslType) -> bool {
         return self.as_type() == fsl_type;
     }
 
-    pub fn mem_size(&self) -> Option<usize> {
+    fn mem_size(&self) -> Option<usize> {
         match &self {
             Value::Int(_) => Some(size_of::<Value>()),
             Value::Float(_) => Some(size_of::<Value>()),
@@ -101,7 +165,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn eq(&self, other: &Value) -> Result<bool, CommandError> {
+    fn equal(&self, other: &Value) -> Result<bool, CommandError> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
             (Value::Float(a), Value::Int(b)) => Ok(*a == *b as f64),
@@ -118,7 +182,7 @@ impl<'c> Value<'c> {
                     return Ok(false);
                 } else {
                     for i in 0..a_list.len() {
-                        if !a_list[i].eq(&b_list[i])? {
+                        if !a_list[i].equal(&b_list[i])? {
                             return Ok(false);
                         }
                     }
@@ -134,7 +198,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, CommandError> {
+    fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, CommandError> {
         Box::pin(async {
             let to_type = FslType::Int;
             match self {
@@ -160,19 +224,21 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub async fn as_usize(self, data: Arc<InterpreterData<'c>>) -> Result<usize, CommandError> {
-        let integer = self.as_int(data).await?;
-        if integer < 0 {
-            Err(
-                CommandError::NegativeIndex(format!("cannot use a negative value as an index"))
-                    .into(),
-            )
-        } else {
-            Ok(integer as usize)
-        }
+    fn as_usize(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, usize, CommandError> {
+        Box::pin(async move {
+            let integer = self.as_int(data).await?;
+            if integer < 0 {
+                Err(
+                    CommandError::NegativeIndex(format!("cannot use a negative value as an index"))
+                        .into(),
+                )
+            } else {
+                Ok(integer as usize)
+            }
+        })
     }
 
-    pub fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, CommandError> {
+    fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, CommandError> {
         Box::pin(async {
             let to_type = FslType::Float;
             match self {
@@ -198,7 +264,7 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, CommandError> {
+    fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, CommandError> {
         Box::pin(async {
             let to_type = FslType::Bool;
             match self {
@@ -224,7 +290,7 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub fn as_var_label(
+    fn as_var_label(
         self,
         data: Arc<InterpreterData<'c>>,
     ) -> ValueResult<'c, Cow<'c, str>, CommandError> {
@@ -250,7 +316,7 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub fn as_text(
+    fn as_text(
         self,
         data: Arc<InterpreterData<'c>>,
     ) -> ValueResult<'c, Cow<'c, str>, CommandError> {
@@ -305,7 +371,7 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub fn as_list(
+    fn as_list(
         self,
         data: Arc<InterpreterData<'c>>,
     ) -> ValueResult<'c, Vec<Value<'c>>, CommandError> {
@@ -336,7 +402,7 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub fn as_map(
+    fn as_map(
         self,
         data: Arc<InterpreterData<'c>>,
     ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, CommandError> {
@@ -367,10 +433,7 @@ impl<'c> Value<'c> {
         })
     }
 
-    pub fn as_number(
-        self,
-        data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Value<'c>, CommandError> {
+    fn as_number(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Value<'c>, CommandError> {
         Box::pin(async move {
             match self {
                 Value::Int(n) => Ok(Value::Int(n)),
@@ -398,7 +461,7 @@ impl<'c> Value<'c> {
     }
 
     /// Converts value into it's most raw state ensuring result is of valid type
-    pub fn as_raw(
+    fn as_raw(
         self,
         data: Arc<InterpreterData<'c>>,
         valid_types: &'static [FslType],
@@ -436,7 +499,7 @@ impl<'c> Value<'c> {
     }
 
     /// Converts value into it's most raw state without checking what the result type it is
-    pub fn as_raw_unchecked(
+    fn as_raw_unchecked(
         self,
         data: Arc<InterpreterData<'c>>,
     ) -> ValueResult<'c, Value<'c>, CommandError> {
@@ -469,20 +532,22 @@ impl<'c> Value<'c> {
     }
 
     // Attempts to convert value to a value that can be used to access indices in a map or list
-    pub async fn as_key(
+    fn as_key(
         self,
         data: Arc<InterpreterData<'c>>,
         key_types: &'static [FslType],
-    ) -> Result<Vec<Value<'c>>, CommandError> {
-        let accesor = self.as_raw(data.clone(), key_types).await?;
+    ) -> ValueResult<'c, Vec<Value<'c>>, CommandError> {
+        Box::pin(async move {
+            let accesor = self.as_raw(data.clone(), key_types).await?;
 
-        match accesor {
-            Value::List(values) => Ok(values),
-            _ => Ok(vec![accesor]),
-        }
+            match accesor {
+                Value::List(values) => Ok(values),
+                _ => Ok(vec![accesor]),
+            }
+        })
     }
 
-    pub fn as_command(self) -> Result<Command<'c>, CommandError> {
+    fn as_command(self) -> Result<Command<'c>, CommandError> {
         if let Value::Command(command) = self {
             Ok(*command)
         } else {
@@ -492,7 +557,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn get_var_label(&self) -> Result<Cow<'c, str>, CommandError> {
+    fn get_var_label(&self) -> Result<Cow<'c, str>, CommandError> {
         if let Value::Var(label) = self {
             Ok(label.clone())
         } else {
@@ -503,7 +568,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn get_command_label(&self) -> Option<&str> {
+    fn get_command_label(&self) -> Option<&str> {
         if let Value::Command(command) = self {
             Some(command.get_label())
         } else {
@@ -511,7 +576,7 @@ impl<'c> Value<'c> {
         }
     }
 
-    pub fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, CommandError> {
+    fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, CommandError> {
         if let Value::Var(label) = self {
             match data.vars.get(label) {
                 Ok(value) => match value {
@@ -526,6 +591,12 @@ impl<'c> Value<'c> {
                 FslType::Var.as_str()
             );
         }
+    }
+}
+
+impl<'c> Value<'c> {
+    pub fn from_command(command: Command<'c>) -> Self {
+        Self::Command(Box::new(command))
     }
 
     fn gen_conversion_err_to_type(&self, to: FslType) -> CommandError {

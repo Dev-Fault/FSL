@@ -8,13 +8,13 @@ use crate::{
     types::{
         FslType,
         command::{ArgPos, ArgRule, Command, Handler},
-        value::Value,
+        value::{FslValue, Value},
     },
 };
 
 use futures::{FutureExt, StreamExt, future::join_all};
 
-pub fn register_join(interpreter: &mut FslInterpreter) {
+pub fn register_async(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, JOIN, JOIN_RULES, join);
     register_command!(interpreter, YIELD, YIELD_RULES, r#yield);
 }
@@ -56,7 +56,7 @@ pub async fn r#yield<'c>(
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, CommandError> {
     let mut args = command.take_args();
-    let command = args.pop_front().unwrap().as_command()?;
+    let command = args.pop_front().unwrap().value.as_command()?;
     tokio::task::yield_now().await;
     let result = command.execute(data).await?;
 

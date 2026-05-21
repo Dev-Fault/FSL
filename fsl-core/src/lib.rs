@@ -12,14 +12,14 @@ use crate::{
     error::{CommandError, InterpreterError, InterpreterErrorType},
     libraries::{
         Library,
-        r#async::register_join,
+        r#async::register_async,
         exec::register_exec,
         io::register_io,
         standard::{self, *},
     },
-    parser::{Arg, ArgKind, Expression, Parser},
+    parser::{Arg, ArgKind, Expression, Parser, Span},
     types::{
-        command::{ArgRule, Command, CommandDef, Handler, UserDef},
+        command::{ArgRule, Argument, Command, CommandDef, Handler, UserDef},
         value::{Value, ValueResult},
     },
 };
@@ -85,15 +85,15 @@ impl FslInterpreter {
                 register_io(self);
             }
             Library::Std => register_std(self),
-            Library::Async => register_join(self),
+            Library::Async => register_async(self),
         }
     }
 
     pub fn register_all_libraries(&mut self) {
+        register_std(self);
         register_exec(self);
         register_io(self);
-        register_std(self);
-        register_join(self);
+        register_async(self);
     }
 
     /// Interprets plain fsl code
@@ -317,9 +317,9 @@ impl FslInterpreter {
         let def = defs.get(expression.name.as_str());
 
         if let Some(def) = def {
-            let mut command = Command::from(def);
+            let mut command = Command::from_def(def, Span::from(&expression));
 
-            let mut args: VecDeque<Value> = VecDeque::with_capacity(expression.args.len());
+            let mut args: VecDeque<_> = VecDeque::with_capacity(expression.args.len());
 
             for arg in expression.args {
                 args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
@@ -336,10 +336,14 @@ impl FslInterpreter {
                     expression.name.as_str(),
                     RUN_RULES,
                     Handler::new(|command, data| standard::run(command, data).boxed()),
+                    Span::from(&expression),
                 );
 
-                let mut args = VecDeque::new();
-                args.push_back(Value::Var(def.label.clone()));
+                let mut args = VecDeque::with_capacity(expression.args.len());
+                args.push_back(Argument::new(
+                    Value::Var(def.label.clone()),
+                    Span::from(&expression),
+                ));
 
                 for arg in expression.args {
                     args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
@@ -362,13 +366,15 @@ impl FslInterpreter {
         data: Arc<InterpreterData<'c>>,
         defs: &'d CommandDefinitions,
         arg: Arg<'c>,
-    ) -> ValueResult<'c, Value<'c>, InterpreterError> {
-        Box::pin(async {
+    ) -> ValueResult<'c, Argument<'c>, InterpreterError> {
+        Box::pin(async move {
             match arg.kind {
                 ArgKind::Number(number) => {
                     if number.contains('.') {
                         match number.parse::<f64>() {
-                            Ok(value) => Ok(Value::Float(value)),
+                            Ok(value) => {
+                                Ok(Argument::new(Value::Float(value), Span::from(arg.token)))
+                            }
                             Err(_) => Err(CommandError::FailedParse(
                                 "failed to convert to a number".into(),
                             )
@@ -376,10 +382,10 @@ impl FslInterpreter {
                         }
                     } else {
                         if let Ok(value) = number.parse::<i64>() {
-                            Ok(Value::Int(value))
+                            Ok(Argument::new(Value::Int(value), Span::from(arg.token)))
                         } else {
                             if let Ok(value) = number.parse::<f64>() {
-                                Ok(Value::Float(value))
+                                Ok(Argument::new(Value::Float(value), Span::from(arg.token)))
                             } else {
                                 Err(CommandError::FailedParse(
                                     "failed to convert to a number".into(),
@@ -389,35 +395,42 @@ impl FslInterpreter {
                         }
                     }
                 }
-                ArgKind::String(cow) => Ok(Value::Text(cow)),
+                ArgKind::String(cow) => Ok(Argument::new(Value::Text(cow), Span::from(arg.token))),
                 ArgKind::Keyword(keyword) => match keyword {
-                    lexer::TRUE => Ok(Value::Bool(true)),
-                    lexer::FALSE => Ok(Value::Bool(false)),
+                    lexer::TRUE => Ok(Argument::new(Value::Bool(true), Span::from(arg.token))),
+                    lexer::FALSE => Ok(Argument::new(Value::Bool(false), Span::from(arg.token))),
                     _ => unreachable!("parser should validate keywords"),
                 },
-                ArgKind::Identifier(ident) => Ok(Value::Var(Cow::from(ident))),
+                ArgKind::Identifier(ident) => Ok(Argument::new(
+                    Value::Var(Cow::from(ident)),
+                    Span::from(arg.token),
+                )),
                 ArgKind::List(args) => {
+                    let span = Span::from(&args);
                     let mut list: Vec<Value> = vec![];
                     for arg in args.data {
                         let parsed_arg = Self::process_arg(data.clone(), defs, arg).await?;
-                        list.push(parsed_arg);
+                        list.push(parsed_arg.value);
                     }
-                    Ok(Value::List(list))
+                    Ok(Argument::new(Value::List(list), span))
                 }
                 ArgKind::Map(map) => {
+                    let span = Span::from(&map);
                     let mut value_map = HashMap::new();
 
                     for (key, value) in map.data {
                         value_map.insert(
                             key.as_str().into(),
-                            Self::process_arg(data.clone(), defs, value).await?,
+                            Self::process_arg(data.clone(), defs, value).await?.value,
                         );
                     }
 
-                    Ok(Value::Map(value_map))
+                    Ok(Argument::new(Value::Map(value_map), span))
                 }
                 ArgKind::Expression(expression) => {
-                    Ok(Self::process_expression(data, defs, expression).await?)
+                    let span = Span::from(&expression);
+                    let value = Self::process_expression(data, defs, expression).await?;
+                    Ok(Argument::new(value, span))
                 }
             }
         })
@@ -1866,9 +1879,10 @@ mod interpreter {
 	            player.const([
 	            	name: "blah",
 	            	health: 100,
+	            	weapon: [name: "sword"]
 	            ])
 
-	            player.name.set("player")
+	            player.weapon.name.set("saber")
             "#,
         )
         .await;

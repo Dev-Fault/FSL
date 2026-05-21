@@ -2,9 +2,54 @@ use std::{borrow::Cow, collections::VecDeque, fmt::Display};
 
 use crate::lexer::{LexError, Lexer, Symbol, Token, TokenType};
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Span<'c> {
+    pub start: Token<'c>,
+    pub end: Token<'c>,
+}
+
+impl<'c> From<Token<'c>> for Span<'c> {
+    fn from(value: Token<'c>) -> Self {
+        Self {
+            start: value,
+            end: value,
+        }
+    }
+}
+
+impl<'c> From<&Expression<'c>> for Span<'c> {
+    fn from(value: &Expression<'c>) -> Self {
+        Self {
+            start: value.start,
+            end: value
+                .end
+                .expect("expressions should have end token after parse"),
+        }
+    }
+}
+
+impl<'c> From<&List<'c>> for Span<'c> {
+    fn from(value: &List<'c>) -> Self {
+        Self {
+            start: value.start,
+            end: value.end.expect("lists should have end token after parse"),
+        }
+    }
+}
+
+impl<'c> From<&Map<'c>> for Span<'c> {
+    fn from(value: &Map<'c>) -> Self {
+        Self {
+            start: value.start,
+            end: value.end.expect("maps should have end token after parse"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path<'c> {
     pub start: Token<'c>,
+    pub end: Option<Token<'c>>,
     pub data: VecDeque<Arg<'c>>,
 }
 
@@ -12,6 +57,7 @@ impl<'c> Path<'c> {
     pub fn new(start: Token<'c>) -> Self {
         Self {
             start,
+            end: None,
             data: VecDeque::new(),
         }
     }
@@ -38,8 +84,8 @@ impl<'c> From<Path<'c>> for List<'c> {
     fn from(value: Path<'c>) -> Self {
         Self {
             start: value.start,
+            end: value.end,
             data: value.data.into(),
-            end: None,
         }
     }
 }
@@ -403,7 +449,7 @@ impl<'c> Parser<'c> {
                                         .map(|item| match item.kind {
                                             ArgKind::Identifier(ident) => Ok(Arg::new(
                                                 ArgKind::String(Cow::Borrowed(ident)),
-                                                token,
+                                                item.token,
                                             )),
                                             _ => Err(ParseError::OutOfPlaceValue(item.token)),
                                         })
@@ -571,13 +617,14 @@ impl<'c> Parser<'c> {
                 PendingArg::Done(arg) => match self.pending.pop() {
                     Some(pending) => match pending {
                         PendingArg::DotArg(parent_dot_arg) => {
-                            let mut path = Path::new(token);
+                            let mut path = Path::new(parent_dot_arg.token);
                             path.data.push_back(parent_dot_arg);
                             path.data.push_back(arg);
                             self.pend_path(path);
                             Ok(())
                         }
                         PendingArg::PathArg(mut path) => {
+                            path.end = Some(arg.token);
                             path.data.push_back(arg);
                             self.pend_path(path);
                             Ok(())
