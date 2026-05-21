@@ -8,6 +8,16 @@ pub struct Span<'c> {
     pub end: Token<'c>,
 }
 
+impl<'c> Span<'c> {
+    pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
+        Self { start, end }
+    }
+
+    pub fn as_str(&self) -> &'c str {
+        Token::span(self.start, self.end)
+    }
+}
+
 impl<'c> From<Token<'c>> for Span<'c> {
     fn from(value: Token<'c>) -> Self {
         Self {
@@ -21,9 +31,7 @@ impl<'c> From<&Expression<'c>> for Span<'c> {
     fn from(value: &Expression<'c>) -> Self {
         Self {
             start: value.start,
-            end: value
-                .end
-                .expect("expressions should have end token after parse"),
+            end: value.end,
         }
     }
 }
@@ -32,7 +40,7 @@ impl<'c> From<&List<'c>> for Span<'c> {
     fn from(value: &List<'c>) -> Self {
         Self {
             start: value.start,
-            end: value.end.expect("lists should have end token after parse"),
+            end: value.end,
         }
     }
 }
@@ -41,7 +49,7 @@ impl<'c> From<&Map<'c>> for Span<'c> {
     fn from(value: &Map<'c>) -> Self {
         Self {
             start: value.start,
-            end: value.end.expect("maps should have end token after parse"),
+            end: value.end,
         }
     }
 }
@@ -49,15 +57,15 @@ impl<'c> From<&Map<'c>> for Span<'c> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path<'c> {
     pub start: Token<'c>,
-    pub end: Option<Token<'c>>,
     pub data: VecDeque<Arg<'c>>,
+    pub end: Token<'c>,
 }
 
 impl<'c> Path<'c> {
-    pub fn new(start: Token<'c>) -> Self {
+    pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
         Self {
             start,
-            end: None,
+            end: end,
             data: VecDeque::new(),
         }
     }
@@ -67,15 +75,15 @@ impl<'c> Path<'c> {
 pub struct List<'c> {
     pub start: Token<'c>,
     pub data: Vec<Arg<'c>>,
-    pub end: Option<Token<'c>>,
+    pub end: Token<'c>,
 }
 
 impl<'c> List<'c> {
-    pub fn new(start: Token<'c>) -> Self {
+    pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
         Self {
             start,
             data: Vec::new(),
-            end: None,
+            end: end,
         }
     }
 }
@@ -94,15 +102,15 @@ impl<'c> From<Path<'c>> for List<'c> {
 pub struct Map<'c> {
     pub start: Token<'c>,
     pub data: Vec<(Token<'c>, Arg<'c>)>,
-    pub end: Option<Token<'c>>,
+    pub end: Token<'c>,
 }
 
 impl<'c> Map<'c> {
-    pub fn new(start: Token<'c>) -> Self {
+    pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
         Self {
             start,
             data: Vec::new(),
-            end: None,
+            end: end,
         }
     }
 }
@@ -112,16 +120,16 @@ pub struct Expression<'c> {
     pub name: Token<'c>,
     pub start: Token<'c>,
     pub args: Vec<Arg<'c>>,
-    pub end: Option<Token<'c>>,
+    pub end: Token<'c>,
 }
 
 impl<'c> Expression<'c> {
-    pub fn new(name: Token<'c>) -> Expression<'c> {
+    pub fn new(name: Token<'c>, end: Token<'c>) -> Expression<'c> {
         Self {
             name,
             start: name,
             args: Vec::new(),
-            end: None,
+            end: end,
         }
     }
 }
@@ -195,20 +203,14 @@ impl<'c> PendingArg<'c> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TokenSpan<'c> {
-    pub start: Token<'c>,
-    pub end: Option<Token<'c>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum ParseError<'c> {
     LexError(LexError<'c>),
     OutOfPlaceSymbol(Token<'c>),
     OutOfPlaceValue(Token<'c>),
     UnfinishedExpression(Expression<'c>),
-    UnfinishedList(List<'c>),
     UnfinishedMap(Map<'c>),
-    ValueOutsideOfExpression(TokenSpan<'c>),
+    UnfinishedList(List<'c>),
+    ValueOutsideOfExpression(Span<'c>),
 }
 
 impl<'c> Display for ParseError<'c> {
@@ -235,23 +237,10 @@ impl<'c> Display for ParseError<'c> {
                     token.line(),
                 )
             }
-            ParseError::UnfinishedExpression(expr) => {
-                write!(
-                    f,
-                    "Unfinished expression \"{}{}\" on line {}\n{}: {}\n",
-                    expr.name.as_str(),
-                    expr.start.token_type,
-                    expr.start.line_number(),
-                    expr.start.line_number(),
-                    expr.start.line(),
-                )
-            }
             ParseError::ValueOutsideOfExpression(span) => {
+                dbg!(span);
                 let start = span.start;
-                let value = match span.end {
-                    Some(end) => Token::span(start, end).to_string(),
-                    None => start.token_type.to_string(),
-                };
+                let value = Token::span(start, span.end).to_string();
                 write!(
                     f,
                     "Value outside of expression \"{}\" on line {}\n{}: {}",
@@ -261,14 +250,29 @@ impl<'c> Display for ParseError<'c> {
                     start.line(),
                 )
             }
-            ParseError::UnfinishedList(list) => {
+            ParseError::UnfinishedExpression(expr) => {
+                dbg!(expr);
+                let value = Token::span(expr.name, expr.end).to_string();
                 write!(
                     f,
-                    "Unfinished list \"{}\" on line {}\n{}: {}\n",
-                    list.start.token_type,
-                    list.start.line_number(),
-                    list.start.line_number(),
-                    list.start.line(),
+                    "Unfinished expression \"{}\" on line {}\n{}: {}\n",
+                    value,
+                    expr.start.line_number(),
+                    expr.start.line_number(),
+                    expr.start.line(),
+                )
+            }
+            ParseError::UnfinishedList(span) => {
+                dbg!(span);
+                let start = span.start;
+                let value = Token::span(start, span.end).to_string();
+                write!(
+                    f,
+                    "Unfinished list \"{}\" on line {}\n{}: {}",
+                    value,
+                    start.line_number(),
+                    start.line_number(),
+                    start.line(),
                 )
             }
             ParseError::UnfinishedMap(map) => {
@@ -311,6 +315,7 @@ impl<'c> Parser<'c> {
     fn pend_map_with_value(&mut self, map: Map<'c>, key: Token<'c>, value: Option<Arg<'c>>) {
         let mut map = map;
         if let Some(value) = value {
+            map.end = value.token;
             map.data.push((key, value));
         }
         self.pending.push(PendingArg::Map(map));
@@ -326,7 +331,7 @@ impl<'c> Parser<'c> {
             Some(maybe_map) => match maybe_map {
                 PendingArg::Map(map) => Ok(self.pend_map_with_value(map, key, value)),
                 PendingArg::UnitializedCollection(start) => {
-                    Ok(self.pend_map_with_value(Map::new(start), key, value))
+                    Ok(self.pend_map_with_value(Map::new(start, start), key, value))
                 }
                 _ => Err(ParseError::OutOfPlaceValue(maybe_map.start())),
             },
@@ -337,6 +342,7 @@ impl<'c> Parser<'c> {
     fn pend_list_with_value(&mut self, list: List<'c>, value: Option<Arg<'c>>) {
         let mut list = list;
         if let Some(value) = value {
+            list.end = value.token;
             list.data.push(value);
         }
         self.pending.push(PendingArg::List(list));
@@ -348,6 +354,7 @@ impl<'c> Parser<'c> {
 
     fn pend_expr_with_value(&mut self, expr: Expression<'c>, value: Arg<'c>) {
         let mut expr = expr;
+        expr.end = value.token;
         expr.args.push(value);
         self.pending.push(PendingArg::Expression(expr));
     }
@@ -381,11 +388,11 @@ impl<'c> Parser<'c> {
             Some(last) => match last {
                 PendingArg::Expression(expr) => Ok(self.pend_done(Arg::new(expr.into(), token))),
                 PendingArg::List(mut list) => {
-                    list.end = Some(token);
+                    list.end = token;
                     Ok(self.pend_done(Arg::new(list.into(), token)))
                 }
                 PendingArg::Map(mut map) => {
-                    map.end = Some(token);
+                    map.end = token;
                     Ok(self.pend_done(Arg::new(map.into(), token)))
                 }
                 _ => Err(ParseError::OutOfPlaceValue(last.start())),
@@ -480,7 +487,7 @@ impl<'c> Parser<'c> {
         match self.pending.pop() {
             Some(maybe_expr) => match maybe_expr {
                 PendingArg::Expression(mut expr) => {
-                    expr.end = Some(token);
+                    expr.end = token;
                     if let Some(arg) = last_arg {
                         expr.args.push(arg);
                     }
@@ -499,7 +506,7 @@ impl<'c> Parser<'c> {
                             )?),
                             PendingArg::UnitializedCollection(start) => Ok(self
                                 .pend_list_with_value(
-                                    List::new(start),
+                                    List::new(start, start),
                                     Some(Arg::new(expr.into(), token)),
                                 )),
                             PendingArg::Done(done) => {
@@ -544,7 +551,7 @@ impl<'c> Parser<'c> {
                     self.pending.push(collection);
                 }
                 PendingArg::UnitializedCollection(start) => {
-                    self.pend_list_with_value(List::new(start), last_arg)
+                    self.pend_list_with_value(List::new(start, token), last_arg)
                 }
                 _ => {
                     return Err(ParseError::OutOfPlaceSymbol(token));
@@ -617,15 +624,14 @@ impl<'c> Parser<'c> {
                 PendingArg::Done(arg) => match self.pending.pop() {
                     Some(pending) => match pending {
                         PendingArg::DotArg(parent_dot_arg) => {
-                            let mut path = Path::new(parent_dot_arg.token);
-                            path.end = Some(arg.token);
+                            let mut path = Path::new(parent_dot_arg.token, arg.token);
                             path.data.push_back(parent_dot_arg);
                             path.data.push_back(arg);
                             self.pend_path(path);
                             Ok(())
                         }
                         PendingArg::PathArg(mut path) => {
-                            path.end = Some(arg.token);
+                            path.end = arg.token;
                             path.data.push_back(arg);
                             self.pend_path(path);
                             Ok(())
@@ -652,7 +658,8 @@ impl<'c> Parser<'c> {
                             Ok(self.pend_expr_with_value(expression, value.into()))
                         }
                         PendingArg::UnitializedCollection(start) => {
-                            Ok(self.pend_list_with_value(List::new(start), value.into()))
+                            Ok(self
+                                .pend_list_with_value(List::new(start, value.token), value.into()))
                         }
                         PendingArg::List(list) => Ok(self.pend_list_with_value(list, value.into())),
                         PendingArg::Key(key) => {
@@ -713,7 +720,7 @@ impl<'c> Parser<'c> {
                     self.parse_symbol(token, Symbol::from(symbol))?;
                 }
                 TokenType::Command(_) => {
-                    let pending = PendingArg::Expression(Expression::new(token));
+                    let pending = PendingArg::Expression(Expression::new(token, token));
                     self.pending.push(pending);
                 }
                 TokenType::Number(number) => {
@@ -747,7 +754,7 @@ impl<'c> Parser<'c> {
         match pending {
             PendingArg::Done(arg) => {
                 let mut start = arg.token;
-                let mut end = None;
+                let end;
                 match arg.kind {
                     ArgKind::List(list) => {
                         start = list.start;
@@ -757,22 +764,15 @@ impl<'c> Parser<'c> {
                         start = map.start;
                         end = map.end;
                     }
-                    _ => {}
+                    _ => end = arg.token,
                 }
-                ParseError::ValueOutsideOfExpression(TokenSpan { start, end })
+                ParseError::ValueOutsideOfExpression(Span::new(start, end))
             }
-            PendingArg::DotArg(arg) => ParseError::ValueOutsideOfExpression(TokenSpan {
-                start: arg.token,
-                end: None,
-            }),
-            PendingArg::PathArg(path) => ParseError::ValueOutsideOfExpression(TokenSpan {
-                start: path.data.get(0).expect("path should contain token").token,
-                end: None,
-            }),
-            PendingArg::Key(token) => ParseError::ValueOutsideOfExpression(TokenSpan {
-                start: token,
-                end: None,
-            }),
+            PendingArg::DotArg(arg) => ParseError::ValueOutsideOfExpression(Span::from(arg.token)),
+            PendingArg::PathArg(path) => {
+                ParseError::ValueOutsideOfExpression(Span::new(path.start, path.end))
+            }
+            PendingArg::Key(token) => ParseError::ValueOutsideOfExpression(Span::from(token)),
             PendingArg::Expression(expression) => ParseError::UnfinishedExpression(expression),
             PendingArg::List(list) => ParseError::UnfinishedList(list),
             PendingArg::Map(map) => ParseError::UnfinishedMap(map),

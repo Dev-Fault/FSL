@@ -115,7 +115,7 @@ pub struct Token<'c> {
 impl<'c> Token<'c> {
     pub fn span(start: Token<'c>, end: Token<'c>) -> &'c str {
         let source = start.source;
-        &source[start.location..=end.location]
+        &source[start.location..end.location + end.len()]
     }
 
     pub fn symbol(source: &'c str, symbol: &'c str, location: usize) -> Token<'c> {

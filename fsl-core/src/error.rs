@@ -1,11 +1,12 @@
 use std::fmt::Debug;
 
-use crate::parser::ParseError;
+use crate::parser::{ParseError, Span};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterpreterErrorType {
     Lex(String),
     Parse(String),
+    ExecutionError(String),
     Command(CommandError),
     Import(String),
     UnmatchedCurlyBraces,
@@ -17,6 +18,7 @@ impl std::fmt::Display for InterpreterErrorType {
         let output = match self {
             InterpreterErrorType::Lex(output) => output,
             InterpreterErrorType::Parse(output) => output,
+            InterpreterErrorType::ExecutionError(exeuction_error) => &exeuction_error.to_string(),
             InterpreterErrorType::Command(command_error) => &command_error.to_string(),
             InterpreterErrorType::UnmatchedCurlyBraces => "unmatched curly braces",
             InterpreterErrorType::Import(output) => output,
@@ -67,6 +69,14 @@ impl From<CommandError> for InterpreterError {
         }
     }
 }
+impl<'c> From<ExecutionError<'c>> for InterpreterError {
+    fn from(value: ExecutionError<'c>) -> Self {
+        Self {
+            error_type: InterpreterErrorType::ExecutionError(value.to_string()),
+            stack_trace: None,
+        }
+    }
+}
 
 impl std::fmt::Display for InterpreterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -76,6 +86,28 @@ impl std::fmt::Display for InterpreterError {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutionError<'c> {
+    pub command_error: CommandError,
+    pub span: Span<'c>,
+}
+
+impl<'c> std::fmt::Display for ExecutionError<'c> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} on line {}\n{}: {}",
+            self.command_error.to_string(),
+            self.span.start.line_number(),
+            self.span.start.line_number(),
+            self.span.start.line(),
+        )
+    }
+}
+
+impl<'c> std::error::Error for ExecutionError<'c> {}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandError {
     WrongArgType(String),
@@ -92,7 +124,6 @@ pub enum CommandError {
     ContinueOutsideLoop,
     NonExistantCommand(String),
     ProgramExited,
-    Custom(String),
     SwitchMustHaveSingleFallbackCommand,
     ConditionFalse,
     MultipleThenCommandsInIf,
@@ -116,6 +147,7 @@ pub enum CommandError {
     NotAMap(String),
     NotAList(String),
     NonExistantKey(String),
+    Custom(String),
 }
 
 impl std::fmt::Display for CommandError {
@@ -178,6 +210,13 @@ impl CommandError {
         match self {
             CommandError::ProgramExited => true,
             _ => false,
+        }
+    }
+
+    pub fn to_execution_error<'c>(self, span: Span<'c>) -> ExecutionError<'c> {
+        ExecutionError {
+            command_error: self,
+            span,
         }
     }
 }

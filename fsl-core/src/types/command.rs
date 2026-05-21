@@ -104,7 +104,7 @@ pub struct Argument<'c> {
     pub span: Span<'c>,
 }
 
-impl<'c> FslValue<'c> for Argument<'c> {
+impl<'c> FslValue<'c, CommandError> for Argument<'c> {
     fn as_type(&self) -> FslType {
         self.value.as_type()
     }
