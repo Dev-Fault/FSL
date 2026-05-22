@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::error::{InterpreterError, InterpreterErrorType};
+use crate::error::InterpreterError;
 
 pub mod r#async;
 pub mod exec;
@@ -21,7 +21,7 @@ impl Library {
             "io" => Ok(Library::Io),
             "std" => Ok(Library::Std),
             "async" => Ok(Library::Async),
-            _ => Err(InterpreterErrorType::Import(format!("cannot unknown library {str}")).into()),
+            _ => Err(InterpreterError::Import(format!("cannot unknown library {str}")).into()),
         }
     }
 }

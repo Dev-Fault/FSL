@@ -3,94 +3,86 @@ use std::fmt::Debug;
 use crate::parser::{ParseError, Span};
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum InterpreterErrorType {
+pub struct ErrorContext<T> {
+    pub kind: T,
+    pub display: String,
+}
+
+impl<T> ErrorContext<T> {
+    pub fn new(kind: T, display: String) -> Self {
+        Self { kind, display }
+    }
+}
+
+impl<'c> From<ExecutionError<'c>> for ErrorContext<RuntimeError> {
+    fn from(value: ExecutionError<'c>) -> Self {
+        let display = value.to_string();
+        let kind = value.command_error;
+        Self { kind, display }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterpreterError {
     Lex(String),
     Parse(String),
-    ExecutionError(String),
-    Command(CommandError),
+    Execution(ErrorContext<RuntimeError>),
+    Runtime(RuntimeError),
     Import(String),
     UnmatchedCurlyBraces,
     Exit,
 }
 
-impl std::fmt::Display for InterpreterErrorType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let output = match self {
-            InterpreterErrorType::Lex(output) => output,
-            InterpreterErrorType::Parse(output) => output,
-            InterpreterErrorType::ExecutionError(exeuction_error) => &exeuction_error.to_string(),
-            InterpreterErrorType::Command(command_error) => &command_error.to_string(),
-            InterpreterErrorType::UnmatchedCurlyBraces => "unmatched curly braces",
-            InterpreterErrorType::Import(output) => output,
-            InterpreterErrorType::Exit => "",
-        };
-        write!(f, "{}", output)
+impl From<RuntimeError> for InterpreterError {
+    fn from(value: RuntimeError) -> Self {
+        InterpreterError::Runtime(value)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct InterpreterError {
-    pub error_type: InterpreterErrorType,
-    pub stack_trace: Option<String>,
 }
 
 impl<'c> From<ParseError<'c>> for InterpreterError {
     fn from(value: ParseError<'c>) -> Self {
-        InterpreterError {
-            error_type: InterpreterErrorType::Parse(value.to_string()),
-            stack_trace: None,
-        }
+        InterpreterError::Parse(value.to_string())
     }
 }
 
-impl InterpreterError {
-    pub fn new(error_type: InterpreterErrorType, stack_trace: Option<String>) -> Self {
-        Self {
-            error_type,
-            stack_trace,
-        }
-    }
-}
-
-impl From<InterpreterErrorType> for InterpreterError {
-    fn from(value: InterpreterErrorType) -> Self {
-        Self {
-            error_type: value,
-            stack_trace: None,
-        }
-    }
-}
-
-impl From<CommandError> for InterpreterError {
-    fn from(value: CommandError) -> Self {
-        Self {
-            error_type: InterpreterErrorType::Command(value),
-            stack_trace: None,
-        }
-    }
-}
 impl<'c> From<ExecutionError<'c>> for InterpreterError {
     fn from(value: ExecutionError<'c>) -> Self {
-        Self {
-            error_type: InterpreterErrorType::ExecutionError(value.to_string()),
-            stack_trace: None,
-        }
+        InterpreterError::Execution(ErrorContext::from(value))
     }
 }
 
 impl std::fmt::Display for InterpreterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.stack_trace {
-            Some(trace) => write!(f, "{}\nError inside command:\n{}", self.error_type, trace),
-            None => write!(f, "{}", self.error_type),
-        }
+        let output = match self {
+            InterpreterError::Lex(output) => output,
+            InterpreterError::Parse(output) => output,
+            InterpreterError::Execution(exeuction_error) => &exeuction_error.display,
+            InterpreterError::Runtime(command_error) => &command_error.to_string(),
+            InterpreterError::UnmatchedCurlyBraces => "unmatched curly braces",
+            InterpreterError::Import(output) => output,
+            InterpreterError::Exit => "",
+        };
+        write!(f, "{}", output)
     }
 }
+impl std::error::Error for InterpreterError {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecutionError<'c> {
-    pub command_error: CommandError,
+    pub command_error: RuntimeError,
     pub span: Span<'c>,
+}
+
+impl<'c> ExecutionError<'c> {
+    pub fn new(command_error: RuntimeError, span: Span<'c>) -> Self {
+        Self {
+            command_error,
+            span,
+        }
+    }
+    pub fn exited_program(&self) -> bool {
+        self.command_error.exited_program()
+    }
 }
 
 impl<'c> std::fmt::Display for ExecutionError<'c> {
@@ -109,7 +101,7 @@ impl<'c> std::fmt::Display for ExecutionError<'c> {
 impl<'c> std::error::Error for ExecutionError<'c> {}
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum CommandError {
+pub enum RuntimeError {
     WrongArgType(String),
     WrongArgCount(String),
     WrongArgOrder(String),
@@ -150,65 +142,71 @@ pub enum CommandError {
     Custom(String),
 }
 
-impl std::fmt::Display for CommandError {
+impl<'c> From<ExecutionError<'c>> for RuntimeError {
+    fn from(value: ExecutionError<'c>) -> Self {
+        value.command_error
+    }
+}
+
+impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let output: &str = match self {
-            CommandError::WrongArgType(error_text) => error_text,
-            CommandError::WrongArgCount(error_text) => error_text,
-            CommandError::WrongArgOrder(error_text) => error_text,
-            CommandError::DivisionByZero => "cannot divide by zero",
-            CommandError::LoopLimitReached => "maximum loop limit reached",
-            CommandError::IndexOutOfBounds => "index out of bounds",
-            CommandError::KeyNotPresentInMap(key) => &format!("key \"{}\" not present in map", key),
-            CommandError::InvalidRange => "invalid range (min should be less than max)",
-            CommandError::NonFiniteValue => "cannot use non finite value",
-            CommandError::BreakOutsideLoop => "break can only be called inside loop",
-            CommandError::ContinueOutsideLoop => "continue can only be called inside loop",
-            CommandError::NonExistantCommand(error_text) => error_text,
-            CommandError::ProgramExited => "",
-            CommandError::Custom(error_text) => error_text,
-            CommandError::SwitchMustHaveSingleFallbackCommand => {
+            RuntimeError::WrongArgType(error_text) => error_text,
+            RuntimeError::WrongArgCount(error_text) => error_text,
+            RuntimeError::WrongArgOrder(error_text) => error_text,
+            RuntimeError::DivisionByZero => "cannot divide by zero",
+            RuntimeError::LoopLimitReached => "maximum loop limit reached",
+            RuntimeError::IndexOutOfBounds => "index out of bounds",
+            RuntimeError::KeyNotPresentInMap(key) => &format!("key \"{}\" not present in map", key),
+            RuntimeError::InvalidRange => "invalid range (min should be less than max)",
+            RuntimeError::NonFiniteValue => "cannot use non finite value",
+            RuntimeError::BreakOutsideLoop => "break can only be called inside loop",
+            RuntimeError::ContinueOutsideLoop => "continue can only be called inside loop",
+            RuntimeError::NonExistantCommand(error_text) => error_text,
+            RuntimeError::ProgramExited => "",
+            RuntimeError::Custom(error_text) => error_text,
+            RuntimeError::SwitchMustHaveSingleFallbackCommand => {
                 "switch statement must have single fallback command"
             }
-            CommandError::ConditionFalse => "",
-            CommandError::MultipleThenCommandsInIf => "if can only contain one then command",
-            CommandError::MultipleElseCommandsInIf => "if can only contain one else command",
-            CommandError::InvalidCommandInIf => {
+            RuntimeError::ConditionFalse => "",
+            RuntimeError::MultipleThenCommandsInIf => "if can only contain one then command",
+            RuntimeError::MultipleElseCommandsInIf => "if can only contain one else command",
+            RuntimeError::InvalidCommandInIf => {
                 "if must only contain then, else_if, and else commands"
             }
-            CommandError::IfMustContainThen => "if must contain a then command",
-            CommandError::ElseIfMustBePairedWithElse => {
+            RuntimeError::IfMustContainThen => "if must contain a then command",
+            RuntimeError::ElseIfMustBePairedWithElse => {
                 "else if command(s) must be paired with else command"
             }
-            CommandError::InvalidArgument(error_text) => error_text,
-            CommandError::OutputLimitExceeded => "memory limit for print exceeded",
-            CommandError::Overflow => "calculation resulted in overflow",
-            CommandError::InvalidComparison(error_text) => error_text,
-            CommandError::InvalidConversion(error_text) => error_text,
-            CommandError::FailedParse(error_text) => error_text,
-            CommandError::NonExistantVar(error_text) => error_text,
-            CommandError::NotAVar(error_text) => error_text,
-            CommandError::NegativeIndex(error_text) => error_text,
-            CommandError::InvalidVarValue(error_text) => error_text,
-            CommandError::VarMemoryLimitReached => {
+            RuntimeError::InvalidArgument(error_text) => error_text,
+            RuntimeError::OutputLimitExceeded => "memory limit for print exceeded",
+            RuntimeError::Overflow => "calculation resulted in overflow",
+            RuntimeError::InvalidComparison(error_text) => error_text,
+            RuntimeError::InvalidConversion(error_text) => error_text,
+            RuntimeError::FailedParse(error_text) => error_text,
+            RuntimeError::NonExistantVar(error_text) => error_text,
+            RuntimeError::NotAVar(error_text) => error_text,
+            RuntimeError::NegativeIndex(error_text) => error_text,
+            RuntimeError::InvalidVarValue(error_text) => error_text,
+            RuntimeError::VarMemoryLimitReached => {
                 &"interpreter var memory limit reached".to_string()
             }
-            CommandError::AttemptToOverwriteConstant(error_text) => error_text,
-            CommandError::AttemptToFreeConstant(error_text) => error_text,
-            CommandError::EmptyMapPath(error_text) => error_text,
-            CommandError::NotAMap(error_text) => error_text,
-            CommandError::NotAList(error_text) => error_text,
-            CommandError::NonExistantKey(error_text) => error_text,
+            RuntimeError::AttemptToOverwriteConstant(error_text) => error_text,
+            RuntimeError::AttemptToFreeConstant(error_text) => error_text,
+            RuntimeError::EmptyMapPath(error_text) => error_text,
+            RuntimeError::NotAMap(error_text) => error_text,
+            RuntimeError::NotAList(error_text) => error_text,
+            RuntimeError::NonExistantKey(error_text) => error_text,
         };
 
         write!(f, "{}", output)
     }
 }
 
-impl CommandError {
+impl RuntimeError {
     pub fn exited_program(&self) -> bool {
         match self {
-            CommandError::ProgramExited => true,
+            RuntimeError::ProgramExited => true,
             _ => false,
         }
     }
@@ -221,10 +219,10 @@ impl CommandError {
     }
 }
 
-impl From<tokio::task::JoinError> for CommandError {
+impl From<tokio::task::JoinError> for RuntimeError {
     fn from(e: tokio::task::JoinError) -> Self {
-        CommandError::Custom(format!("join error: {}", e))
+        RuntimeError::Custom(format!("join error: {}", e))
     }
 }
 
-impl std::error::Error for CommandError {}
+impl std::error::Error for RuntimeError {}

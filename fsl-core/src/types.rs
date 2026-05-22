@@ -1,4 +1,4 @@
-use crate::error::CommandError;
+use crate::error::RuntimeError;
 
 pub mod command;
 pub mod value;
@@ -31,24 +31,24 @@ impl FslType {
         }
     }
 
-    pub fn gen_conversion_err_to_type(&self, to: FslType) -> CommandError {
-        CommandError::InvalidConversion(format!(
+    pub fn gen_conversion_err_to_type(&self, to: FslType) -> RuntimeError {
+        RuntimeError::InvalidConversion(format!(
             "cannot convert from type {} to type {}",
             self.as_str(),
             to.as_str(),
         ))
     }
 
-    pub fn gen_conversion_err_to_types(&self, to: &[FslType]) -> CommandError {
-        CommandError::InvalidConversion(format!(
+    pub fn gen_conversion_err_to_types(&self, to: &[FslType]) -> RuntimeError {
+        RuntimeError::InvalidConversion(format!(
             "cannot convert type {} to type {:?}",
             self.as_str(),
             to,
         ))
     }
 
-    pub fn gen_parse_err(&self, to: FslType) -> CommandError {
-        CommandError::FailedParse(format!(
+    pub fn gen_parse_err(&self, to: FslType) -> RuntimeError {
+        RuntimeError::FailedParse(format!(
             "failed to parse type {} to type {}",
             self.as_str(),
             to.as_str()

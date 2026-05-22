@@ -5,7 +5,7 @@ use tokio_stream::StreamExt;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::CommandError,
+    error::{ExecutionError, RuntimeError},
     register_command,
     standard::MAYBE_TEXT,
     types::{
@@ -26,7 +26,8 @@ pub const EXEC: &str = "exec";
 pub async fn exec<'c>(
     command: Command<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, CommandError> {
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
     let mut args = command.take_args();
     let program = args.pop_front().unwrap().as_text(data.clone()).await?;
     let args = tokio_stream::iter(args.into_iter());
@@ -39,11 +40,11 @@ pub async fn exec<'c>(
         .args(args)
         .output()
         .await
-        .map_err(|e| CommandError::Custom(e.to_string()))?;
+        .map_err(|e| RuntimeError::Custom(e.to_string()).to_execution_error(command.span))?;
 
     if !output.status.success() {
         let output = String::from_utf8_lossy(&output.stderr);
-        return Err(CommandError::Custom(format!("{output}")));
+        return Err(RuntimeError::Custom(format!("{output}")).to_execution_error(command.span));
     }
 
     let output = output.stdout;
@@ -59,7 +60,8 @@ pub const SH: &str = "sh";
 pub async fn sh<'c>(
     command: Command<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, CommandError> {
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
     let mut args = command.take_args();
     let script = args.pop_front().unwrap().as_text(data).await?;
     let output = tokio::process::Command::new("sh")
@@ -67,7 +69,7 @@ pub async fn sh<'c>(
         .arg(&*script)
         .output()
         .await
-        .map_err(|e| CommandError::Custom(e.to_string()))?;
+        .map_err(|e| RuntimeError::Custom(e.to_string()).to_execution_error(command.span))?;
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);

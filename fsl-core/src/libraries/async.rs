@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::CommandError,
+    error::ExecutionError,
     register_command,
     types::{
         FslType,
@@ -24,12 +24,13 @@ pub const JOIN: &str = "join";
 pub async fn join<'c>(
     command: Command<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, CommandError> {
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
     let args = command.take_args();
     let args = args.into_iter();
-    let args: Result<Vec<Command<'c>>, CommandError> = args
+    let args: Result<Vec<Command<'c>>, ExecutionError> = args
         .map(|arg| arg.as_command())
-        .collect::<Result<Vec<Command<'c>>, CommandError>>();
+        .collect::<Result<Vec<Command<'c>>, ExecutionError>>();
     let commands = args?;
     let mut executors = Vec::new();
     for command in commands {
@@ -54,9 +55,10 @@ pub const YIELD: &str = "yield";
 pub async fn r#yield<'c>(
     command: Command<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, CommandError> {
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
     let mut args = command.take_args();
-    let command = args.pop_front().unwrap().value.as_command()?;
+    let command = args.pop_front().unwrap().as_command()?;
     tokio::task::yield_now().await;
     let result = command.execute(data).await?;
 

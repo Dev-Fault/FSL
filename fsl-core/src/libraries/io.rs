@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::CommandError,
+    error::{ExecutionError, RuntimeError},
     register_command,
     standard::NOT_NONE,
     types::{
@@ -23,7 +23,8 @@ pub const SAY: &str = "say";
 pub async fn say<'c>(
     command: Command<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, CommandError> {
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
     let values = command.take_args();
 
     let mut output = String::new();
@@ -42,7 +43,8 @@ pub const ASK: &str = "ask";
 pub async fn ask<'c>(
     command: Command<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, CommandError> {
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
     let values = command.take_args();
 
     let mut output = String::new();
@@ -56,6 +58,6 @@ pub async fn ask<'c>(
     let mut input = String::new();
     match std::io::stdin().read_line(&mut input) {
         Ok(_) => Ok(Value::from(input.trim().to_string())),
-        Err(e) => Err(CommandError::Custom(format!("{e}"))),
+        Err(e) => Err(RuntimeError::Custom(format!("{e}")).to_execution_error(command.span)),
     }
 }

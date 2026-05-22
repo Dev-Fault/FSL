@@ -13,7 +13,7 @@ pub const DEFAULT_LOOP_LIMIT: usize = u16::MAX as usize;
 use tokio::sync::Mutex;
 
 use crate::{
-    error::CommandError,
+    error::RuntimeError,
     types::{command::UserDef, value::Value},
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
@@ -34,7 +34,7 @@ impl MemoryLimit {
         }
     }
 
-    pub fn allocate(&self, size: Option<usize>) -> Result<(), CommandError> {
+    pub fn allocate(&self, size: Option<usize>) -> Result<(), RuntimeError> {
         let Some(limit) = self.limit else {
             return Ok(());
         };
@@ -45,14 +45,14 @@ impl MemoryLimit {
                 match mem.checked_add(size) {
                     Some(new_mem) => {
                         if new_mem > limit {
-                            return Err(CommandError::VarMemoryLimitReached);
+                            return Err(RuntimeError::VarMemoryLimitReached);
                         }
                         self.allocated.store(new_mem, Ordering::Relaxed);
                     }
-                    None => return Err(CommandError::VarMemoryLimitReached),
+                    None => return Err(RuntimeError::VarMemoryLimitReached),
                 };
             }
-            None => return Err(CommandError::VarMemoryLimitReached),
+            None => return Err(RuntimeError::VarMemoryLimitReached),
         }
         Ok(())
     }
@@ -170,12 +170,12 @@ impl<'c> InterpreterData<'c> {
         .into()
     }
 
-    pub fn inc_total_loops(&self) -> Result<(), CommandError> {
+    pub fn inc_total_loops(&self) -> Result<(), RuntimeError> {
         match self.limits.max_loops {
             Some(limit) => {
                 let prev_loops = self.total_loops.fetch_add(1, Ordering::Relaxed);
                 if prev_loops + 1 >= limit {
-                    Err(CommandError::LoopLimitReached)
+                    Err(RuntimeError::LoopLimitReached)
                 } else {
                     Ok(())
                 }
@@ -184,13 +184,13 @@ impl<'c> InterpreterData<'c> {
         }
     }
 
-    pub fn inc_loops_by(&self, loops: &AtomicUsize) -> Result<(), CommandError> {
+    pub fn inc_loops_by(&self, loops: &AtomicUsize) -> Result<(), RuntimeError> {
         match self.limits.max_loops {
             Some(limit) => {
                 let loops = loops.load(Ordering::Relaxed);
                 let prev_loops = self.total_loops.fetch_add(loops, Ordering::Relaxed);
                 if prev_loops + loops > limit {
-                    Err(CommandError::LoopLimitReached)
+                    Err(RuntimeError::LoopLimitReached)
                 } else {
                     Ok(())
                 }

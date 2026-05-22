@@ -214,7 +214,7 @@ impl<'c> Token<'c> {
             .find('\n')
             .map(|i| self.location + i)
             .unwrap_or(self.source.len());
-        &self.source[start..end]
+        &self.source[start..end].trim()
     }
 
     pub fn line_number(&self) -> usize {

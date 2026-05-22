@@ -9,7 +9,7 @@ use futures::FutureExt;
 
 use crate::{
     data::{InterpreterData, UserDefinitions},
-    error::{CommandError, InterpreterError, InterpreterErrorType},
+    error::{InterpreterError, RuntimeError},
     libraries::{
         Library,
         r#async::register_async,
@@ -123,7 +123,7 @@ impl FslInterpreter {
             } else if c == '}' {
                 code_depth -= 1;
                 if code_depth < 0 {
-                    return Err(InterpreterErrorType::UnmatchedCurlyBraces.into());
+                    return Err(InterpreterError::UnmatchedCurlyBraces);
                 } else {
                     match code_stack.pop() {
                         Some(code) => {
@@ -142,10 +142,7 @@ impl FslInterpreter {
                                         if let Some(max_output_len) = data.limits.max_output_len
                                             && output.len() + result.len() > max_output_len
                                         {
-                                            return Err(InterpreterErrorType::Command(
-                                                CommandError::OutputLimitExceeded,
-                                            )
-                                            .into());
+                                            return Err(RuntimeError::OutputLimitExceeded.into());
                                         }
                                         output.push_str(&result)
                                     }
@@ -160,9 +157,7 @@ impl FslInterpreter {
                 if let Some(max_output_len) = data.limits.max_output_len
                     && output.len() + c.len_utf8() > max_output_len
                 {
-                    return Err(
-                        InterpreterErrorType::Command(CommandError::OutputLimitExceeded).into(),
-                    );
+                    return Err(InterpreterError::Runtime(RuntimeError::OutputLimitExceeded));
                 }
                 output.push(c);
             } else {
@@ -174,7 +169,7 @@ impl FslInterpreter {
         }
 
         if code_depth != 0 {
-            return Err(InterpreterErrorType::UnmatchedCurlyBraces.into());
+            return Err(InterpreterError::UnmatchedCurlyBraces);
         }
 
         Ok(output)
@@ -217,13 +212,11 @@ impl FslInterpreter {
                 let def_label = match expression.args.get(0) {
                     Some(label) => label.token.as_str(),
                     None => {
-                        return Err(InterpreterErrorType::Command(CommandError::InvalidArgument(
-                            format!(
-                                "def command missing label on line {}:\n{}",
-                                expression.start.line_number(),
-                                expression.start.line()
-                            ),
-                        ))
+                        return Err((RuntimeError::InvalidArgument(format!(
+                            "def command missing label on line {}:\n{}",
+                            expression.start.line_number(),
+                            expression.start.line()
+                        )))
                         .into());
                     }
                 };
@@ -264,7 +257,7 @@ impl FslInterpreter {
         for expression in expressions.unfiltered {
             let result = Self::interpret_command(data.clone(), defs, expression).await;
             if let Err(e) = result {
-                match e.error_type == InterpreterErrorType::Exit {
+                match e == InterpreterError::Exit {
                     true => break,
                     false => return Err(e),
                 }
@@ -284,29 +277,16 @@ impl FslInterpreter {
         match result {
             Ok(value) => match value {
                 Value::Command(command) => match command.execute(data.clone()).await {
-                    Ok(_) => {}
-                    Err(e) if e.exited_program() => {
-                        return Err(InterpreterError::new(InterpreterErrorType::Exit, None));
-                    }
-                    Err(e) => {
-                        return Err(InterpreterError::new(
-                            InterpreterErrorType::Command(e),
-                            Some(data.call_stack_to_string().await),
-                        ));
-                    }
+                    Ok(_) => Ok(()),
+                    Err(e) if e.exited_program() => Err(InterpreterError::Exit),
+                    Err(e) => Err(InterpreterError::Execution(e.into())),
                 },
                 _ => {
                     unreachable!("parse expression should always return a command")
                 }
             },
-            Err(e) => {
-                return Err(InterpreterError::new(
-                    e.error_type,
-                    Some(data.call_stack_to_string().await),
-                ));
-            }
-        };
-        Ok(())
+            Err(e) => Err(e),
+        }
     }
 
     async fn process_expression<'c, 'd: 'c>(
@@ -353,10 +333,11 @@ impl FslInterpreter {
 
                 Ok(Value::Command(Box::new(command)))
             } else {
-                return Err(CommandError::NonExistantCommand(format!(
+                return Err(RuntimeError::NonExistantCommand(format!(
                     "command with name {} does not exist",
                     expression.name.as_str()
                 ))
+                .to_execution_error(Span::new(expression.name, expression.end))
                 .into());
             }
         }
@@ -375,7 +356,7 @@ impl FslInterpreter {
                             Ok(value) => {
                                 Ok(Argument::new(Value::Float(value), Span::from(arg.token)))
                             }
-                            Err(_) => Err(CommandError::FailedParse(
+                            Err(_) => Err(RuntimeError::FailedParse(
                                 "failed to convert to a number".into(),
                             )
                             .into()),
@@ -387,7 +368,7 @@ impl FslInterpreter {
                             if let Ok(value) = number.parse::<f64>() {
                                 Ok(Argument::new(Value::Float(value), Span::from(arg.token)))
                             } else {
-                                Err(CommandError::FailedParse(
+                                Err(RuntimeError::FailedParse(
                                     "failed to convert to a number".into(),
                                 )
                                 .into())
@@ -439,12 +420,30 @@ impl FslInterpreter {
 
 #[cfg(test)]
 mod interpreter {
+    use crate::FslInterpreter;
     use crate::data::{InterpreterData, InterpreterLimits};
-    use crate::error::CommandError;
+    use crate::error::RuntimeError;
     use crate::libraries::standard::tests::{
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
-    use crate::{FslInterpreter, InterpreterErrorType};
+
+    #[macro_export]
+    macro_rules! assert_runtime_err {
+        ($err:ident, $runtime_error:pat) => {
+            assert!(
+                (matches!(
+                    $err,
+                    $crate::error::InterpreterError::Execution($crate::error::ErrorContext {
+                        kind: $runtime_error,
+                        ..
+                    })
+                )) || (matches!(
+                    $err,
+                    $crate::error::InterpreterError::Runtime($runtime_error)
+                ))
+            )
+        };
+    }
 
     async fn test_interpreter_err(code: &str) {
         let result = FslInterpreter::new()
@@ -472,11 +471,8 @@ mod interpreter {
             repeat(10000, print(concat(big, big)))
             "#;
         let result = interpreter.interpret(code, data).await;
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::OutputLimitExceeded)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::OutputLimitExceeded)
     }
 
     #[tokio::test]
@@ -490,11 +486,8 @@ mod interpreter {
         "#;
         let result = interpreter.interpret_embedded_code(code, data).await;
         dbg!(&result);
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::VarMemoryLimitReached)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::VarMemoryLimitReached)
     }
 
     #[tokio::test]
@@ -507,11 +500,8 @@ mod interpreter {
             repeat(1000, big.store(concat(big, big)))
             "#;
         let result = interpreter.interpret(code, data).await;
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::VarMemoryLimitReached)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::VarMemoryLimitReached)
     }
 
     #[tokio::test]
@@ -528,11 +518,8 @@ mod interpreter {
             }
         "#;
         let result = interpreter.interpret_embedded_code(code, data).await;
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::OutputLimitExceeded)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::OutputLimitExceeded)
     }
 
     // Each block individually fits but combined exceeds limit
@@ -545,11 +532,8 @@ mod interpreter {
             .with_limits(InterpreterLimits::default().with_output_limit(12));
         let code = r#"{print("00001111")}{print("00001111")}"#;
         let result = interpreter.interpret_embedded_code(code, data).await;
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::OutputLimitExceeded)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::OutputLimitExceeded)
     }
 
     // Literal chars outside blocks count toward limit
@@ -560,11 +544,8 @@ mod interpreter {
             .with_limits(InterpreterLimits::default().with_output_limit(12));
         let code = r#"aaaaaaaaaaaa{print("x")}"#; // 12 literal chars then more
         let result = interpreter.interpret_embedded_code(code, data).await;
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::OutputLimitExceeded)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::OutputLimitExceeded)
     }
 
     #[tokio::test]
@@ -576,11 +557,8 @@ mod interpreter {
             repeat(500, print("x"))
         "#;
         let result = interpreter.interpret(code, data).await;
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::LoopLimitReached)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::LoopLimitReached)
     }
 
     #[tokio::test]
@@ -594,11 +572,8 @@ mod interpreter {
             {repeat(500, print("x"))}
         "#; // each block alone is under limit but total should exceed
         let result = interpreter.interpret_embedded_code(code, data).await;
-        let err = result.unwrap_err().error_type;
-        assert!(matches!(
-            err,
-            InterpreterErrorType::Command(CommandError::LoopLimitReached)
-        ))
+        let err = result.unwrap_err();
+        assert_runtime_err!(err, RuntimeError::LoopLimitReached)
     }
 
     // Inner blocks can't bypass loop limit by each running up to the limit
@@ -1887,13 +1862,7 @@ mod interpreter {
         )
         .await;
 
-        match err {
-            InterpreterErrorType::Command(command_error) => match command_error {
-                CommandError::AttemptToOverwriteConstant(_) => {}
-                _ => panic!("should be overwrite constant err"),
-            },
-            _ => panic!("should be overwrite constant err"),
-        }
+        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConstant(_))
     }
 
     #[tokio::test]
@@ -2396,7 +2365,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn def_after_return_not_registered() {
-        let result = test_interpreter_err_type(
+        let err = test_interpreter_err_type(
             r#"
             outer.def(
                 return(1)
@@ -2408,9 +2377,6 @@ mod interpreter {
             "#,
         )
         .await;
-        assert!(matches!(
-            result,
-            InterpreterErrorType::Command(CommandError::NonExistantCommand(_))
-        ))
+        assert_runtime_err!(err, RuntimeError::NonExistantCommand(_))
     }
 }
