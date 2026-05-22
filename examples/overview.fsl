@@ -366,4 +366,4 @@ switch(os,
 		) # this branch wins out in this case so the run def is finalized here
 	)
 )
-run() # output: bsd is not supported at thsi time
+run() # output: bsd is not supported at this time
