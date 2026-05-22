@@ -58,6 +58,6 @@ pub async fn ask<'c>(
     let mut input = String::new();
     match std::io::stdin().read_line(&mut input) {
         Ok(_) => Ok(Value::from(input.trim().to_string())),
-        Err(e) => Err(RuntimeError::Custom(format!("{e}")).to_execution_error(command.span)),
+        Err(e) => Err(RuntimeError::Custom(format!("{e}")).to_exec(command.span)),
     }
 }

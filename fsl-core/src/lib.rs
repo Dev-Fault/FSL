@@ -337,7 +337,7 @@ impl FslInterpreter {
                     "command with name {} does not exist",
                     expression.name.as_str()
                 ))
-                .to_execution_error(Span::new(expression.name, expression.end))
+                .to_exec(Span::new(expression.name, expression.end))
                 .into());
             }
         }

@@ -62,7 +62,7 @@ impl std::fmt::Display for InterpreterError {
             InterpreterError::Import(output) => output,
             InterpreterError::Exit => "",
         };
-        write!(f, "{}", output)
+        write!(f, "Error: {}", output)
     }
 }
 impl std::error::Error for InterpreterError {}
@@ -87,13 +87,23 @@ impl<'c> ExecutionError<'c> {
 
 impl<'c> std::fmt::Display for ExecutionError<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        dbg!(self);
+        let line_header = format!("{}: ", self.span.start.line_number());
+
+        let prefix = &self.span.start.line()[..self.span.start.line_location()];
+        let padding = " ".repeat(line_header.len())
+            + &prefix
+                .chars()
+                .map(|c| if c == '\t' { '\t' } else { ' ' })
+                .collect::<String>();
         write!(
             f,
-            "{} on line {}\n{}: {}",
+            "{} on line {}\n{}{}\n{}^",
             self.command_error.to_string(),
             self.span.start.line_number(),
-            self.span.start.line_number(),
+            line_header,
             self.span.start.line(),
+            padding,
         )
     }
 }
@@ -131,13 +141,15 @@ pub enum RuntimeError {
     NonExistantVar(String),
     NotAVar(String),
     InvalidVarValue(String),
-    NegativeIndex(String),
+    NegativeIndex,
     VarMemoryLimitReached,
     AttemptToOverwriteConstant(String),
     AttemptToFreeConstant(String),
     EmptyMapPath(String),
     NotAMap(String),
-    NotAList(String),
+    NotIndexable,
+    MissingIndex,
+    MissingKey,
     NonExistantKey(String),
     Custom(String),
 }
@@ -186,17 +198,17 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::FailedParse(error_text) => error_text,
             RuntimeError::NonExistantVar(error_text) => error_text,
             RuntimeError::NotAVar(error_text) => error_text,
-            RuntimeError::NegativeIndex(error_text) => error_text,
+            RuntimeError::NegativeIndex => "index cannot be a negative value",
             RuntimeError::InvalidVarValue(error_text) => error_text,
-            RuntimeError::VarMemoryLimitReached => {
-                &"interpreter var memory limit reached".to_string()
-            }
+            RuntimeError::VarMemoryLimitReached => "interpreter var memory limit reached",
             RuntimeError::AttemptToOverwriteConstant(error_text) => error_text,
             RuntimeError::AttemptToFreeConstant(error_text) => error_text,
             RuntimeError::EmptyMapPath(error_text) => error_text,
             RuntimeError::NotAMap(error_text) => error_text,
-            RuntimeError::NotAList(error_text) => error_text,
+            RuntimeError::NotIndexable => "used index on value that cannot be indexed",
             RuntimeError::NonExistantKey(error_text) => error_text,
+            RuntimeError::MissingIndex => "indexing requires at least one value",
+            RuntimeError::MissingKey => "key is required to access map value",
         };
 
         write!(f, "{}", output)
@@ -211,7 +223,7 @@ impl RuntimeError {
         }
     }
 
-    pub fn to_execution_error<'c>(self, span: Span<'c>) -> ExecutionError<'c> {
+    pub fn to_exec<'c>(self, span: Span<'c>) -> ExecutionError<'c> {
         ExecutionError {
             command_error: self,
             span,

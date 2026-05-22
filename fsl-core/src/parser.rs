@@ -30,7 +30,7 @@ impl<'c> From<Token<'c>> for Span<'c> {
 impl<'c> From<&Expression<'c>> for Span<'c> {
     fn from(value: &Expression<'c>) -> Self {
         Self {
-            start: value.start,
+            start: value.name,
             end: value.end,
         }
     }
@@ -238,7 +238,6 @@ impl<'c> Display for ParseError<'c> {
                 )
             }
             ParseError::ValueOutsideOfExpression(span) => {
-                dbg!(span);
                 let start = span.start;
                 let value = Token::span(start, span.end).to_string();
                 write!(
@@ -251,7 +250,6 @@ impl<'c> Display for ParseError<'c> {
                 )
             }
             ParseError::UnfinishedExpression(expr) => {
-                dbg!(expr);
                 let value = Token::span(expr.name, expr.end).to_string();
                 write!(
                     f,
@@ -263,7 +261,6 @@ impl<'c> Display for ParseError<'c> {
                 )
             }
             ParseError::UnfinishedList(span) => {
-                dbg!(span);
                 let start = span.start;
                 let value = Token::span(start, span.end).to_string();
                 write!(

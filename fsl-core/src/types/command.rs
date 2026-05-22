@@ -124,7 +124,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
     fn equal(&self, other: &Argument) -> Result<bool, ExecutionError<'c>> {
         self.value
             .equal(&other.value)
-            .map_err(|e| e.to_execution_error(self.span))
+            .map_err(|e| e.to_exec(self.span))
     }
 
     fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, ExecutionError<'c>> {
@@ -132,7 +132,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_int(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -144,7 +144,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_usize(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -153,7 +153,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_float(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -162,7 +162,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_bool(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -174,7 +174,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_var_label(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -186,7 +186,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_text(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -198,7 +198,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_list(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -211,7 +211,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
             self.value
                 .as_map(data)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
@@ -222,7 +222,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         Box::pin(async move {
             let number = self.value.as_number(data).await;
             let number = number.map(|v| Self::new(v, self.span));
-            let number = number.map_err(|e| e.to_execution_error(self.span));
+            let number = number.map_err(|e| e.to_exec(self.span));
             number
         })
     }
@@ -235,7 +235,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         Box::pin(async move {
             let raw = self.value.as_raw(data, valid_types).await;
             let raw = raw.map(|v| Self::new(v, self.span));
-            let raw = raw.map_err(|e| e.to_execution_error(self.span));
+            let raw = raw.map_err(|e| e.to_exec(self.span));
             raw
         })
     }
@@ -247,7 +247,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         Box::pin(async move {
             let raw = self.value.as_raw_unchecked(data).await;
             let raw = raw.map(|v| Self::new(v, self.span));
-            let raw = raw.map_err(|e| e.to_execution_error(self.span));
+            let raw = raw.map_err(|e| e.to_exec(self.span));
             raw
         })
     }
@@ -256,25 +256,22 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         self,
         data: Arc<InterpreterData<'c>>,
         key_types: &'static [FslType],
-    ) -> ValueResult<'c, Vec<Value<'c>>, ExecutionError<'c>> {
+    ) -> ValueResult<'c, Vec<Argument<'c>>, ExecutionError<'c>> {
         Box::pin(async move {
             self.value
                 .as_key(data, key_types)
                 .await
-                .map_err(|e| e.to_execution_error(self.span))
+                .map(|v| v.into_iter().map(|v| Self::new(v, self.span)).collect())
+                .map_err(|e| e.to_exec(self.span))
         })
     }
 
     fn as_command(self) -> Result<Command<'c>, ExecutionError<'c>> {
-        self.value
-            .as_command()
-            .map_err(|e| e.to_execution_error(self.span))
+        self.value.as_command().map_err(|e| e.to_exec(self.span))
     }
 
     fn get_var_label(&self) -> Result<Cow<'c, str>, ExecutionError<'c>> {
-        self.value
-            .get_var_label()
-            .map_err(|e| e.to_execution_error(self.span))
+        self.value.get_var_label().map_err(|e| e.to_exec(self.span))
     }
 
     fn get_command_label(&self) -> Option<&str> {
@@ -287,7 +284,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
     ) -> Result<Argument<'c>, ExecutionError<'c>> {
         let val = self.value.get_var_value(data);
         let val = val.map(|v| Self::new(v, self.span));
-        let val = val.map_err(|e| e.to_execution_error(self.span));
+        let val = val.map_err(|e| e.to_exec(self.span));
         val
     }
 }
@@ -384,7 +381,7 @@ impl<'c> Command<'c> {
                     fsl_type.as_str(),
                     arg_rule.valid_types
                 ))
-                .to_execution_error(self.span));
+                .to_exec(self.span));
             }
         }
         Ok(())
@@ -412,7 +409,7 @@ impl<'c> Command<'c> {
                                 self.get_label(),
                                 arg_rule.valid_types
                             ))
-                            .to_execution_error(self.span));
+                            .to_exec(self.span));
                         }
                     }
                 }
@@ -429,7 +426,7 @@ impl<'c> Command<'c> {
                             range.start,
                             self.args.len(),
                         ))
-                        .to_execution_error(self.span));
+                        .to_exec(self.span));
                     } else if self.args.len() > range.end {
                         return Err(RuntimeError::WrongArgCount(format!(
                             "Command {} must have no more than {} arguments and {} were given",
@@ -437,7 +434,7 @@ impl<'c> Command<'c> {
                             range.end,
                             self.args.len(),
                         ))
-                        .to_execution_error(self.span));
+                        .to_exec(self.span));
                     } else {
                         self.validate_arg_range(arg_rule, range)?;
                     }
@@ -448,7 +445,7 @@ impl<'c> Command<'c> {
                             "Command {} does not take any arguments",
                             self.get_label()
                         ))
-                        .to_execution_error(self.span));
+                        .to_exec(self.span));
                     }
                 }
                 ArgPos::AnyFrom(i) => {
@@ -477,7 +474,7 @@ impl<'c> Command<'c> {
                 max_args,
                 self.args.len()
             ))
-            .to_execution_error(self.span));
+            .to_exec(self.span));
         }
         Ok(())
     }

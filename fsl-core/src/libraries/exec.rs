@@ -40,11 +40,11 @@ pub async fn exec<'c>(
         .args(args)
         .output()
         .await
-        .map_err(|e| RuntimeError::Custom(e.to_string()).to_execution_error(command.span))?;
+        .map_err(|e| RuntimeError::Custom(e.to_string()).to_exec(command.span))?;
 
     if !output.status.success() {
         let output = String::from_utf8_lossy(&output.stderr);
-        return Err(RuntimeError::Custom(format!("{output}")).to_execution_error(command.span));
+        return Err(RuntimeError::Custom(format!("{output}")).to_exec(command.span));
     }
 
     let output = output.stdout;
@@ -69,7 +69,7 @@ pub async fn sh<'c>(
         .arg(&*script)
         .output()
         .await
-        .map_err(|e| RuntimeError::Custom(e.to_string()).to_execution_error(command.span))?;
+        .map_err(|e| RuntimeError::Custom(e.to_string()).to_exec(command.span))?;
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);

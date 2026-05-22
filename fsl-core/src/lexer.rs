@@ -205,16 +205,29 @@ impl<'c> Token<'c> {
         }
     }
 
-    pub fn line(&self) -> &str {
-        let start = self.source[..self.location]
+    fn line_start(&self) -> usize {
+        self.source[..self.location]
             .rfind('\n')
             .map(|i| i + 1)
-            .unwrap_or(0);
-        let end = self.source[self.location..]
+            .unwrap_or(0)
+    }
+
+    fn line_end(&self) -> usize {
+        self.source[self.location..]
             .find('\n')
             .map(|i| self.location + i)
-            .unwrap_or(self.source.len());
-        &self.source[start..end].trim()
+            .unwrap_or(self.source.len())
+    }
+
+    pub fn line(&self) -> &str {
+        let start = self.line_start();
+        let end = self.line_end();
+        &self.source[start..end]
+    }
+
+    pub fn line_location(&self) -> usize {
+        let start = self.line_start();
+        self.location - start
     }
 
     pub fn line_number(&self) -> usize {

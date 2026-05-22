@@ -75,7 +75,7 @@ pub trait FslValue<'c, T, E> {
         self,
         data: Arc<InterpreterData<'c>>,
         key_types: &'static [FslType],
-    ) -> ValueResult<'c, Vec<Value<'c>>, E>;
+    ) -> ValueResult<'c, Vec<T>, E>;
 
     fn as_command(self) -> Result<Command<'c>, E>;
 
@@ -218,10 +218,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         Box::pin(async move {
             let integer = self.as_int(data).await?;
             if integer < 0 {
-                Err(
-                    RuntimeError::NegativeIndex(format!("cannot use a negative value as an index"))
-                        .into(),
-                )
+                Err(RuntimeError::NegativeIndex)
             } else {
                 Ok(integer as usize)
             }
