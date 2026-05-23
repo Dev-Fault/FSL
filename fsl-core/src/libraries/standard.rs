@@ -12,7 +12,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     FslInterpreter, InterpreterData,
-    error::{ExecutionError, RuntimeError},
+    error::{ExecutionError, ExpectedArgs, RuntimeError},
     parser::Span,
     register_command,
     types::{
@@ -253,11 +253,15 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
 pub async fn take_if_var<'c>(
     value: &mut Value<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Option<(Cow<'c, str>, VarEntry<'c>)>, RuntimeError> {
+    span: Span<'c>,
+) -> Result<Option<(Cow<'c, str>, VarEntry<'c>)>, ExecutionError<'c>> {
     if value.is_type(FslType::Var) {
         let tmp_value = mem::take(value);
-        let label = tmp_value.as_var_label(data.clone()).await?;
-        let mut var_entry = data.vars.take_entry(&label)?;
+        let label = tmp_value
+            .as_var_label(data.clone())
+            .await
+            .map_err(|e| e.to_exec(span))?;
+        let mut var_entry = data.vars.take_entry(&label).map_err(|e| e.to_exec(span))?;
         *value = mem::take(&mut var_entry.value);
         Ok(Some((label, var_entry)))
     } else {
@@ -270,10 +274,13 @@ pub fn update_if_var<'c>(
     var: Option<(Cow<'c, str>, VarEntry<'c>)>,
     value: Value<'c>,
     data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, RuntimeError> {
+    span: Span<'c>,
+) -> Result<Value<'c>, ExecutionError<'c>> {
     if let Some((label, mut var_entry)) = var {
         var_entry.value = value;
-        data.vars.insert_entry(label.clone(), var_entry)?;
+        data.vars
+            .insert_entry(label.clone(), var_entry)
+            .map_err(|e| e.to_exec(span))?;
         return Ok(Value::Var(label));
     }
     Ok(value)
@@ -959,7 +966,7 @@ pub async fn r#if<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let mut args = command.take_args();
-    let condition = args.pop_front().unwrap();
+    let condition = args.pop_front().unwrap().as_bool(data.clone()).await?;
 
     let mut then_command: Option<Argument> = None;
     let mut else_ifs: VecDeque<Argument> = VecDeque::new();
@@ -998,7 +1005,7 @@ pub async fn r#if<'c>(
         return Err(RuntimeError::ElseIfMustBePairedWithElse.to_exec(command.span));
     }
 
-    if condition.as_bool(data.clone()).await? == true {
+    if condition == true {
         let result = then_command.as_command()?.execute(data.clone()).await;
         return result;
     } else {
@@ -1329,27 +1336,24 @@ async fn get_nested<'c>(
             let key = key.clone().as_text(data.clone()).await?;
             match map.get(&*key).cloned() {
                 Some(value) => Ok(value),
-                None => Err(RuntimeError::NonExistantKey(format!(
-                    "non existant key \"{}\" in map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
             }
         }
         [key, rest @ ..] => {
             let key = key.clone().as_text(data.clone()).await?;
             match map.get(&*key) {
                 Some(Value::Map(inner_map)) => get_nested(inner_map, rest, data, span).await,
-                Some(_) => Err(RuntimeError::NotAMap(format!(
-                    "cannot use key \"{}\" to access a value that is not a map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey(format!(
-                    "non existant key \"{}\" in map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
             }
         }
     }
@@ -1392,27 +1396,24 @@ async fn set_nested<'c>(
                     let return_value = map.insert(key, value);
                     Ok(return_value.unwrap_or(Value::None))
                 }
-                None => Err(RuntimeError::NonExistantKey(format!(
-                    "non existant key \"{}\" in map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
             }
         }
         [key, rest @ ..] => {
             let key = key.clone().as_text(data.clone()).await?;
             match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => set_nested(inner_map, rest, value, data, span).await,
-                Some(_) => Err(RuntimeError::NotAMap(format!(
-                    "Can't use key \"{}\" to access a value that is not a map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey(format!(
-                    "non existant key \"{}\" in map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
             }
         }
     }
@@ -1436,16 +1437,14 @@ async fn remove_nested<'c>(
             let key = key.clone().as_text(data.clone()).await?;
             match map.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => remove_nested(inner_map, rest, data, span).await,
-                Some(_) => Err(RuntimeError::NotAMap(format!(
-                    "Can't use key \"{}\" to access a value that is not a map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey(format!(
-                    "non existant key \"{}\" in map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
             }
         }
     }
@@ -1472,16 +1471,14 @@ async fn insert_nested<'c>(
                 Some(Value::Map(inner_map)) => {
                     insert_nested(inner_map, rest, value, data, span).await
                 }
-                Some(_) => Err(RuntimeError::NotAMap(format!(
-                    "Can't use key \"{}\" to access a value that is not a map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey(format!(
-                    "non existant key \"{}\" in map",
-                    key
-                )))
-                .map_err(|e| e.to_exec(span)),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
             }
         }
     }
@@ -1507,16 +1504,14 @@ pub async fn set<'c>(
 
     let arg = arg.as_raw(data.clone(), NOT_NONE).await?;
 
-    let map_span = map.span;
-    let var = take_if_var(&mut map.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(map_span))?;
+    let value_loc = map.span;
+    let var = take_if_var(&mut map.value, data.clone(), value_loc).await?;
 
     let mut map = map.as_map(data.clone()).await?;
 
-    let return_value = set_nested(&mut map, &key, arg.value, data.clone(), map_span).await?;
+    let return_value = set_nested(&mut map, &key, arg.value, data.clone(), value_loc).await?;
 
-    update_if_var(var, Value::Map(map), data).map_err(|e| e.to_exec(map_span))?;
+    update_if_var(var, Value::Map(map), data, value_loc)?;
 
     Ok(return_value)
 }
@@ -1559,9 +1554,8 @@ pub async fn remove<'c>(
     let key_loc = key.span;
     let key = key.as_key(data.clone(), KEY).await?;
 
-    let var = take_if_var(&mut array.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(array.span))?;
+    let value_loc = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array.as_raw(data.clone(), COLLECTION).await?;
 
@@ -1582,7 +1576,7 @@ pub async fn remove<'c>(
                     let return_value = text.remove(i).to_string();
                     let text = Value::from(std::mem::take(&mut text));
 
-                    update_if_var(var, text, data).map_err(|e| e.to_exec(command.span))?;
+                    update_if_var(var, text, data, value_loc)?;
 
                     Ok(Value::from(return_value))
                 }
@@ -1592,14 +1586,14 @@ pub async fn remove<'c>(
         Value::List(mut list) => {
             let return_value = remove_index(&mut list, &key, data.clone(), key_loc).await;
 
-            update_if_var(var, Value::List(list), data).map_err(|e| e.to_exec(command.span))?;
+            update_if_var(var, Value::List(list), data, value_loc)?;
 
             return_value
         }
         Value::Map(mut map) => {
             let return_value = remove_nested(&mut map, &key, data.clone(), key_loc).await;
 
-            update_if_var(var, Value::Map(map), data).map_err(|e| e.to_exec(command.span))?;
+            update_if_var(var, Value::Map(map), data, value_loc)?;
 
             return_value
         }
@@ -1627,9 +1621,8 @@ pub async fn swap<'c>(
     let i_loc = i.span;
     let j_loc = j.span;
 
-    let var = take_if_var(&mut array.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
+    let value_loc = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
@@ -1647,8 +1640,7 @@ pub async fn swap<'c>(
             if a < chars.len() && b < chars.len() {
                 chars.swap(a, b);
                 let text: String = chars.iter().collect();
-                let return_value = update_if_var(var, Value::from(text), data)
-                    .map_err(|e| e.to_exec(command.span))?;
+                let return_value = update_if_var(var, Value::from(text), data, value_loc)?;
                 Ok(return_value)
             } else {
                 Err(RuntimeError::IndexOutOfBounds.to_exec(command.span))
@@ -1670,8 +1662,7 @@ pub async fn swap<'c>(
             let b_swap = get_mut_index(&mut list, &j, data.clone(), j_loc).await?;
             *b_swap = a_value;
 
-            let return_value =
-                update_if_var(var, Value::List(list), data).map_err(|e| e.to_exec(command.span))?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
 
             Ok(return_value)
         }
@@ -1700,9 +1691,8 @@ pub async fn replace<'c>(
     let key_loc = key.span;
     let key = key.as_key(data.clone(), LIST_KEY).await?;
 
-    let var = take_if_var(&mut array.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(array.span))?;
+    let value_loc = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
@@ -1736,8 +1726,7 @@ pub async fn replace<'c>(
                     *ch = replacement.chars().nth(0).unwrap();
 
                     let text: String = chars.iter().collect();
-                    update_if_var(var, Value::from(text), data)
-                        .map_err(|e| e.to_exec(command.span))?;
+                    update_if_var(var, Value::from(text), data, value_loc)?;
                     Ok(Value::Text(Cow::Owned(old_ch.to_string())))
                 }
                 None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_loc)),
@@ -1751,8 +1740,7 @@ pub async fn replace<'c>(
             let return_value = old_value.clone();
             *old_value = new_value;
 
-            update_if_var(var, Value::List(list), data.clone())
-                .map_err(|e| e.to_exec(command.span))?;
+            update_if_var(var, Value::List(list), data.clone(), value_loc)?;
 
             Ok(return_value)
         }
@@ -1781,9 +1769,8 @@ pub async fn insert<'c>(
     let key_loc = key.span;
     let key = key.as_key(data.clone(), KEY).await?;
 
-    let var = take_if_var(&mut array.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
+    let value_loc = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array.as_raw(data.clone(), COLLECTION).await?;
 
@@ -1807,8 +1794,8 @@ pub async fn insert<'c>(
                 return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
             }
 
-            let return_value = update_if_var(var, Value::from(std::mem::take(&mut text)), data)
-                .map_err(|e| e.to_exec(command.span))?;
+            let return_value =
+                update_if_var(var, Value::from(std::mem::take(&mut text)), data, value_loc)?;
 
             Ok(return_value)
         }
@@ -1817,8 +1804,7 @@ pub async fn insert<'c>(
 
             insert_at_index(&mut list, &key, value_to_insert, data.clone(), key_loc).await?;
 
-            let return_value =
-                update_if_var(var, Value::List(list), data).map_err(|e| e.to_exec(command.span))?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
 
             Ok(return_value)
         }
@@ -1827,8 +1813,7 @@ pub async fn insert<'c>(
 
             insert_nested(&mut map, &key, value_to_insert, data.clone(), key_loc).await?;
 
-            let return_value =
-                update_if_var(var, Value::Map(map), data).map_err(|e| e.to_exec(command.span))?;
+            let return_value = update_if_var(var, Value::Map(map), data, value_loc)?;
 
             Ok(return_value)
         }
@@ -1855,9 +1840,8 @@ pub async fn push<'c>(
         .as_raw(data.clone(), NOT_NONE)
         .await?;
 
-    let var = take_if_var(&mut array.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
+    let value_loc = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
@@ -1869,15 +1853,13 @@ pub async fn push<'c>(
             let mut text = text.into_owned();
             text.push_str(&text_to_push);
 
-            let return_value =
-                update_if_var(var, Value::from(text), data).map_err(|e| e.to_exec(command.span))?;
+            let return_value = update_if_var(var, Value::from(text), data, value_loc)?;
             Ok(return_value)
         }
         Value::List(mut list) => {
             list.push(arg.value);
 
-            let return_value =
-                update_if_var(var, Value::List(list), data).map_err(|e| e.to_exec(command.span))?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
             Ok(return_value)
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
@@ -1894,9 +1876,9 @@ pub async fn pop<'c>(
     let mut args = command.take_args();
 
     let mut array = args.pop_front().unwrap();
-    let var = take_if_var(&mut array.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
+
+    let value_loc = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
         .await?;
@@ -1909,13 +1891,13 @@ pub async fn pop<'c>(
                 .map(|c| Value::from(c.to_string()))
                 .unwrap_or(Value::None);
 
-            update_if_var(var, Value::from(text), data).map_err(|e| e.to_exec(command.span))?;
+            update_if_var(var, Value::from(text), data, value_loc)?;
             Ok(popped_text)
         }
         Value::List(mut list) => {
             let popped_value = list.pop().unwrap_or(Value::None);
 
-            update_if_var(var, Value::List(list), data).map_err(|e| e.to_exec(command.span))?;
+            update_if_var(var, Value::List(list), data, value_loc)?;
             Ok(popped_value)
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
@@ -1939,16 +1921,14 @@ pub async fn search_replace<'c>(
     let to_replace = args.pop_front().unwrap().as_text(data.clone()).await?;
     let with = args.pop_front().unwrap().as_text(data.clone()).await?;
 
-    let var = take_if_var(&mut string.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
+    let value_loc = string.span;
+    let var = take_if_var(&mut string.value, data.clone(), value_loc).await?;
 
     let string = string.as_text(data.clone()).await?;
 
     let input = string.replace(&*to_replace, &with);
 
-    let return_value =
-        update_if_var(var, Value::from(input), data).map_err(|e| e.to_exec(command.span))?;
+    let return_value = update_if_var(var, Value::from(input), data, value_loc)?;
     Ok(return_value)
 }
 
@@ -1969,9 +1949,8 @@ pub async fn slice_replace<'c>(
     let mut range = args.pop_front().unwrap().as_list(data.clone()).await?;
     let with = args.pop_front().unwrap().as_text(data.clone()).await?;
 
-    let var = take_if_var(&mut string.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
+    let value_loc = string.span;
+    let var = take_if_var(&mut string.value, data.clone(), value_loc).await?;
 
     let string = string.as_text(data.clone()).await?;
 
@@ -2002,8 +1981,7 @@ pub async fn slice_replace<'c>(
     let mut input = string.into_owned();
     input.replace_range(from..to, &with);
 
-    let return_value =
-        update_if_var(var, Value::from(input), data).map_err(|e| e.to_exec(command.span))?;
+    let return_value = update_if_var(var, Value::from(input), data, value_loc)?;
     Ok(return_value)
 }
 
@@ -2017,9 +1995,8 @@ pub async fn reverse<'c>(
     let mut args = command.take_args();
 
     let mut array = args.pop_front().unwrap();
-    let var = take_if_var(&mut array.value, data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
+    let value_loc = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
     let array = array
         .as_raw(data.clone(), &[FslType::List, FslType::Text])
         .await?;
@@ -2028,15 +2005,13 @@ pub async fn reverse<'c>(
         Value::Text(text) => {
             let text = text.chars().rev().collect();
 
-            let return_value =
-                update_if_var(var, Value::Text(text), data).map_err(|e| e.to_exec(command.span))?;
+            let return_value = update_if_var(var, Value::Text(text), data, value_loc)?;
             Ok(return_value)
         }
         Value::List(mut list) => {
             list.reverse();
 
-            let return_value =
-                update_if_var(var, Value::List(list), data).map_err(|e| e.to_exec(command.span))?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
             Ok(return_value)
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
@@ -2455,14 +2430,22 @@ pub async fn sleep<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let mut args = command.take_args();
-    let delay = args.pop_front().unwrap().as_float(data).await?;
+    let arg = args.pop_front().unwrap();
+    let arg_loc = arg.span;
+    let delay = arg.as_float(data).await?;
     if !delay.is_finite() {
-        Err(RuntimeError::Custom("sleep time must be a finite number".into()).to_exec(command.span))
+        Err(RuntimeError::NonFiniteValue.to_exec(command.span))
     } else if delay.is_sign_negative() {
         Err(
-            RuntimeError::Custom("sleep time cannot be a negative number".into())
-                .to_exec(command.span),
+            RuntimeError::InvalidArgument("sleep time cannot be a negative number".into())
+                .to_exec(arg_loc),
         )
+    } else if delay > Duration::MAX.as_secs_f64() {
+        Err(RuntimeError::InvalidArgument(format!(
+            "sleep time cannot exceed {} seconds",
+            Duration::MAX.as_secs_f64()
+        ))
+        .to_exec(arg_loc))
     } else {
         tokio::time::sleep(Duration::from_secs_f64(delay)).await;
         Ok(Value::None)
@@ -2520,10 +2503,7 @@ pub async fn def<'c>(
         match args[i].value {
             Value::Var(ref label) => {
                 if encountered_command {
-                    return Err(RuntimeError::WrongArgOrder(format!(
-                        "variables in command definition must come before commands"
-                    ))
-                    .to_exec(command.span));
+                    return Err(RuntimeError::ParametersOutOfOrder.to_exec(command.span));
                 }
                 parameters.push_back(label.clone());
             }
@@ -2532,10 +2512,13 @@ pub async fn def<'c>(
                 commands.push(*command.clone());
             }
             _ => {
-                return Err(RuntimeError::InvalidArgument(
-                    "def must only contain parameter labels followed by commands".into(),
-                )
-                .to_exec(command.span));
+                return Err(RuntimeError::WrongArgType {
+                    command_label: command.get_label().to_string(),
+                    arg_number: i,
+                    fsl_type: args[i].value.as_type(),
+                    expected: &[FslType::Var, FslType::Command],
+                }
+                .to_exec(args[i].span));
             }
         }
     }
@@ -2599,11 +2582,11 @@ pub async fn run<'c>(
     };
 
     if args.len() != parameter_labels.len() {
-        return Err(RuntimeError::WrongArgCount(format!(
-            "expected {} args but got {}",
-            parameter_labels.len(),
-            args.len()
-        ))
+        return Err(RuntimeError::WrongArgCount {
+            command_label: command_label.to_string(),
+            expected: ExpectedArgs::Exactly(parameter_labels.len()),
+            got: args.len(),
+        }
         .to_exec(command.span));
     }
 
@@ -2914,7 +2897,7 @@ pub mod tests {
     #[tokio::test]
     async fn take_var() {
         let err = test_interpreter_err_type("a.store(1) print(a) a.take() print(a)").await;
-        assert_runtime_err!(err, RuntimeError::NonExistantVar(_))
+        assert_runtime_err!(err, RuntimeError::NonExistantVar { .. })
     }
 
     #[tokio::test]
@@ -2942,7 +2925,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::NonExistantVar(_))
+        assert_runtime_err!(err, RuntimeError::NonExistantVar { .. })
     }
 
     #[tokio::test]
@@ -3029,7 +3012,7 @@ pub mod tests {
     async fn int_text_eq() {
         test_interpreter(r#"print(eq(1, "1"))"#, "true").await;
         let err = test_interpreter_err_type(r#"print(eq(1, "a"))"#).await;
-        assert_runtime_err!(err, RuntimeError::FailedParse(_))
+        assert_runtime_err!(err, RuntimeError::InvalidConversion { .. })
     }
 
     #[tokio::test]
@@ -3658,7 +3641,7 @@ pub mod tests {
     #[tokio::test]
     async fn length_of_bool() {
         let err = test_interpreter_err_type("var.store(true) length(var).print()").await;
-        assert_runtime_err!(err, RuntimeError::InvalidConversion(_))
+        assert_runtime_err!(err, RuntimeError::InvalidConversion { .. })
     }
 
     #[tokio::test]
@@ -3817,7 +3800,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConstant(_))
+        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConst { .. })
     }
 
     #[tokio::test]
@@ -3829,7 +3812,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::AttemptToFreeConstant(_))
+        assert_runtime_err!(err, RuntimeError::AttemptToTakeConst { .. })
     }
 
     #[tokio::test]
@@ -3859,7 +3842,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConstant(_))
+        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConst { .. })
     }
 
     #[tokio::test]
@@ -4052,7 +4035,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::NonExistantVar(_))
+        assert_runtime_err!(err, RuntimeError::NonExistantVar { .. })
     }
 
     #[tokio::test]
@@ -4197,7 +4180,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::NonExistantKey(_))
+        assert_runtime_err!(err, RuntimeError::NonExistantKey { .. })
     }
 
     #[tokio::test]
@@ -5044,7 +5027,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::FailedParse(_))
+        assert_runtime_err!(err, RuntimeError::FailedParse { .. })
     }
 
     #[tokio::test]
@@ -5058,6 +5041,6 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::NonExistantVar(_))
+        assert_runtime_err!(err, RuntimeError::NonExistantVar { .. })
     }
 }

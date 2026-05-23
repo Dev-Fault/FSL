@@ -1,24 +1,27 @@
 use std::fmt::Debug;
 
-use crate::parser::{ParseError, Span};
+use crate::{
+    parser::{ParseError, Span},
+    types::FslType,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorContext<T> {
     pub kind: T,
-    pub display: String,
+    pub context: String,
 }
 
 impl<T> ErrorContext<T> {
-    pub fn new(kind: T, display: String) -> Self {
-        Self { kind, display }
+    pub fn new(kind: T, context: String) -> Self {
+        Self { kind, context }
     }
 }
 
 impl<'c> From<ExecutionError<'c>> for ErrorContext<RuntimeError> {
     fn from(value: ExecutionError<'c>) -> Self {
-        let display = value.to_string();
+        let context = value.to_string();
         let kind = value.command_error;
-        Self { kind, display }
+        Self { kind, context }
     }
 }
 
@@ -56,7 +59,7 @@ impl std::fmt::Display for InterpreterError {
         let output = match self {
             InterpreterError::Lex(output) => output,
             InterpreterError::Parse(output) => output,
-            InterpreterError::Execution(exeuction_error) => &exeuction_error.display,
+            InterpreterError::Execution(exeuction_error) => &exeuction_error.context,
             InterpreterError::Runtime(command_error) => &command_error.to_string(),
             InterpreterError::UnmatchedCurlyBraces => "unmatched curly braces",
             InterpreterError::Import(output) => output,
@@ -98,9 +101,8 @@ impl<'c> std::fmt::Display for ExecutionError<'c> {
                 .collect::<String>();
         write!(
             f,
-            "{} on line {}\n{}{}\n{}^",
+            "{}\n{}{}\n{}^",
             self.command_error.to_string(),
-            self.span.start.line_number(),
             line_header,
             self.span.start.line(),
             padding,
@@ -111,47 +113,100 @@ impl<'c> std::fmt::Display for ExecutionError<'c> {
 impl<'c> std::error::Error for ExecutionError<'c> {}
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ExpectedArgs {
+    None,
+    Exactly(usize),
+    AtLeast(usize),
+    AtMost(usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeError {
-    WrongArgType(String),
-    WrongArgCount(String),
-    WrongArgOrder(String),
-    DivisionByZero,
-    LoopLimitReached,
-    OutputLimitExceeded,
-    IndexOutOfBounds,
-    KeyNotPresentInMap(String),
-    InvalidRange,
-    NonFiniteValue,
+    // Command
+    WrongArgType {
+        command_label: String,
+        arg_number: usize,
+        fsl_type: FslType,
+        expected: &'static [FslType],
+    },
+    MissingArg {
+        command_label: String,
+        arg_number: usize,
+    },
+    WrongArgCount {
+        command_label: String,
+        expected: ExpectedArgs,
+        got: usize,
+    },
+    InvalidArgument(String),
+    ParametersOutOfOrder,
+    NonExistantCommand {
+        label: String,
+    },
+    // Control Flow
     BreakOutsideLoop,
     ContinueOutsideLoop,
-    NonExistantCommand(String),
-    ProgramExited,
     SwitchMustHaveSingleFallbackCommand,
-    ConditionFalse,
     MultipleThenCommandsInIf,
     MultipleElseCommandsInIf,
     InvalidCommandInIf,
     IfMustContainThen,
     ElseIfMustBePairedWithElse,
-    InvalidArgument(String),
+    // Math
+    DivisionByZero,
+    NonFiniteValue,
     Overflow,
-    InvalidComparison(String),
-    InvalidConversion(String),
-    FailedParse(String),
-    NonExistantVar(String),
-    NotAVar(String),
-    InvalidVarValue(String),
+    // Var
+    NonExistantVar {
+        label: String,
+    },
+    AttemptToOverwriteConst {
+        label: String,
+    },
+    AttemptToTakeConst {
+        label: String,
+    },
+    InvalidVarValue {
+        invalid_value: FslType,
+    },
+    // Type
+    NotAVar {
+        value: String,
+    },
+    NotAMap {
+        key: String,
+    },
+    FailedParse {
+        value: String,
+        valid_types: Vec<FslType>,
+    },
+    InvalidComparison {
+        a: String,
+        b: String,
+    },
+    InvalidConversion {
+        from: String,
+        to: Vec<FslType>,
+    },
+    // Index
+    IndexOutOfBounds,
     NegativeIndex,
-    VarMemoryLimitReached,
-    AttemptToOverwriteConstant(String),
-    AttemptToFreeConstant(String),
-    EmptyMapPath(String),
-    NotAMap(String),
+    InvalidRange,
     NotIndexable,
     MissingIndex,
     MissingKey,
-    NonExistantKey(String),
+    NonExistantKey {
+        key: String,
+    },
+    // Limits
+    LoopLimitReached,
+    OutputLimitExceeded,
+    VarMemoryLimitReached,
+    // Custom
     Custom(String),
+    // Not real errors, need to remove later
+    ProgramExited,
+    ConditionFalse,
 }
 
 impl<'c> From<ExecutionError<'c>> for RuntimeError {
@@ -163,50 +218,121 @@ impl<'c> From<ExecutionError<'c>> for RuntimeError {
 impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let output: &str = match self {
-            RuntimeError::WrongArgType(error_text) => error_text,
-            RuntimeError::WrongArgCount(error_text) => error_text,
-            RuntimeError::WrongArgOrder(error_text) => error_text,
+            RuntimeError::WrongArgType {
+                command_label,
+                arg_number,
+                fsl_type,
+                expected,
+            } => {
+                let expected: Vec<_> = expected.iter().map(|t| t.as_str()).collect();
+                let expected = expected.join(", ");
+                &format!(
+                    "argument {} of command `{}` has invalid type `{}`\nExpected: {}",
+                    arg_number + 1,
+                    command_label.to_string(),
+                    fsl_type.as_str(),
+                    expected
+                )
+            }
+            RuntimeError::MissingArg {
+                command_label,
+                arg_number,
+            } => &format!(
+                "missing argument {} in command `{}`",
+                arg_number + 1,
+                command_label.to_string(),
+            ),
+            RuntimeError::WrongArgCount {
+                command_label,
+                expected,
+                got,
+            } => match expected {
+                ExpectedArgs::None => &format!(
+                    "command `{}` expected no arguments and got {}",
+                    command_label.to_string(),
+                    got,
+                ),
+                ExpectedArgs::Exactly(n) => &format!(
+                    "command `{}` expected exactly {} arguments and got {}",
+                    command_label.to_string(),
+                    n,
+                    got,
+                ),
+                ExpectedArgs::AtLeast(n) => &format!(
+                    "command `{}` expected at least {} arguments and got {}",
+                    command_label.to_string(),
+                    n,
+                    got,
+                ),
+                ExpectedArgs::AtMost(n) => &format!(
+                    "command `{}` expected at most {} arguments and got {}",
+                    command_label.to_string(),
+                    n,
+                    got,
+                ),
+            },
+            RuntimeError::ParametersOutOfOrder => {
+                "parameters must come first in command definition"
+            }
             RuntimeError::DivisionByZero => "cannot divide by zero",
             RuntimeError::LoopLimitReached => "maximum loop limit reached",
             RuntimeError::IndexOutOfBounds => "index out of bounds",
-            RuntimeError::KeyNotPresentInMap(key) => &format!("key \"{}\" not present in map", key),
             RuntimeError::InvalidRange => "invalid range (min should be less than max)",
             RuntimeError::NonFiniteValue => "cannot use non finite value",
             RuntimeError::BreakOutsideLoop => "break can only be called inside loop",
             RuntimeError::ContinueOutsideLoop => "continue can only be called inside loop",
-            RuntimeError::NonExistantCommand(error_text) => error_text,
+            RuntimeError::NonExistantCommand { label } => {
+                &format!("command `{}` does not exist", label)
+            }
             RuntimeError::ProgramExited => "",
             RuntimeError::Custom(error_text) => error_text,
             RuntimeError::SwitchMustHaveSingleFallbackCommand => {
-                "switch statement must have single fallback command"
+                "switch statement must have single fallback"
             }
             RuntimeError::ConditionFalse => "",
-            RuntimeError::MultipleThenCommandsInIf => "if can only contain one then command",
-            RuntimeError::MultipleElseCommandsInIf => "if can only contain one else command",
+            RuntimeError::MultipleThenCommandsInIf => "if can only contain one then",
+            RuntimeError::MultipleElseCommandsInIf => "if can only contain one else",
             RuntimeError::InvalidCommandInIf => {
                 "if must only contain then, else_if, and else commands"
             }
             RuntimeError::IfMustContainThen => "if must contain a then command",
-            RuntimeError::ElseIfMustBePairedWithElse => {
-                "else if command(s) must be paired with else command"
-            }
+            RuntimeError::ElseIfMustBePairedWithElse => "else_if must be paired with else",
             RuntimeError::InvalidArgument(error_text) => error_text,
             RuntimeError::OutputLimitExceeded => "memory limit for print exceeded",
             RuntimeError::Overflow => "calculation resulted in overflow",
-            RuntimeError::InvalidComparison(error_text) => error_text,
-            RuntimeError::InvalidConversion(error_text) => error_text,
-            RuntimeError::FailedParse(error_text) => error_text,
-            RuntimeError::NonExistantVar(error_text) => error_text,
-            RuntimeError::NotAVar(error_text) => error_text,
+            RuntimeError::InvalidComparison { a, b } => {
+                &format!("cannot compare `{}` with `{}`", a, b)
+            }
+            RuntimeError::InvalidConversion { from, to } => {
+                let to: Vec<_> = to.iter().map(|t| t.as_str()).collect();
+                let to = to.join(", ");
+                &format!("cannot convert value `{}` to type `{}`", from, to)
+            }
+            RuntimeError::FailedParse { value, valid_types } => {
+                let valid_types: Vec<_> = valid_types.iter().map(|t| t.as_str()).collect();
+                let valid_types = valid_types.join(", ");
+                &format!("failed to parse `{}` as type `{}`", value, valid_types)
+            }
+            RuntimeError::NonExistantVar { label } => {
+                &format!("cannot get value of non existant var `{}`", label)
+            }
+            RuntimeError::NotAVar { value } => &format!("`{}` is not a var", value),
             RuntimeError::NegativeIndex => "index cannot be a negative value",
-            RuntimeError::InvalidVarValue(error_text) => error_text,
+            RuntimeError::InvalidVarValue { invalid_value } => {
+                &format!("cannot store `{}` in var", invalid_value)
+            }
             RuntimeError::VarMemoryLimitReached => "interpreter var memory limit reached",
-            RuntimeError::AttemptToOverwriteConstant(error_text) => error_text,
-            RuntimeError::AttemptToFreeConstant(error_text) => error_text,
-            RuntimeError::EmptyMapPath(error_text) => error_text,
-            RuntimeError::NotAMap(error_text) => error_text,
+            RuntimeError::AttemptToOverwriteConst { label } => {
+                &format!("cannot overwrite const var `{}`", label)
+            }
+            RuntimeError::AttemptToTakeConst { label } => {
+                &format!("cannot take const var `{}`", label)
+            }
+            RuntimeError::NotAMap { key } => {
+                &format!("cannot use key `{}` on value that is not a map", key)
+            }
             RuntimeError::NotIndexable => "used index on value that cannot be indexed",
-            RuntimeError::NonExistantKey(error_text) => error_text,
+            RuntimeError::NonExistantKey { key } => &format!("key `{}` not present in map", key),
             RuntimeError::MissingIndex => "indexing requires at least one value",
             RuntimeError::MissingKey => "key is required to access map value",
         };

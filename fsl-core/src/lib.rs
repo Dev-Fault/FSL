@@ -19,6 +19,7 @@ use crate::{
     },
     parser::{Arg, ArgKind, Expression, Parser, Span},
     types::{
+        FslType,
         command::{ArgRule, Argument, Command, CommandDef, Handler, UserDef},
         value::{Value, ValueResult},
     },
@@ -212,11 +213,11 @@ impl FslInterpreter {
                 let def_label = match expression.args.get(0) {
                     Some(label) => label.token.as_str(),
                     None => {
-                        return Err((RuntimeError::InvalidArgument(format!(
-                            "def command missing label on line {}:\n{}",
-                            expression.start.line_number(),
-                            expression.start.line()
-                        )))
+                        return Err((RuntimeError::MissingArg {
+                            command_label: expression.name.to_string(),
+                            arg_number: 0,
+                        })
+                        .to_exec(Span::from(expression))
                         .into());
                     }
                 };
@@ -333,10 +334,9 @@ impl FslInterpreter {
 
                 Ok(Value::Command(Box::new(command)))
             } else {
-                return Err(RuntimeError::NonExistantCommand(format!(
-                    "command with name {} does not exist",
-                    expression.name.as_str()
-                ))
+                return Err(RuntimeError::NonExistantCommand {
+                    label: expression.name.to_string(),
+                }
                 .to_exec(Span::new(expression.name, expression.end))
                 .into());
             }
@@ -356,9 +356,11 @@ impl FslInterpreter {
                             Ok(value) => {
                                 Ok(Argument::new(Value::Float(value), Span::from(arg.token)))
                             }
-                            Err(_) => Err(RuntimeError::FailedParse(
-                                "failed to convert to a number".into(),
-                            )
+                            Err(_) => Err(RuntimeError::FailedParse {
+                                value: number.to_string(),
+                                valid_types: vec![FslType::Float],
+                            }
+                            .to_exec(Span::from(arg))
                             .into()),
                         }
                     } else {
@@ -368,9 +370,11 @@ impl FslInterpreter {
                             if let Ok(value) = number.parse::<f64>() {
                                 Ok(Argument::new(Value::Float(value), Span::from(arg.token)))
                             } else {
-                                Err(RuntimeError::FailedParse(
-                                    "failed to convert to a number".into(),
-                                )
+                                Err(RuntimeError::FailedParse {
+                                    value: number.to_string(),
+                                    valid_types: vec![FslType::Int, FslType::Int],
+                                }
+                                .to_exec(Span::from(arg))
                                 .into())
                             }
                         }
@@ -429,7 +433,7 @@ mod interpreter {
 
     #[macro_export]
     macro_rules! assert_runtime_err {
-        ($err:ident, $runtime_error:pat) => {
+        ($err:ident, $runtime_error:pat_param) => {
             assert!(
                 (matches!(
                     $err,
@@ -1862,7 +1866,7 @@ mod interpreter {
         )
         .await;
 
-        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConstant(_))
+        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConst { .. })
     }
 
     #[tokio::test]
@@ -2377,6 +2381,6 @@ mod interpreter {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::NonExistantCommand(_))
+        assert_runtime_err!(err, RuntimeError::NonExistantCommand { .. })
     }
 }

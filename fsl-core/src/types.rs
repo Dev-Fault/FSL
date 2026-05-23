@@ -16,6 +16,24 @@ pub enum FslType {
     None,
 }
 
+impl std::fmt::Display for FslType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            FslType::Int => "int",
+            FslType::Float => "float",
+            FslType::Text => "text",
+            FslType::Bool => "bool",
+            FslType::List => "list",
+            FslType::Map => "map",
+            FslType::Var => "var",
+            FslType::Command => "command",
+            FslType::None => "none",
+        }
+        .to_string();
+        write!(f, "{}", text)
+    }
+}
+
 impl FslType {
     pub fn as_str(&self) -> &str {
         match self {
@@ -32,26 +50,23 @@ impl FslType {
     }
 
     pub fn gen_conversion_err_to_type(&self, to: FslType) -> RuntimeError {
-        RuntimeError::InvalidConversion(format!(
-            "cannot convert from type {} to type {}",
-            self.as_str(),
-            to.as_str(),
-        ))
+        RuntimeError::InvalidConversion {
+            from: self.to_string(),
+            to: vec![to],
+        }
     }
 
     pub fn gen_conversion_err_to_types(&self, to: &[FslType]) -> RuntimeError {
-        RuntimeError::InvalidConversion(format!(
-            "cannot convert type {} to type {:?}",
-            self.as_str(),
-            to,
-        ))
+        RuntimeError::InvalidConversion {
+            from: self.to_string(),
+            to: to.to_vec(),
+        }
     }
 
     pub fn gen_parse_err(&self, to: FslType) -> RuntimeError {
-        RuntimeError::FailedParse(format!(
-            "failed to parse type {} to type {}",
-            self.as_str(),
-            to.as_str()
-        ))
+        RuntimeError::FailedParse {
+            value: self.to_string(),
+            valid_types: vec![to],
+        }
     }
 }

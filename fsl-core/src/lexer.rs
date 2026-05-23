@@ -232,7 +232,7 @@ impl<'c> Token<'c> {
 
     pub fn line_number(&self) -> usize {
         let slice = &self.source[..self.location];
-        let line = slice.lines().count();
+        let line = slice.lines().count().max(1);
         line
     }
 
@@ -261,6 +261,12 @@ impl<'c> Token<'c> {
             TokenType::Comment(s) => s,
             TokenType::None(s) => s,
         }
+    }
+}
+
+impl<'c> std::fmt::Display for Token<'c> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -297,9 +303,8 @@ impl<'c> Display for LexError<'c> {
             LexError::UnexpectedToken(token) => {
                 write!(
                     f,
-                    "Unexpected token \"{}\" on line {}\n{}: {}",
+                    "Unexpected token `{}`\n{}: {}",
                     token.token_type,
-                    token.line_number(),
                     token.line_number(),
                     token.line()
                 )
@@ -307,9 +312,8 @@ impl<'c> Display for LexError<'c> {
             LexError::InvalidNumber(token) => {
                 write!(
                     f,
-                    "Invalid Number \"{}\" on line {}\n{}: {}",
+                    "Invalid Number `{}`\n{}: {}",
                     token.token_type,
-                    token.line_number(),
                     token.line_number(),
                     token.line()
                 )
@@ -317,8 +321,7 @@ impl<'c> Display for LexError<'c> {
             LexError::UnclosedString(token) => {
                 write!(
                     f,
-                    "Unclosed string detected on line {}\n{}: {}",
-                    token.line_number(),
+                    "Unclosed string detected\n{}: {}",
                     token.line_number(),
                     token.line()
                 )
@@ -326,8 +329,7 @@ impl<'c> Display for LexError<'c> {
             LexError::UnclosedComment(token) => {
                 write!(
                     f,
-                    "Unclosed comment detected on line {}\n{}: {}",
-                    token.line_number(),
+                    "Unclosed comment detected\n{}: {}",
                     token.line_number(),
                     token.line()
                 )
@@ -335,9 +337,8 @@ impl<'c> Display for LexError<'c> {
             LexError::InvalidIdentifier(token) => {
                 write!(
                     f,
-                    "Invalid identifier \"{}\" on line {}\n{}: {}",
+                    "Invalid identifier `{}`\n{}: {}",
                     token.token_type,
-                    token.line_number(),
                     token.line_number(),
                     token.line()
                 )

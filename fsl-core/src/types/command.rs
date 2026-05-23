@@ -7,7 +7,11 @@ use tokio::sync::Mutex;
 use crate::{
     InterpreterData,
     data::UserDefinitions,
-    error::{ExecutionError, RuntimeError},
+    error::{
+        ExecutionError,
+        ExpectedArgs::{self},
+        RuntimeError,
+    },
     parser::Span,
     types::{
         FslType,
@@ -374,14 +378,13 @@ impl<'c> Command<'c> {
             let arg = &self.args[i];
             let fsl_type = arg.value.as_type();
             if !arg_rule.valid_types.contains(&fsl_type) {
-                return Err(RuntimeError::WrongArgType(format!(
-                    "Arg {} of command {} cannot be of type {}\nValid types are {:?}",
-                    i,
-                    self.get_label().to_string(),
-                    fsl_type.as_str(),
-                    arg_rule.valid_types
-                ))
-                .to_exec(self.span));
+                return Err(RuntimeError::WrongArgType {
+                    command_label: self.get_label().to_string(),
+                    arg_number: i,
+                    fsl_type,
+                    expected: arg_rule.valid_types,
+                }
+                .to_exec(arg.span));
             }
         }
         Ok(())
@@ -403,12 +406,10 @@ impl<'c> Command<'c> {
                             self.validate_arg_range(arg_rule, &range)?;
                         }
                         None => {
-                            return Err(RuntimeError::WrongArgCount(format!(
-                                "Arg {} of command {} must be present and be of type {:?}",
-                                i,
-                                self.get_label(),
-                                arg_rule.valid_types
-                            ))
+                            return Err(RuntimeError::MissingArg {
+                                command_label: self.get_label().to_string(),
+                                arg_number: *i,
+                            }
                             .to_exec(self.span));
                         }
                     }
@@ -420,20 +421,18 @@ impl<'c> Command<'c> {
                         max_args
                     };
                     if self.args.len() < range.start {
-                        return Err(RuntimeError::WrongArgCount(format!(
-                            "Command {} must have at least {} arguments and only {} were given",
-                            self.get_label(),
-                            range.start,
-                            self.args.len(),
-                        ))
+                        return Err(RuntimeError::WrongArgCount {
+                            command_label: self.get_label().to_string(),
+                            expected: ExpectedArgs::AtLeast(range.start),
+                            got: self.args.len(),
+                        }
                         .to_exec(self.span));
                     } else if self.args.len() > range.end {
-                        return Err(RuntimeError::WrongArgCount(format!(
-                            "Command {} must have no more than {} arguments and {} were given",
-                            self.get_label(),
-                            range.end,
-                            self.args.len(),
-                        ))
+                        return Err(RuntimeError::WrongArgCount {
+                            command_label: self.get_label().to_string(),
+                            expected: ExpectedArgs::AtMost(range.end),
+                            got: self.args.len(),
+                        }
                         .to_exec(self.span));
                     } else {
                         self.validate_arg_range(arg_rule, range)?;
@@ -441,10 +440,11 @@ impl<'c> Command<'c> {
                 }
                 ArgPos::None => {
                     if self.args.len() > 0 {
-                        return Err(RuntimeError::WrongArgCount(format!(
-                            "Command {} does not take any arguments",
-                            self.get_label()
-                        ))
+                        return Err(RuntimeError::WrongArgCount {
+                            command_label: self.get_label().to_string(),
+                            expected: ExpectedArgs::None,
+                            got: self.args.len(),
+                        }
                         .to_exec(self.span));
                     }
                 }
@@ -468,12 +468,11 @@ impl<'c> Command<'c> {
         }
 
         if self.args.len() > max_args {
-            return Err(RuntimeError::WrongArgCount(format!(
-                "Command {} expected {} args but got {}",
-                self.get_label(),
-                max_args,
-                self.args.len()
-            ))
+            return Err(RuntimeError::WrongArgCount {
+                command_label: self.get_label().to_string(),
+                expected: ExpectedArgs::Exactly(max_args),
+                got: self.args.len(),
+            }
             .to_exec(self.span));
         }
         Ok(())

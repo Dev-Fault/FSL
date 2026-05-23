@@ -27,6 +27,15 @@ impl<'c> From<Token<'c>> for Span<'c> {
     }
 }
 
+impl<'c> From<Arg<'c>> for Span<'c> {
+    fn from(value: Arg<'c>) -> Self {
+        Self {
+            start: value.token,
+            end: value.token,
+        }
+    }
+}
+
 impl<'c> From<&Expression<'c>> for Span<'c> {
     fn from(value: &Expression<'c>) -> Self {
         Self {
@@ -220,9 +229,8 @@ impl<'c> Display for ParseError<'c> {
             ParseError::OutOfPlaceSymbol(token) => {
                 write!(
                     f,
-                    "Unexpected symbol \"{}\" on line {}\n{}: {}",
+                    "Unexpected symbol `{}`\n{}: {}",
                     token.token_type,
-                    token.line_number(),
                     token.line_number(),
                     token.line(),
                 )
@@ -230,9 +238,8 @@ impl<'c> Display for ParseError<'c> {
             ParseError::OutOfPlaceValue(token) => {
                 write!(
                     f,
-                    "Unexpected value \"{}\" on line {}\n{}: {}",
+                    "Unexpected value `{}\n{}: {}",
                     token.token_type,
-                    token.line_number(),
                     token.line_number(),
                     token.line(),
                 )
@@ -242,9 +249,8 @@ impl<'c> Display for ParseError<'c> {
                 let value = Token::span(start, span.end).to_string();
                 write!(
                     f,
-                    "Value outside of expression \"{}\" on line {}\n{}: {}",
+                    "Value outside of expression `{}`\n{}: {}",
                     value,
-                    start.line_number(),
                     start.line_number(),
                     start.line(),
                 )
@@ -253,9 +259,8 @@ impl<'c> Display for ParseError<'c> {
                 let value = Token::span(expr.name, expr.end).to_string();
                 write!(
                     f,
-                    "Unfinished expression \"{}\" on line {}\n{}: {}\n",
+                    "Unfinished expression `{}`\n{}: {}",
                     value,
-                    expr.start.line_number(),
                     expr.start.line_number(),
                     expr.start.line(),
                 )
@@ -265,9 +270,8 @@ impl<'c> Display for ParseError<'c> {
                 let value = Token::span(start, span.end).to_string();
                 write!(
                     f,
-                    "Unfinished list \"{}\" on line {}\n{}: {}",
+                    "Unfinished list `{}`\n{}: {}",
                     value,
-                    start.line_number(),
                     start.line_number(),
                     start.line(),
                 )
@@ -275,9 +279,8 @@ impl<'c> Display for ParseError<'c> {
             ParseError::UnfinishedMap(map) => {
                 write!(
                     f,
-                    "Unfinished map \"{}\" on line {}\n{}: {}\n",
+                    "Unfinished map `{}`\n{}: {}",
                     map.start.token_type,
-                    map.start.line_number(),
                     map.start.line_number(),
                     map.start.line(),
                 )

@@ -1,10 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    num::{ParseFloatError, ParseIntError},
-    pin::Pin,
-    sync::Arc,
-};
+use std::{borrow::Cow, collections::HashMap, pin::Pin, sync::Arc};
 
 use crate::{
     InterpreterData,
@@ -163,10 +157,20 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
             (Value::Float(a), Value::Float(b)) => Ok(*a == *b),
             (Value::Bool(a), Value::Bool(b)) => Ok(*a == *b),
             (Value::Text(a), Value::Text(b)) => Ok(*a == *b),
-            (Value::Text(a), Value::Int(b)) => Ok(a.parse::<i64>()? == *b),
-            (Value::Int(a), Value::Text(b)) => Ok(*a == b.parse::<i64>()?),
-            (Value::Text(a), Value::Float(b)) => Ok(a.parse::<f64>()? == *b),
-            (Value::Float(a), Value::Text(b)) => Ok(*a == b.parse::<f64>()?),
+            (Value::Text(a), Value::Int(b)) => Ok(a
+                .parse::<i64>()
+                .map_err(|_| self.conversion_err_to_type(FslType::Int))?
+                == *b),
+            (Value::Int(a), Value::Text(b)) => Ok(*a
+                == b.parse::<i64>()
+                    .map_err(|_| self.conversion_err_to_type(FslType::Int))?),
+            (Value::Text(a), Value::Float(b)) => Ok(a
+                .parse::<f64>()
+                .map_err(|_| self.conversion_err_to_type(FslType::Float))?
+                == *b),
+            (Value::Float(a), Value::Text(b)) => Ok(*a
+                == b.parse::<f64>()
+                    .map_err(|_| self.conversion_err_to_type(FslType::Float))?),
             (Value::List(a_list), Value::List(b_list)) => {
                 if a_list.len() != b_list.len() {
                     return Ok(false);
@@ -180,11 +184,10 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                 Ok(true)
             }
             (Value::None, Value::None) => Ok(true),
-            _ => Err(RuntimeError::InvalidComparison(format!(
-                "cannot compare {} with {}",
-                self.as_type().as_str(),
-                other.as_type().as_str()
-            ))),
+            _ => Err(RuntimeError::InvalidComparison {
+                a: self.to_string(),
+                b: other.to_string(),
+            }),
         }
     }
 
@@ -206,10 +209,10 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                     Ok(value) => Ok(value),
                     Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
                 },
-                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
             }
         })
     }
@@ -243,10 +246,10 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                     Ok(value) => Ok(value),
                     Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
                 },
-                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
             }
         })
     }
@@ -255,15 +258,15 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         Box::pin(async {
             let to_type = FslType::Bool;
             match self {
-                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Text(value) => match value.parse::<bool>() {
                     Ok(value) => Ok(value),
                     Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
                 },
                 Value::Bool(value) => Ok(value),
-                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Var(label) => data.vars.get(&label)?.as_bool(data).await,
                 Value::Command(command) => {
                     command
@@ -272,7 +275,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_bool(data.clone())
                         .await
                 }
-                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
             }
         })
     }
@@ -284,12 +287,12 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         Box::pin(async move {
             let to_type = FslType::Var;
             match self {
-                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Var(label) => Ok(label),
                 Value::Command(command) => {
                     command
@@ -298,7 +301,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_var_label(data.clone())
                         .await
                 }
-                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
             }
         })
     }
@@ -353,7 +356,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_text(data.clone())
                         .await
                 }
-                Value::None => Err(self.gen_conversion_err_to_type(FslType::Text).into()),
+                Value::None => Err(self.conversion_err_to_type(FslType::Text).into()),
             }
         })
     }
@@ -365,17 +368,17 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         Box::pin(async {
             let to_type = FslType::List;
             match self {
-                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::List(mut values) => {
                     for value in values.iter_mut() {
                         *value = std::mem::take(value).as_raw_unchecked(data.clone()).await?;
                     }
                     Ok(values)
                 }
-                Value::Map(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Map(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Var(label) => data.vars.get(&label)?.as_list(data).await,
                 Value::Command(command) => {
                     command
@@ -384,7 +387,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_list(data.clone())
                         .await
                 }
-                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
             }
         })
     }
@@ -396,11 +399,11 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         Box::pin(async {
             let to_type = FslType::Map;
             match self {
-                Value::Int(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Float(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Text(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::Bool(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
-                Value::List(_) => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Map(mut map) => {
                     for (_, value) in map.iter_mut() {
                         *value = std::mem::take(value).as_raw_unchecked(data.clone()).await?;
@@ -415,7 +418,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_map(data.clone())
                         .await
                 }
-                Value::None => Err(self.gen_conversion_err_to_type(to_type).into()),
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
             }
         })
     }
@@ -430,7 +433,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                     Err(_) => match n.parse::<f64>() {
                         Ok(n) => Ok(Value::Float(n)),
                         Err(_) => Err(Value::Text(n)
-                            .gen_conversion_err_to_types(&[FslType::Int, FslType::Float])
+                            .conversion_err_to_types(&[FslType::Int, FslType::Float])
                             .into()),
                     },
                 },
@@ -442,7 +445,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_number(data.clone())
                         .await
                 }
-                _ => Err(self.gen_conversion_err_to_types(NUMBER).into()),
+                _ => Err(self.conversion_err_to_types(NUMBER).into()),
             }
         })
     }
@@ -480,7 +483,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
             if valid_types.contains(&value.as_type()) {
                 Ok(value)
             } else {
-                Err(value.gen_conversion_err_to_types(valid_types).into())
+                Err(value.conversion_err_to_types(valid_types).into())
             }
         })
     }
@@ -538,9 +541,10 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         if let Value::Command(command) = self {
             Ok(*command)
         } else {
-            Err(RuntimeError::InvalidConversion(
-                "failed to convert value into command".into(),
-            ))
+            Err(RuntimeError::InvalidConversion {
+                from: self.to_string(),
+                to: vec![FslType::Command],
+            })
         }
     }
 
@@ -548,10 +552,9 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         if let Value::Var(label) = self {
             Ok(label.clone())
         } else {
-            Err(RuntimeError::NotAVar(format!(
-                "value {} is not a var",
-                self.to_string()
-            )))
+            Err(RuntimeError::NotAVar {
+                value: self.to_string(),
+            })
         }
     }
 
@@ -586,22 +589,18 @@ impl<'c> Value<'c> {
         Self::Command(Box::new(command))
     }
 
-    fn gen_conversion_err_to_type(&self, to: FslType) -> RuntimeError {
-        RuntimeError::InvalidConversion(format!(
-            "cannot convert value \"{}\" from type {} to type {}",
-            self.to_string(),
-            self.as_type().as_str(),
-            to.as_str(),
-        ))
+    fn conversion_err_to_type(&self, to: FslType) -> RuntimeError {
+        RuntimeError::InvalidConversion {
+            from: self.to_string(),
+            to: vec![to],
+        }
     }
 
-    fn gen_conversion_err_to_types(&self, to: &[FslType]) -> RuntimeError {
-        RuntimeError::InvalidConversion(format!(
-            "cannot convert value \"{}\" from type {} to type {:?}",
-            self.to_string(),
-            self.as_type().as_str(),
-            to,
-        ))
+    fn conversion_err_to_types(&self, to: &[FslType]) -> RuntimeError {
+        RuntimeError::InvalidConversion {
+            from: self.to_string(),
+            to: to.to_vec(),
+        }
     }
 }
 
@@ -678,17 +677,5 @@ impl<'c> From<Vec<Value<'c>>> for Value<'c> {
 impl<'c> From<Command<'c>> for Value<'c> {
     fn from(value: Command<'c>) -> Self {
         Value::Command(Box::new(value))
-    }
-}
-
-impl From<ParseIntError> for RuntimeError {
-    fn from(_: ParseIntError) -> Self {
-        RuntimeError::FailedParse("failed to convert text to int (whole number)".into())
-    }
-}
-
-impl From<ParseFloatError> for RuntimeError {
-    fn from(_: ParseFloatError) -> Self {
-        RuntimeError::FailedParse("failed to convert text to float (decimal)".into())
     }
 }

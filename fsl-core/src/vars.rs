@@ -61,24 +61,19 @@ impl<'c> VarMap<'c> {
         F: FnOnce(Value<'c>) -> VarEntry<'c>,
     {
         match value {
-            Value::Var(_) => {
-                return Err(RuntimeError::InvalidVarValue(
-                    "cannot store var in var".into(),
-                ));
-            }
-            Value::Command(_) => {
-                return Err(RuntimeError::InvalidVarValue(
-                    "cannot store command in var".into(),
-                ));
-            }
+            Value::Var(_) => Err(RuntimeError::InvalidVarValue {
+                invalid_value: FslType::Var,
+            }),
+            Value::Command(_) => Err(RuntimeError::InvalidVarValue {
+                invalid_value: FslType::Command,
+            }),
             _ => {
                 let lock = self.map.lock();
                 let mut map = lock.unwrap();
                 if map.get(&label).is_some_and(|entry| entry.constant) {
-                    return Err(RuntimeError::AttemptToOverwriteConstant(format!(
-                        "cannot overwrite constant var {}",
-                        label
-                    )));
+                    return Err(RuntimeError::AttemptToOverwriteConst {
+                        label: label.to_string(),
+                    });
                 }
                 map.insert(label, make_entry(value));
                 Ok(())
@@ -99,10 +94,9 @@ impl<'c> VarMap<'c> {
         let mut map = lock.unwrap();
 
         if map.get(label).is_some_and(|entry| entry.constant) {
-            return Err(RuntimeError::AttemptToFreeConstant(format!(
-                "cannot remove constant var {}",
-                label
-            )));
+            return Err(RuntimeError::AttemptToTakeConst {
+                label: label.to_string(),
+            });
         }
         Ok(map.remove(label).map(|entry| entry.value))
     }
@@ -117,10 +111,9 @@ impl<'c> VarMap<'c> {
                 Ok(entry.value)
             }
         } else {
-            Err(RuntimeError::NonExistantVar(format!(
-                "cannot not get value of non existant var {}",
-                label
-            )))
+            Err(RuntimeError::NonExistantVar {
+                label: label.to_string(),
+            })
         }
     }
 
@@ -130,18 +123,16 @@ impl<'c> VarMap<'c> {
 
         if let Some(entry) = entry {
             if entry.constant {
-                return Err(RuntimeError::AttemptToOverwriteConstant(format!(
-                    "cannot overwrite constant var {}",
-                    label
-                )));
+                return Err(RuntimeError::AttemptToOverwriteConst {
+                    label: label.to_string(),
+                });
             }
             let var_entry = mem::take(entry);
             Ok(var_entry)
         } else {
-            Err(RuntimeError::NonExistantVar(format!(
-                "cannot not get value of non existant var {}",
-                label
-            )))
+            Err(RuntimeError::NonExistantVar {
+                label: label.to_string(),
+            })
         }
     }
 
@@ -252,10 +243,9 @@ impl<'c> VarStack<'c> {
                 return Ok(map.clone());
             }
         }
-        Err(RuntimeError::NonExistantVar(format!(
-            "var {} does not exist",
-            label
-        )))
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
     }
 
     pub fn get_last_stack(&self) -> VarMap<'c> {
@@ -330,10 +320,9 @@ impl<'c> VarStack<'c> {
                 return map.get_cloned(label);
             }
         }
-        Err(RuntimeError::NonExistantVar(format!(
-            "cannot get value of non existant var {}",
-            label
-        )))
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
     }
 
     pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, RuntimeError> {
@@ -343,10 +332,9 @@ impl<'c> VarStack<'c> {
                 return map.take_entry(label);
             }
         }
-        Err(RuntimeError::NonExistantVar(format!(
-            "cannot get value of non existant var {}",
-            label
-        )))
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
     }
 
     pub fn insert_entry(
@@ -361,10 +349,9 @@ impl<'c> VarStack<'c> {
                 return Ok(());
             }
         }
-        Err(RuntimeError::NonExistantVar(format!(
-            "cannot get value of non existant var {}",
-            label
-        )))
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
     }
 
     pub fn get_type(&self, label: &str) -> FslType {
