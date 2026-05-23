@@ -291,7 +291,7 @@ x.say() # output: 10
 # This means the last command we named scope() overwrites the original
 # before it ever runs
 
-# This also means we can define commands after using them
+# This also means we can define commands out of order from their usage
 out_of_order()
 out_of_order.def(
 	say("We created this command out of order!")
@@ -327,9 +327,7 @@ recurse.def(n,
 	return(n)
 )
 
-n.store(0)
-
-say(recurse(n)) # output: 10
+say(recurse(0)) # output: 10
 
 # Commands can have local commands defined inside themselves
 
@@ -340,6 +338,8 @@ outer.def(
 	inner()
 )
 outer() # output: Inside outer!
+
+# inner() this will cause an error now because inner is not in scope
 
 # Commands can also be conditionally defined
 
@@ -367,3 +367,11 @@ switch(os,
 	)
 )
 run() # output: bsd is not supported at this time
+
+# User input
+
+# We can get input from a user by doing the following:
+answer.store(ask("What is your favorite color?"))
+say("Awesome! I like ", answer, " too!")
+# ask sends a message to the user and then returns their response
+
