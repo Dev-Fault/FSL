@@ -238,7 +238,7 @@ impl<'c> Display for ParseError<'c> {
             ParseError::OutOfPlaceValue(token) => {
                 write!(
                     f,
-                    "Unexpected value `{}\n{}: {}",
+                    "Unexpected value `{}`\n{}: {}",
                     token.token_type,
                     token.line_number(),
                     token.line(),

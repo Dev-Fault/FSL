@@ -1,9 +1,10 @@
 use std::fmt::Debug;
 
-use crate::{
-    parser::{ParseError, Span},
-    types::FslType,
-};
+use unicode_width::UnicodeWidthStr;
+
+use crate::{parser::ParseError, types::FslType};
+
+pub use crate::parser::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorContext<T> {
@@ -88,23 +89,33 @@ impl<'c> ExecutionError<'c> {
     }
 }
 
+fn normalize_tab(c: char) -> String {
+    const TAB_WIDTH: usize = 4;
+    if c == '\t' {
+        " ".repeat(TAB_WIDTH)
+    } else {
+        c.to_string()
+    }
+}
+
 impl<'c> std::fmt::Display for ExecutionError<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let line_header = format!("{}: ", self.span.start.line_number());
 
-        let prefix = &self.span.start.line()[..self.span.start.line_location()];
-        let padding = " ".repeat(line_header.len())
-            + &prefix
-                .chars()
-                .map(|c| if c == '\t' { '\t' } else { ' ' })
-                .collect::<String>();
+        let upto_line_position = &self.span.start.line()[..self.span.start.line_location()];
+
+        let upto_line_position: String = upto_line_position.chars().map(normalize_tab).collect();
+
+        let line: String = self.span.start.line().chars().map(normalize_tab).collect();
+
+        let padding = upto_line_position.width() + line_header.width();
         write!(
             f,
             "{}\n{}{}\n{}^",
             self.command_error.to_string(),
             line_header,
-            self.span.start.line(),
-            padding,
+            line,
+            " ".repeat(padding),
         )
     }
 }

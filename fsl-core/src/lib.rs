@@ -32,7 +32,6 @@ pub mod libraries;
 mod parser;
 pub mod types;
 mod vars;
-
 pub type CommandDefinitions = HashMap<&'static str, CommandDef>;
 
 #[derive(Debug)]
