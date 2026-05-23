@@ -90,7 +90,6 @@ impl<'c> ExecutionError<'c> {
 
 impl<'c> std::fmt::Display for ExecutionError<'c> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        dbg!(self);
         let line_header = format!("{}: ", self.span.start.line_number());
 
         let prefix = &self.span.start.line()[..self.span.start.line_location()];
@@ -202,17 +201,16 @@ pub enum RuntimeError {
     LoopLimitReached,
     OutputLimitExceeded,
     VarMemoryLimitReached,
+    // Exec
+    FailedToRun {
+        process: String,
+    },
+    OutputFailure(String),
     // Custom
     Custom(String),
     // Not real errors, need to remove later
     ProgramExited,
     ConditionFalse,
-}
-
-impl<'c> From<ExecutionError<'c>> for RuntimeError {
-    fn from(value: ExecutionError<'c>) -> Self {
-        value.command_error
-    }
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -335,9 +333,26 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::NonExistantKey { key } => &format!("key `{}` not present in map", key),
             RuntimeError::MissingIndex => "indexing requires at least one value",
             RuntimeError::MissingKey => "key is required to access map value",
+            RuntimeError::FailedToRun { process } => {
+                &format!("process `{}` failed to run", process)
+            }
+            RuntimeError::OutputFailure(failure) => failure,
         };
 
         write!(f, "{}", output)
+    }
+}
+
+pub trait ToExecutionError<'c> {
+    fn to_exec(self, span: Span<'c>) -> ExecutionError<'c>;
+}
+
+impl<'c> ToExecutionError<'c> for RuntimeError {
+    fn to_exec(self, span: Span<'c>) -> ExecutionError<'c> {
+        ExecutionError {
+            command_error: self,
+            span,
+        }
     }
 }
 
@@ -346,13 +361,6 @@ impl RuntimeError {
         match self {
             RuntimeError::ProgramExited => true,
             _ => false,
-        }
-    }
-
-    pub fn to_exec<'c>(self, span: Span<'c>) -> ExecutionError<'c> {
-        ExecutionError {
-            command_error: self,
-            span,
         }
     }
 }

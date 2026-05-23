@@ -10,7 +10,7 @@ use crate::{
     error::{
         ExecutionError,
         ExpectedArgs::{self},
-        RuntimeError,
+        RuntimeError, ToExecutionError,
     },
     parser::Span,
     types::{
@@ -125,7 +125,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         self.value.mem_size()
     }
 
-    fn equal(&self, other: &Argument) -> Result<bool, ExecutionError<'c>> {
+    fn equal(&self, other: &Argument<'c>) -> Result<bool, ExecutionError<'c>> {
         self.value
             .equal(&other.value)
             .map_err(|e| e.to_exec(self.span))
@@ -225,6 +225,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
     ) -> ValueResult<'c, Argument<'c>, ExecutionError<'c>> {
         Box::pin(async move {
             let number = self.value.as_number(data).await;
+            // dbg!(self.span);
             let number = number.map(|v| Self::new(v, self.span));
             let number = number.map_err(|e| e.to_exec(self.span));
             number

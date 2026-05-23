@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashMap, pin::Pin, sync::Arc};
 
 use crate::{
     InterpreterData,
-    error::RuntimeError,
+    error::{ExecutionError, RuntimeError, ToExecutionError},
     standard::NUMBER,
     types::{FslType, command::Command},
 };
@@ -20,6 +20,33 @@ pub enum Value<'c> {
     Var(Cow<'c, str>),
     Command(Box<Command<'c>>),
     None,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueError<'c> {
+    Runtime(RuntimeError),
+    Execution(ExecutionError<'c>),
+}
+
+impl<'c> ToExecutionError<'c> for ValueError<'c> {
+    fn to_exec(self, span: crate::parser::Span<'c>) -> ExecutionError<'c> {
+        match self {
+            ValueError::Runtime(runtime_error) => runtime_error.to_exec(span),
+            ValueError::Execution(execution_error) => execution_error,
+        }
+    }
+}
+
+impl<'c> From<RuntimeError> for ValueError<'c> {
+    fn from(value: RuntimeError) -> Self {
+        Self::Runtime(value)
+    }
+}
+
+impl<'c> From<ExecutionError<'c>> for ValueError<'c> {
+    fn from(value: ExecutionError<'c>) -> Self {
+        Self::Execution(value)
+    }
 }
 
 pub trait FslValue<'c, T, E> {
@@ -86,7 +113,7 @@ impl<'c> Default for Value<'c> {
     }
 }
 
-impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
+impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
     fn as_type(&self) -> FslType {
         match self {
             Value::Int(_) => FslType::Int,
@@ -149,7 +176,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         }
     }
 
-    fn equal(&self, other: &Value) -> Result<bool, RuntimeError> {
+    fn equal(&self, other: &Value<'c>) -> Result<bool, ValueError<'c>> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
             (Value::Float(a), Value::Int(b)) => Ok(*a == *b as f64),
@@ -187,11 +214,12 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
             _ => Err(RuntimeError::InvalidComparison {
                 a: self.to_string(),
                 b: other.to_string(),
-            }),
+            }
+            .into()),
         }
     }
 
-    fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, RuntimeError> {
+    fn as_int(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, i64, ValueError<'c>> {
         Box::pin(async {
             let to_type = FslType::Int;
             match self {
@@ -205,9 +233,9 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_int(data.clone())
                         .await
                 }
-                Value::Text(value) => match value.trim().parse::<i64>() {
+                Value::Text(ref value) => match value.trim().parse::<i64>() {
                     Ok(value) => Ok(value),
-                    Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
+                    Err(_) => Err(self.conversion_err_to_type(to_type).into()),
                 },
                 Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
@@ -217,18 +245,18 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         })
     }
 
-    fn as_usize(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, usize, RuntimeError> {
+    fn as_usize(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, usize, ValueError<'c>> {
         Box::pin(async move {
             let integer = self.as_int(data).await?;
             if integer < 0 {
-                Err(RuntimeError::NegativeIndex)
+                Err(RuntimeError::NegativeIndex.into())
             } else {
                 Ok(integer as usize)
             }
         })
     }
 
-    fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, RuntimeError> {
+    fn as_float(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, f64, ValueError<'c>> {
         Box::pin(async {
             let to_type = FslType::Float;
             match self {
@@ -242,9 +270,9 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
                         .as_float(data.clone())
                         .await
                 }
-                Value::Text(value) => match value.parse::<f64>() {
+                Value::Text(ref value) => match value.parse::<f64>() {
                     Ok(value) => Ok(value),
-                    Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
+                    Err(_) => Err(self.conversion_err_to_type(to_type).into()),
                 },
                 Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
@@ -254,15 +282,15 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         })
     }
 
-    fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, RuntimeError> {
+    fn as_bool(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, bool, ValueError<'c>> {
         Box::pin(async {
             let to_type = FslType::Bool;
             match self {
                 Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
-                Value::Text(value) => match value.parse::<bool>() {
+                Value::Text(ref value) => match value.parse::<bool>() {
                     Ok(value) => Ok(value),
-                    Err(_) => Err(FslType::Text.gen_parse_err(to_type).into()),
+                    Err(_) => Err(self.conversion_err_to_type(to_type).into()),
                 },
                 Value::Bool(value) => Ok(value),
                 Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
@@ -283,7 +311,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
     fn as_var_label(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Cow<'c, str>, RuntimeError> {
+    ) -> ValueResult<'c, Cow<'c, str>, ValueError<'c>> {
         Box::pin(async move {
             let to_type = FslType::Var;
             match self {
@@ -309,7 +337,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
     fn as_text(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Cow<'c, str>, RuntimeError> {
+    ) -> ValueResult<'c, Cow<'c, str>, ValueError<'c>> {
         Box::pin(async {
             match self {
                 Value::Int(value) => Ok(Cow::Owned(value.to_string())),
@@ -364,7 +392,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
     fn as_list(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Vec<Value<'c>>, RuntimeError> {
+    ) -> ValueResult<'c, Vec<Value<'c>>, ValueError<'c>> {
         Box::pin(async {
             let to_type = FslType::List;
             match self {
@@ -395,7 +423,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
     fn as_map(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, RuntimeError> {
+    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, ValueError<'c>> {
         Box::pin(async {
             let to_type = FslType::Map;
             match self {
@@ -423,7 +451,10 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         })
     }
 
-    fn as_number(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Value<'c>, RuntimeError> {
+    fn as_number(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Value<'c>, ValueError<'c>> {
         Box::pin(async move {
             match self {
                 Value::Int(n) => Ok(Value::Int(n)),
@@ -455,7 +486,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         self,
         data: Arc<InterpreterData<'c>>,
         valid_types: &'static [FslType],
-    ) -> ValueResult<'c, Value<'c>, RuntimeError> {
+    ) -> ValueResult<'c, Value<'c>, ValueError<'c>> {
         Box::pin(async move {
             let value;
             match self.as_type() {
@@ -492,7 +523,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
     fn as_raw_unchecked(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Value<'c>, RuntimeError> {
+    ) -> ValueResult<'c, Value<'c>, ValueError<'c>> {
         Box::pin(async move {
             let value;
             match self.as_type() {
@@ -526,7 +557,7 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         self,
         data: Arc<InterpreterData<'c>>,
         key_types: &'static [FslType],
-    ) -> ValueResult<'c, Vec<Value<'c>>, RuntimeError> {
+    ) -> ValueResult<'c, Vec<Value<'c>>, ValueError<'c>> {
         Box::pin(async move {
             let accesor = self.as_raw(data.clone(), key_types).await?;
 
@@ -537,24 +568,26 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         })
     }
 
-    fn as_command(self) -> Result<Command<'c>, RuntimeError> {
+    fn as_command(self) -> Result<Command<'c>, ValueError<'c>> {
         if let Value::Command(command) = self {
             Ok(*command)
         } else {
             Err(RuntimeError::InvalidConversion {
                 from: self.to_string(),
                 to: vec![FslType::Command],
-            })
+            }
+            .into())
         }
     }
 
-    fn get_var_label(&self) -> Result<Cow<'c, str>, RuntimeError> {
+    fn get_var_label(&self) -> Result<Cow<'c, str>, ValueError<'c>> {
         if let Value::Var(label) = self {
             Ok(label.clone())
         } else {
             Err(RuntimeError::NotAVar {
                 value: self.to_string(),
-            })
+            }
+            .into())
         }
     }
 
@@ -566,14 +599,14 @@ impl<'c> FslValue<'c, Value<'c>, RuntimeError> for Value<'c> {
         }
     }
 
-    fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, RuntimeError> {
+    fn get_var_value(&self, data: Arc<InterpreterData<'c>>) -> Result<Value<'c>, ValueError<'c>> {
         if let Value::Var(label) = self {
             match data.vars.get(label) {
                 Ok(value) => match value {
                     Value::Var(_) => value.get_var_value(data),
                     _ => Ok(value),
                 },
-                Err(e) => Err(e),
+                Err(e) => Err(e.into()),
             }
         } else {
             panic!(

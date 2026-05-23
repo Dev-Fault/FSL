@@ -12,7 +12,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     FslInterpreter, InterpreterData,
-    error::{ExecutionError, ExpectedArgs, RuntimeError},
+    error::{ExecutionError, ExpectedArgs, RuntimeError, ToExecutionError},
     parser::Span,
     register_command,
     types::{
@@ -5027,7 +5027,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::FailedParse { .. })
+        assert_runtime_err!(err, RuntimeError::InvalidConversion { .. })
     }
 
     #[tokio::test]

@@ -62,11 +62,4 @@ impl FslType {
             to: to.to_vec(),
         }
     }
-
-    pub fn gen_parse_err(&self, to: FslType) -> RuntimeError {
-        RuntimeError::FailedParse {
-            value: self.to_string(),
-            valid_types: vec![to],
-        }
-    }
 }

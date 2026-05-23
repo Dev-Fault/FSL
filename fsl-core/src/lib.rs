@@ -9,7 +9,7 @@ use futures::FutureExt;
 
 use crate::{
     data::{InterpreterData, UserDefinitions},
-    error::{InterpreterError, RuntimeError},
+    error::{InterpreterError, RuntimeError, ToExecutionError},
     libraries::{
         Library,
         r#async::register_async,

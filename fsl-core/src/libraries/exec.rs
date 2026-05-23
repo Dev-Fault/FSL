@@ -5,7 +5,7 @@ use tokio_stream::StreamExt;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::{ExecutionError, RuntimeError},
+    error::{ExecutionError, RuntimeError, ToExecutionError},
     register_command,
     standard::MAYBE_TEXT,
     types::{
@@ -29,7 +29,9 @@ pub async fn exec<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let mut args = command.take_args();
-    let program = args.pop_front().unwrap().as_text(data.clone()).await?;
+    let arg = args.pop_front().unwrap();
+    let arg_loc = arg.span;
+    let program = arg.as_text(data.clone()).await?;
     let args = tokio_stream::iter(args.into_iter());
     let args: Vec<Cow<'c, str>> = args
         .then(|v| v.as_text(data.clone()))
@@ -40,11 +42,16 @@ pub async fn exec<'c>(
         .args(args)
         .output()
         .await
-        .map_err(|e| RuntimeError::Custom(e.to_string()).to_exec(command.span))?;
+        .map_err(|_| {
+            RuntimeError::FailedToRun {
+                process: program.to_string(),
+            }
+            .to_exec(arg_loc)
+        })?;
 
     if !output.status.success() {
         let output = String::from_utf8_lossy(&output.stderr);
-        return Err(RuntimeError::Custom(format!("{output}")).to_exec(command.span));
+        return Err(RuntimeError::OutputFailure(output.trim().into()).to_exec(arg_loc));
     }
 
     let output = output.stdout;
@@ -69,14 +76,21 @@ pub async fn sh<'c>(
         .arg(&*script)
         .output()
         .await
-        .map_err(|e| RuntimeError::Custom(e.to_string()).to_exec(command.span))?;
+        .map_err(|_| {
+            RuntimeError::FailedToRun {
+                process: "sh".into(),
+            }
+            .to_exec(command.span)
+        })?;
 
     if !output.status.success() {
+        dbg!("HERE");
         let err = String::from_utf8_lossy(&output.stderr);
         // TODO this probably should throw a real error
         eprintln!("{err}");
     }
 
+    dbg!(&output);
     let output = output.stdout;
     let text = match String::from_utf8(output) {
         Ok(s) => s,

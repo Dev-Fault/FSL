@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::{ExecutionError, RuntimeError},
+    error::{ExecutionError, RuntimeError, ToExecutionError},
     register_command,
     standard::NOT_NONE,
     types::{

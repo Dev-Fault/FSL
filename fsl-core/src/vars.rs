@@ -10,7 +10,7 @@ use crate::{
     error::RuntimeError,
     types::{
         FslType,
-        value::{FslValue, Value},
+        value::{FslValue, Value, ValueError},
     },
 };
 
@@ -101,7 +101,7 @@ impl<'c> VarMap<'c> {
         Ok(map.remove(label).map(|entry| entry.value))
     }
 
-    pub fn get_cloned(&self, label: &str) -> Result<Value<'c>, RuntimeError> {
+    pub fn get_cloned(&self, label: &str) -> Result<Value<'c>, ValueError<'c>> {
         let entry = self.map.lock().unwrap().get(label).cloned();
 
         if let Some(entry) = entry {
@@ -113,7 +113,8 @@ impl<'c> VarMap<'c> {
         } else {
             Err(RuntimeError::NonExistantVar {
                 label: label.to_string(),
-            })
+            }
+            .into())
         }
     }
 
@@ -313,7 +314,7 @@ impl<'c> VarStack<'c> {
         Ok(return_value)
     }
 
-    pub fn get(&self, label: &str) -> Result<Value<'c>, RuntimeError> {
+    pub fn get(&self, label: &str) -> Result<Value<'c>, ValueError<'c>> {
         let stack = self.stack.lock().unwrap();
         for map in stack.iter().rev() {
             if map.contains(label) {
@@ -322,7 +323,8 @@ impl<'c> VarStack<'c> {
         }
         Err(RuntimeError::NonExistantVar {
             label: label.to_string(),
-        })
+        }
+        .into())
     }
 
     pub fn take_entry(&self, label: &str) -> Result<VarEntry<'c>, RuntimeError> {
