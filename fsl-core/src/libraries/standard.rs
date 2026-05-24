@@ -182,6 +182,7 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, FALLBACK, BLOCK_RULES, block);
     register_command!(interpreter, WHILE_LOOP, WHILE_RULES, while_command);
     register_command!(interpreter, REPEAT, REPEAT_RULES, repeat);
+    register_command!(interpreter, FOR_EACH, FOR_EACH_RULES, for_each);
     register_command!(interpreter, INDEX, INDEX_RULES, index);
     register_command!(interpreter, GET, GET_RULES, get);
     register_command!(interpreter, SET, SET_RULES, set);
@@ -1172,6 +1173,128 @@ pub async fn repeat<'c>(
     data.dec_loop_depth().await;
 
     Ok(final_value)
+}
+
+pub const FOR_EACH_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
+    ArgRule::new(ArgPos::Index(1), &[FslType::Var]),
+    ArgRule::new(ArgPos::AnyFrom(2), &[FslType::Command]),
+];
+pub const FOR_EACH: &str = "for_each";
+pub async fn for_each<'c>(
+    command: Command<'c>,
+    data: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
+    let mut args = command.take_args();
+
+    let mut array = args.pop_front().unwrap();
+    let array_span = array.span;
+    let var = take_if_var(&mut array.value, data.clone(), array_span).await?;
+    let array = array
+        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .await?;
+
+    let label = args.pop_front().unwrap();
+    let label_span = label.span;
+    let label = label.as_var_label(data.clone()).await?;
+
+    data.vars.push();
+
+    let return_value = match array.value {
+        Value::Text(text) => {
+            data.inc_loop_depth().await;
+
+            let original_len = text.len();
+            let mut text = text.into_owned();
+            let indices: Vec<_> = text.char_indices().collect();
+            let mut offset: isize = 0;
+
+            'outer: for (i, c) in indices {
+                for command in &args {
+                    let mut character = Value::from(c.to_string());
+                    data.vars
+                        .insert(&label, std::mem::take(&mut character))
+                        .map_err(|e| e.to_exec(label_span))?;
+
+                    let command = command.clone().as_command()?;
+                    command.execute(data.clone()).await?;
+
+                    character = data
+                        .vars
+                        .take_entry(&label)
+                        .map_err(|e| e.to_exec(label_span))?
+                        .value;
+
+                    let replacement = character
+                        .as_text(data.clone())
+                        .await
+                        .map_err(|e| e.to_exec(label_span))?;
+
+                    let i = (i as isize + offset) as usize;
+                    text.replace_range(i..i + c.len_utf8(), &replacement);
+                    offset = text.len() as isize - original_len as isize;
+
+                    if data.get_break_flag().await || data.get_return_flag().await {
+                        data.set_break_flag(false).await;
+                        break 'outer;
+                    }
+                    if data.get_continue_flag().await {
+                        data.set_continue_flag(false).await;
+                        continue 'outer;
+                    }
+                }
+
+                data.inc_total_loops()
+                    .map_err(|e| e.to_exec(command.span))?;
+            }
+
+            data.dec_loop_depth().await;
+
+            update_if_var(var, Value::from(text), data.clone(), array_span)?
+        }
+        Value::List(mut list) => {
+            data.inc_loop_depth().await;
+
+            'outer: for element in list.iter_mut() {
+                for command in &args {
+                    data.vars
+                        .insert(&label, std::mem::take(element))
+                        .map_err(|e| e.to_exec(label_span))?;
+
+                    let command = command.clone().as_command()?;
+                    command.execute(data.clone()).await?;
+
+                    *element = data
+                        .vars
+                        .take_entry(&label)
+                        .map_err(|e| e.to_exec(label_span))?
+                        .value;
+
+                    if data.get_break_flag().await || data.get_return_flag().await {
+                        data.set_break_flag(false).await;
+                        break 'outer;
+                    }
+                    if data.get_continue_flag().await {
+                        data.set_continue_flag(false).await;
+                        continue 'outer;
+                    }
+                }
+
+                data.inc_total_loops()
+                    .map_err(|e| e.to_exec(command.span))?;
+            }
+
+            data.dec_loop_depth().await;
+
+            update_if_var(var, Value::List(list), data.clone(), array_span)?
+        }
+        _ => unreachable!("as_raw should enforce array is List or Text"),
+    };
+
+    data.vars.pop();
+
+    Ok(return_value)
 }
 
 #[async_recursion]
@@ -3072,6 +3195,46 @@ pub mod tests {
     #[tokio::test]
     async fn repeat() {
         test_interpreter(r#"i.store(0) repeat(3, print(i, " "), i.inc())"#, "0 1 2 ").await;
+    }
+
+    #[tokio::test]
+    async fn for_each_list() {
+        test_interpreter(
+            r#"
+                list.store([1, 2, 3])
+                list.for_each(n,
+                    n.update(n.mul(2))
+                )
+                list.print()
+
+            "#,
+            "[2, 4, 6]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn for_each_text() {
+        test_interpreter(
+            r#"
+                text.store("ñbéñbcñbé")
+                text.for_each(c,
+                    switch(c,
+                        case("ñ",
+                            c.update("n")
+                        )
+                        case("é",
+                            c.update("e")
+                        )
+                        fallback()
+                    )
+                )
+                text.print()
+
+            "#,
+            "nbenbcnbe",
+        )
+        .await;
     }
 
     #[tokio::test]
