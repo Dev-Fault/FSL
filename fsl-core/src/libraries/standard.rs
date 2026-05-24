@@ -98,7 +98,7 @@ pub const MAYBE_LIST_KEY: &[FslType] = &[
     FslType::Text,
 ];
 
-pub const LIST_KEY: &[FslType] = &[FslType::List, FslType::Int];
+pub const LIST_KEY: &[FslType] = &[FslType::List, FslType::Int, FslType::Text];
 
 pub const MAYBE_MAP_KEY: &[FslType] =
     &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
@@ -1770,12 +1770,8 @@ pub async fn swap<'c>(
             }
         }
         Value::List(mut list) => {
-            let i = i
-                .as_key(data.clone(), &[FslType::List, FslType::Int])
-                .await?;
-            let j = j
-                .as_key(data.clone(), &[FslType::List, FslType::Int])
-                .await?;
+            let i = i.as_key(data.clone(), LIST_KEY).await?;
+            let j = j.as_key(data.clone(), LIST_KEY).await?;
 
             let a_value = get_index(&list, &i, data.clone(), i_loc).await?;
             let b_value = get_index(&list, &j, data.clone(), j_loc).await?;
