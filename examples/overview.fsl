@@ -106,8 +106,7 @@ program_name.const("Overview")
 
 # Loops
 
-# FSL supports two simple loops, the repeat loop, and the while loop
-# Repeat looks like the following:
+# Repeat:
 i.store(0)
 repeat(2,
 	i.inc()
@@ -123,7 +122,7 @@ i.inc(3) # This will increment i by 3
 i.dec(3) # This will decrement i by 3
 i.dec() # This will decrement i by 1
 
-# While loop:
+# While:
 while(true,
 	say("Inside the while loop!") 
 	break() # we can use break() to break out of a loop early
@@ -136,6 +135,13 @@ repeat(10,
 	continue()
 	say("This wont say anything because it got skipped!")
 )
+
+# For each:
+list.store([1, 2, 3])
+list.for_each(n, # this can be any identifier, it refers to the current element
+	n.update(n.mul(2)) # update n to be n * 2
+)
+list.say() # output: [2, 4, 6]
 
 # Conditional statements
 
