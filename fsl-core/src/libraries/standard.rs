@@ -2257,7 +2257,7 @@ pub async fn contains<'c>(
 
 pub const STARTS_WITH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const STARTS_WITH: &str = "starts_with";
 pub async fn starts_with<'c>(
@@ -2273,7 +2273,7 @@ pub async fn starts_with<'c>(
 
 pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const ENDS_WITH: &str = "ends_with";
 pub async fn ends_with<'c>(
@@ -2483,7 +2483,7 @@ pub async fn remove_whitespace<'c>(
 
 pub const SPLIT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), MAYBE_TEXT),
-    ArgRule::new(ArgPos::Index(1), &[FslType::Text]),
+    ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const SPLIT: &str = "split";
 pub async fn split<'c>(
