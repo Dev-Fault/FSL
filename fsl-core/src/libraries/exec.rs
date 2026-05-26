@@ -84,13 +84,11 @@ pub async fn sh<'c>(
         })?;
 
     if !output.status.success() {
-        dbg!("HERE");
         let err = String::from_utf8_lossy(&output.stderr);
         // TODO this probably should throw a real error
         eprintln!("{err}");
     }
 
-    dbg!(&output);
     let output = output.stdout;
     let text = match String::from_utf8(output) {
         Ok(s) => s,
