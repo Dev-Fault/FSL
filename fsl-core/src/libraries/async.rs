@@ -14,7 +14,7 @@ use crate::{
 
 use futures::{FutureExt, StreamExt, future::join_all};
 
-pub fn register_async(interpreter: &mut FslInterpreter) {
+pub async fn register_async(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, JOIN, JOIN_RULES, join);
     register_command!(interpreter, YIELD, YIELD_RULES, r#yield);
 }

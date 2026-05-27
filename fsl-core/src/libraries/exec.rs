@@ -16,7 +16,7 @@ use crate::{
 
 use futures::FutureExt;
 
-pub fn register_exec(interpreter: &mut FslInterpreter) {
+pub async fn register_exec(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, EXEC, EXEC_RULES, exec);
     register_command!(interpreter, SH, SH_RULES, sh);
 }

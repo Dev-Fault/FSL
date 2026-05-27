@@ -145,7 +145,7 @@ pub const MATH_RULES: &[ArgRule] = &[
     },
 ];
 
-pub fn register_std(interpreter: &mut FslInterpreter) {
+pub async fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, ADD, MATH_RULES, add);
     register_command!(interpreter, SUB, MATH_RULES, sub);
     register_command!(interpreter, MUL, MATH_RULES, mul);
@@ -2810,8 +2810,8 @@ pub mod tests {
     };
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
-        let mut interpreter = FslInterpreter::new();
-        interpreter.register_all_libraries();
+        let mut interpreter = FslInterpreter::new().await;
+        interpreter.register_all_libraries().await;
         let result = interpreter
             .interpret(code, InterpreterData::default())
             .await;
@@ -2828,6 +2828,7 @@ pub mod tests {
 
     pub async fn observe_interpreter(code: &str) {
         let result = FslInterpreter::new()
+            .await
             .interpret(code, InterpreterData::default())
             .await;
 
@@ -2841,6 +2842,7 @@ pub mod tests {
 
     pub async fn test_interpreter_embedded(code: &str, expected_output: &str) {
         let result = FslInterpreter::new()
+            .await
             .interpret_embedded_code(code, InterpreterData::default())
             .await;
 
@@ -2856,6 +2858,7 @@ pub mod tests {
 
     pub async fn test_interpreter_err_type(code: &str) -> InterpreterError {
         let result = FslInterpreter::new()
+            .await
             .interpret(code, InterpreterData::default())
             .await;
         dbg!(&result);
@@ -2865,6 +2868,7 @@ pub mod tests {
 
     pub async fn interpreter_throws_err(code: &str, err: InterpreterError) -> bool {
         let result = FslInterpreter::new()
+            .await
             .interpret(code, InterpreterData::default())
             .await;
         dbg!(&result);
@@ -2876,6 +2880,7 @@ pub mod tests {
 
     pub async fn interpreter_results_in_error(code: &str) -> bool {
         let result = FslInterpreter::new()
+            .await
             .interpret(code, InterpreterData::default())
             .await;
         dbg!(&result);

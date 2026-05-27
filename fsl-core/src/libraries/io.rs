@@ -14,7 +14,7 @@ use crate::{
 
 use futures::FutureExt;
 
-pub fn register_io(interpreter: &mut FslInterpreter) {
+pub async fn register_io(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, SAY, SAY_RULES, say);
     register_command!(interpreter, ASK, ASK_RULES, ask);
 }
