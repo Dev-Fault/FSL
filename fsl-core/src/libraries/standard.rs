@@ -1209,11 +1209,11 @@ pub async fn for_each<'c>(
     let label = label.as_var_label(data.clone()).await?;
 
     data.vars.push();
+    data.inc_loop_depth().await;
 
-    let return_value = match array.value {
+    let mut return_value = None;
+    let result = match array.value {
         Value::Text(text) => {
-            data.inc_loop_depth().await;
-
             let original_len = text.len();
             let mut text = text.into_owned();
             let indices: Vec<_> = text.char_indices().collect();
@@ -1227,7 +1227,7 @@ pub async fn for_each<'c>(
                         .map_err(|e| e.to_exec(label_span))?;
 
                     let command = command.clone().as_command()?;
-                    command.execute(data.clone()).await?;
+                    let command_value = command.execute(data.clone()).await?;
 
                     character = data
                         .vars
@@ -1244,11 +1244,13 @@ pub async fn for_each<'c>(
                     text.replace_range(i..i + c.len_utf8(), &replacement);
                     offset = text.len() as isize - original_len as isize;
 
-                    if data.get_break_flag().await || data.get_return_flag().await {
+                    if data.get_return_flag().await {
+                        return_value = Some(command_value);
+                        break 'outer;
+                    } else if data.get_break_flag().await {
                         data.set_break_flag(false).await;
                         break 'outer;
-                    }
-                    if data.get_continue_flag().await {
+                    } else if data.get_continue_flag().await {
                         data.set_continue_flag(false).await;
                         continue 'outer;
                     }
@@ -1258,13 +1260,9 @@ pub async fn for_each<'c>(
                     .map_err(|e| e.to_exec(command.span))?;
             }
 
-            data.dec_loop_depth().await;
-
             update_if_var(var, Value::from(text), data.clone(), array_span)?
         }
         Value::List(mut list) => {
-            data.inc_loop_depth().await;
-
             'outer: for element in list.iter_mut() {
                 for command in &args {
                     data.vars
@@ -1272,7 +1270,7 @@ pub async fn for_each<'c>(
                         .map_err(|e| e.to_exec(label_span))?;
 
                     let command = command.clone().as_command()?;
-                    command.execute(data.clone()).await?;
+                    let command_value = command.execute(data.clone()).await?;
 
                     *element = data
                         .vars
@@ -1280,11 +1278,13 @@ pub async fn for_each<'c>(
                         .map_err(|e| e.to_exec(label_span))?
                         .value;
 
-                    if data.get_break_flag().await || data.get_return_flag().await {
+                    if data.get_return_flag().await {
+                        return_value = Some(command_value);
+                        break 'outer;
+                    } else if data.get_break_flag().await {
                         data.set_break_flag(false).await;
                         break 'outer;
-                    }
-                    if data.get_continue_flag().await {
+                    } else if data.get_continue_flag().await {
                         data.set_continue_flag(false).await;
                         continue 'outer;
                     }
@@ -1294,16 +1294,18 @@ pub async fn for_each<'c>(
                     .map_err(|e| e.to_exec(command.span))?;
             }
 
-            data.dec_loop_depth().await;
-
             update_if_var(var, Value::List(list), data.clone(), array_span)?
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
     };
 
     data.vars.pop();
+    data.dec_loop_depth().await;
 
-    Ok(return_value)
+    match return_value {
+        Some(value) => Ok(value),
+        None => Ok(result),
+    }
 }
 
 #[async_recursion]
@@ -3219,6 +3221,45 @@ pub mod tests {
 
             "#,
             "[2, 4, 6]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn for_each_return() {
+        test_interpreter(
+            r#"
+                list.store([1, 2, 3])
+                func.def(
+                    list.for_each(n,
+                        n.update(n.mul(2))
+                        return()
+                    )
+                )
+                func()
+                list.print()
+
+            "#,
+            "[2, 2, 3]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn for_each_return_value() {
+        test_interpreter(
+            r#"
+                list.store([10, 2, 3])
+                func.def(
+                    list.for_each(n,
+                        n.update(n.mul(2))
+                        return(n)
+                    )
+                )
+                func().print()
+
+            "#,
+            "20",
         )
         .await;
     }
