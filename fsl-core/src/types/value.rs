@@ -712,3 +712,9 @@ impl<'c> From<Command<'c>> for Value<'c> {
         Value::Command(Box::new(value))
     }
 }
+
+impl<'c> From<FslMap<'c>> for Value<'c> {
+    fn from(value: FslMap<'c>) -> Self {
+        Value::Map(value)
+    }
+}

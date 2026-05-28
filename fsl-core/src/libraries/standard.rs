@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, VecDeque},
     mem,
     sync::Arc,
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use async_recursion::async_recursion;
@@ -241,6 +241,7 @@ pub async fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, SPLIT, SPLIT_RULES, split);
     register_command!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
     register_command!(interpreter, SLEEP, SLEEP_RULES, sleep);
+    register_command!(interpreter, STOPWATCH, STOPWATCH_RULES, stopwatch);
     register_command!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
     register_command!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
     register_command!(interpreter, DEF, DEF_RULES, def);
@@ -2580,6 +2581,27 @@ pub async fn sleep<'c>(
         tokio::time::sleep(Duration::from_secs_f64(delay)).await;
         Ok(Value::None)
     }
+}
+
+pub const STOPWATCH: &str = "stopwatch";
+pub const STOPWATCH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
+pub async fn stopwatch<'c>(
+    command: Command<'c>,
+    data: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    let mut command = command;
+    let args = command.take_args();
+    let start = std::time::Instant::now();
+    let mut final_value = Value::None;
+    for command in args {
+        final_value = command.as_command()?.execute(data.clone()).await?;
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+    let return_value = Value::from(FslMap::from([
+        (Cow::Borrowed("value"), final_value),
+        (Cow::Borrowed("elapsed"), Value::from(elapsed)),
+    ]));
+    return Ok(return_value);
 }
 
 pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_LIST)];
@@ -5289,5 +5311,24 @@ pub mod tests {
         )
         .await;
         assert_runtime_err!(err, RuntimeError::NonExistantVar { .. })
+    }
+
+    #[tokio::test]
+    async fn stopwatch() {
+        test_interpreter(
+            r#"
+                result.store(
+                    stopwatch(
+                        add(1, 2)
+                        div(3, 4)
+                        sub(1, 1)
+                    )
+                )
+                result.value.get().print()
+                if(result.elapsed.get().gt(0), print(1))
+            "#,
+            "01",
+        )
+        .await;
     }
 }
