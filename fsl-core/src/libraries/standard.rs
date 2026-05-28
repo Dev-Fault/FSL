@@ -975,6 +975,7 @@ pub async fn r#if<'c>(
 
     let mut requires_else = false;
 
+    let command_count = args.len();
     for command in args {
         let label = command.get_command_label().unwrap();
         match label {
@@ -995,7 +996,15 @@ pub async fn r#if<'c>(
                 else_command = Some(command)
             }
             _ => {
-                return Err(RuntimeError::InvalidCommandInIf.to_exec(command.span));
+                if command_count == 1 {
+                    if condition {
+                        return Ok(command.as_command()?.execute(data).await?);
+                    } else {
+                        return Ok(Value::None);
+                    }
+                } else {
+                    return Err(RuntimeError::InvalidCommandInIf.to_exec(command.span));
+                }
             }
         }
     }
@@ -4620,6 +4629,39 @@ pub mod tests {
                 )
             "#,
             "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn if_statement_without_then() {
+        test_interpreter(
+            r#"
+                if(true,
+                    print(true)
+                )
+                if(false,
+                    print(false)
+                )
+            "#,
+            "true",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn if_statement_without_then_with_scope() {
+        test_interpreter(
+            r#"
+                if(true,
+                    (
+                        print("1")
+                        print("2")
+                        print("3")
+                    )
+                )
+            "#,
+            "123",
         )
         .await;
     }
