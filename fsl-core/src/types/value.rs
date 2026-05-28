@@ -74,7 +74,14 @@ pub trait FslValue<'c, T, E> {
 
     fn as_list(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Vec<Value<'c>>, E>;
 
+    fn as_raw_list(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Vec<Value<'c>>, E>;
+
     fn as_map(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, E>;
+
+    fn as_raw_map(
         self,
         data: Arc<InterpreterData<'c>>,
     ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, E>;
@@ -82,14 +89,21 @@ pub trait FslValue<'c, T, E> {
     fn as_number(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, T, E>;
 
     /// Converts value into it's most raw state ensuring result is of valid type
-    fn as_raw(
+    fn as_raw_checked(
         self,
         data: Arc<InterpreterData<'c>>,
         valid_types: &'static [FslType],
     ) -> ValueResult<'c, T, E>;
 
     /// Converts value into it's most raw state without checking what the result type it is
-    fn as_raw_unchecked(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, T, E>;
+    fn as_raw(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, T, E>;
+
+    fn as_base(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, T, E>;
+    fn as_base_checked(
+        self,
+        data: Arc<InterpreterData<'c>>,
+        valid_types: &'static [FslType],
+    ) -> ValueResult<'c, T, E>;
 
     // Attempts to convert value to a value that can be used to access indices in a map or list
     fn as_key(
@@ -400,12 +414,7 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
                 Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Text(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
-                Value::List(mut values) => {
-                    for value in values.iter_mut() {
-                        *value = std::mem::take(value).as_raw_unchecked(data.clone()).await?;
-                    }
-                    Ok(values)
-                }
+                Value::List(list) => Ok(list),
                 Value::Map(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Var(label) => data.vars.get(&label)?.as_list(data).await,
                 Value::Command(command) => {
@@ -413,6 +422,37 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
                         .execute(data.clone())
                         .await?
                         .as_list(data.clone())
+                        .await
+                }
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
+            }
+        })
+    }
+
+    fn as_raw_list(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Vec<Value<'c>>, ValueError<'c>> {
+        Box::pin(async {
+            let to_type = FslType::List;
+            match self {
+                Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::List(mut values) => {
+                    for value in values.iter_mut() {
+                        *value = std::mem::take(value).as_raw(data.clone()).await?;
+                    }
+                    Ok(values)
+                }
+                Value::Map(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Var(label) => data.vars.get(&label)?.as_raw_list(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_raw_list(data.clone())
                         .await
                 }
                 Value::None => Err(self.conversion_err_to_type(to_type).into()),
@@ -432,18 +472,44 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
                 Value::Text(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
                 Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
-                Value::Map(mut map) => {
-                    for (_, value) in map.iter_mut() {
-                        *value = std::mem::take(value).as_raw_unchecked(data.clone()).await?;
-                    }
-                    Ok(map)
-                }
+                Value::Map(map) => Ok(map),
                 Value::Var(label) => data.vars.get(&label)?.as_map(data).await,
                 Value::Command(command) => {
                     command
                         .execute(data.clone())
                         .await?
                         .as_map(data.clone())
+                        .await
+                }
+                Value::None => Err(self.conversion_err_to_type(to_type).into()),
+            }
+        })
+    }
+
+    fn as_raw_map(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, HashMap<Cow<'c, str>, Value<'c>>, ValueError<'c>> {
+        Box::pin(async {
+            let to_type = FslType::Map;
+            match self {
+                Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Text(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Bool(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::List(_) => Err(self.conversion_err_to_type(to_type).into()),
+                Value::Map(mut map) => {
+                    for (_, value) in map.iter_mut() {
+                        *value = std::mem::take(value).as_raw(data.clone()).await?;
+                    }
+                    Ok(map)
+                }
+                Value::Var(label) => data.vars.get(&label)?.as_raw_map(data).await,
+                Value::Command(command) => {
+                    command
+                        .execute(data.clone())
+                        .await?
+                        .as_raw_map(data.clone())
                         .await
                 }
                 Value::None => Err(self.conversion_err_to_type(to_type).into()),
@@ -481,8 +547,10 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
         })
     }
 
-    /// Converts value into it's most raw state ensuring result is of valid type
-    fn as_raw(
+    /// Reduces value to base type and checks the resulting type
+    /// Recursively reduces inner values of lists and maps to their most base type
+    /// Expensive, use as_base if list/map inner values do not need to be reduced
+    fn as_raw_checked(
         self,
         data: Arc<InterpreterData<'c>>,
         valid_types: &'static [FslType],
@@ -495,18 +563,18 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
                 FslType::Bool => value = self,
                 FslType::Text => value = self,
                 FslType::List => {
-                    value = Value::List(self.as_list(data.clone()).await?);
+                    value = Value::List(self.as_raw_list(data.clone()).await?);
                 }
                 FslType::Map => {
-                    value = Value::Map(self.as_map(data.clone()).await?);
+                    value = Value::Map(self.as_raw_map(data.clone()).await?);
                 }
                 FslType::Var => {
                     let result = self.get_var_value(data.clone())?;
-                    value = result.as_raw(data.clone(), valid_types).await?;
+                    value = result.as_raw_checked(data.clone(), valid_types).await?;
                 }
                 FslType::Command => {
                     let result = self.as_command()?.execute(data.clone()).await?;
-                    value = result.as_raw(data.clone(), valid_types).await?;
+                    value = result.as_raw_checked(data.clone(), valid_types).await?;
                 }
                 FslType::None => value = self,
             }
@@ -519,11 +587,10 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
         })
     }
 
-    /// Converts value into it's most raw state without checking what the result type it is
-    fn as_raw_unchecked(
-        self,
-        data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Value<'c>, ValueError<'c>> {
+    /// Reduces value to base type
+    /// Recursively reduces inner values of lists and maps to their most base type
+    /// Expensive, use as_base if list/map inner values do not need to be reduced
+    fn as_raw(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Value<'c>, ValueError<'c>> {
         Box::pin(async move {
             let value;
             match self.as_type() {
@@ -532,23 +599,85 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
                 FslType::Bool => value = self,
                 FslType::Text => value = self,
                 FslType::List => {
-                    value = Value::List(self.as_list(data.clone()).await?);
+                    value = Value::List(self.as_raw_list(data.clone()).await?);
                 }
                 FslType::Map => {
-                    value = Value::Map(self.as_map(data.clone()).await?);
+                    value = Value::Map(self.as_raw_map(data.clone()).await?);
                 }
                 FslType::Var => {
                     let result = self.get_var_value(data.clone())?;
-                    value = result.as_raw_unchecked(data.clone()).await?;
+                    value = result.as_raw(data.clone()).await?;
                 }
                 FslType::Command => {
                     let result = self.as_command()?.execute(data.clone()).await?;
-                    value = result.as_raw_unchecked(data.clone()).await?;
+                    value = result.as_raw(data.clone()).await?;
                 }
                 FslType::None => value = self,
             }
 
             Ok(value)
+        })
+    }
+
+    /// Reduces value to base type
+    /// Leaves inner values of lists and maps intact (does not reduce)
+    fn as_base(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Value<'c>, ValueError<'c>> {
+        Box::pin(async move {
+            let value;
+            match self.as_type() {
+                FslType::Int => value = self,
+                FslType::Float => value = self,
+                FslType::Bool => value = self,
+                FslType::Text => value = self,
+                FslType::List => value = self,
+                FslType::Map => value = self,
+                FslType::Var => {
+                    let result = self.get_var_value(data.clone())?;
+                    value = result.as_base(data.clone()).await?;
+                }
+                FslType::Command => {
+                    let result = self.as_command()?.execute(data.clone()).await?;
+                    value = result.as_base(data.clone()).await?;
+                }
+                FslType::None => value = self,
+            }
+
+            Ok(value)
+        })
+    }
+
+    /// Reduces value to base type
+    /// Leaves inner values of lists and maps intact (does not reduce)
+    fn as_base_checked(
+        self,
+        data: Arc<InterpreterData<'c>>,
+        valid_types: &'static [FslType],
+    ) -> ValueResult<'c, Value<'c>, ValueError<'c>> {
+        Box::pin(async move {
+            let value;
+            match self.as_type() {
+                FslType::Int => value = self,
+                FslType::Float => value = self,
+                FslType::Bool => value = self,
+                FslType::Text => value = self,
+                FslType::List => value = self,
+                FslType::Map => value = self,
+                FslType::Var => {
+                    let result = self.get_var_value(data.clone())?;
+                    value = result.as_base(data.clone()).await?;
+                }
+                FslType::Command => {
+                    let result = self.as_command()?.execute(data.clone()).await?;
+                    value = result.as_base(data.clone()).await?;
+                }
+                FslType::None => value = self,
+            }
+
+            if valid_types.contains(&value.as_type()) {
+                Ok(value)
+            } else {
+                Err(value.conversion_err_to_types(valid_types).into())
+            }
         })
     }
 
@@ -559,7 +688,7 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
         key_types: &'static [FslType],
     ) -> ValueResult<'c, Vec<Value<'c>>, ValueError<'c>> {
         Box::pin(async move {
-            let accesor = self.as_raw(data.clone(), key_types).await?;
+            let accesor = self.as_raw_checked(data.clone(), key_types).await?;
 
             match accesor {
                 Value::List(values) => Ok(values),

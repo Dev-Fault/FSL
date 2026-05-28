@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, VecDeque},
     mem,
     sync::Arc,
-    time::{Duration, UNIX_EPOCH},
+    time::Duration,
 };
 
 use async_recursion::async_recursion;
@@ -589,7 +589,7 @@ pub async fn store<'c>(
     let var = var.as_var_label(data.clone()).await?;
 
     let arg = args.pop_front().unwrap();
-    let arg = arg.as_raw(data.clone(), ANY).await?;
+    let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
     data.vars
         .create_or_update(&var, arg.value)
@@ -613,7 +613,7 @@ pub async fn local<'c>(
     let var = var.as_var_label(data.clone()).await?;
 
     let arg = args.pop_front().unwrap();
-    let arg = arg.as_raw(data.clone(), ANY).await?;
+    let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
     data.vars
         .insert(&var, arg.value)
@@ -637,7 +637,7 @@ pub async fn update<'c>(
     let var = var.as_var_label(data.clone()).await?;
 
     let arg = args.pop_front().unwrap();
-    let arg = arg.as_raw(data.clone(), ANY).await?;
+    let arg = arg.as_raw_checked(data.clone(), ANY).await?;
     let var_label = &var;
 
     data.vars
@@ -662,7 +662,7 @@ pub async fn r#const<'c>(
     let var = var.as_var_label(data.clone()).await?;
 
     let arg = args.pop_front().unwrap();
-    let arg = arg.as_raw(data.clone(), ANY).await?;
+    let arg = arg.as_raw_checked(data.clone(), ANY).await?;
     let var_label = &var;
 
     data.vars
@@ -680,7 +680,7 @@ pub async fn clone<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let arg = command.take_args().pop_front().unwrap();
-    let arg = arg.as_raw_unchecked(data).await?;
+    let arg = arg.as_raw(data).await?;
     Ok(arg.value)
 }
 
@@ -779,7 +779,7 @@ pub async fn scope<'c>(
     data.vars.push();
     let mut return_value = Value::None;
     for value in args {
-        return_value = value.as_raw(data.clone(), ANY).await?.value;
+        return_value = value.as_raw_checked(data.clone(), ANY).await?.value;
     }
     data.vars.pop();
 
@@ -797,8 +797,16 @@ pub async fn eq<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let mut args = command.take_args();
-    let a = args.pop_front().unwrap().as_raw(data.clone(), ANY).await?;
-    let b = args.pop_front().unwrap().as_raw(data.clone(), ANY).await?;
+    let a = args
+        .pop_front()
+        .unwrap()
+        .as_raw_checked(data.clone(), ANY)
+        .await?;
+    let b = args
+        .pop_front()
+        .unwrap()
+        .as_raw_checked(data.clone(), ANY)
+        .await?;
 
     Ok(Value::Bool(a.equal(&b)?))
 }
@@ -1053,7 +1061,7 @@ pub async fn switch<'c>(
     let mut command = command;
     let mut args = command.take_args();
     let expression = args.pop_front().unwrap();
-    let expression = expression.as_raw(data.clone(), ANY).await?;
+    let expression = expression.as_raw_checked(data.clone(), ANY).await?;
     let commands = args;
 
     let (cases, mut fallback): (VecDeque<Argument>, VecDeque<Argument>) =
@@ -1069,7 +1077,7 @@ pub async fn switch<'c>(
         for case in cases {
             let mut case = case.as_command()?;
             let arg = case.pop_front_arg().unwrap();
-            let arg = arg.as_raw_unchecked(data.clone()).await?;
+            let arg = arg.as_raw(data.clone()).await?;
 
             if arg.value == expression.value {
                 return case.execute(data.clone()).await;
@@ -1101,7 +1109,7 @@ pub async fn block<'c>(
 
     let mut return_value = Value::None;
     for value in args {
-        return_value = value.as_raw(data.clone(), ANY).await?.value;
+        return_value = value.as_raw_checked(data.clone(), ANY).await?.value;
     }
     return Ok(return_value);
 }
@@ -1202,7 +1210,7 @@ pub async fn for_each<'c>(
     let array_span = array.span;
     let var = take_if_var(&mut array.value, data.clone(), array_span).await?;
     let array = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     let label = args.pop_front().unwrap();
@@ -1439,7 +1447,7 @@ pub async fn index<'c>(
     let i_loc = i.span;
 
     let array = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -1637,7 +1645,7 @@ pub async fn set<'c>(
 
     let key = key.as_key(data.clone(), MAP_KEY).await?;
 
-    let arg = arg.as_raw(data.clone(), NOT_NONE).await?;
+    let arg = arg.as_raw_checked(data.clone(), NOT_NONE).await?;
 
     let value_loc = map.span;
     let var = take_if_var(&mut map.value, data.clone(), value_loc).await?;
@@ -1662,7 +1670,7 @@ pub async fn length<'c>(
     let array = args
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), INDEXABLE)
+        .as_raw_checked(data.clone(), INDEXABLE)
         .await?;
 
     match array.value {
@@ -1692,7 +1700,7 @@ pub async fn remove<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
-    let array = array.as_raw(data.clone(), COLLECTION).await?;
+    let array = array.as_base_checked(data.clone(), COLLECTION).await?;
 
     match array.value {
         Value::Text(text) => {
@@ -1760,7 +1768,7 @@ pub async fn swap<'c>(
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -1817,7 +1825,7 @@ pub async fn replace<'c>(
     let mut array = args.pop_front().unwrap();
     let key = args.pop_front().unwrap();
     let arg = args.pop_front().unwrap();
-    let arg = arg.as_raw(data.clone(), ANY).await?;
+    let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
     let key_loc = key.span;
     let key = key.as_key(data.clone(), LIST_KEY).await?;
@@ -1826,7 +1834,7 @@ pub async fn replace<'c>(
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -1864,7 +1872,7 @@ pub async fn replace<'c>(
             }
         }
         Value::List(mut list) => {
-            let new_value = arg.as_raw(data.clone(), NOT_NONE).await?.value;
+            let new_value = arg.as_raw_checked(data.clone(), NOT_NONE).await?.value;
 
             let old_value = get_mut_index(&mut list, &key, data.clone(), key_loc).await?;
 
@@ -1895,7 +1903,7 @@ pub async fn insert<'c>(
     let mut array = args.pop_front().unwrap();
     let key = args.pop_front().unwrap();
     let arg = args.pop_front().unwrap();
-    let arg = arg.as_raw(data.clone(), ANY).await?;
+    let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
     let key_loc = key.span;
     let key = key.as_key(data.clone(), KEY).await?;
@@ -1903,7 +1911,7 @@ pub async fn insert<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
-    let array = array.as_raw(data.clone(), COLLECTION).await?;
+    let array = array.as_base_checked(data.clone(), COLLECTION).await?;
 
     match array.value {
         Value::Text(text) => {
@@ -1931,7 +1939,7 @@ pub async fn insert<'c>(
             Ok(return_value)
         }
         Value::List(mut list) => {
-            let value_to_insert = arg.as_raw(data.clone(), NOT_NONE).await?.value;
+            let value_to_insert = arg.as_raw_checked(data.clone(), NOT_NONE).await?.value;
 
             insert_at_index(&mut list, &key, value_to_insert, data.clone(), key_loc).await?;
 
@@ -1940,7 +1948,7 @@ pub async fn insert<'c>(
             Ok(return_value)
         }
         Value::Map(mut map) => {
-            let value_to_insert = arg.as_raw(data.clone(), NOT_NONE).await?.value;
+            let value_to_insert = arg.as_raw_checked(data.clone(), NOT_NONE).await?.value;
 
             insert_nested(&mut map, &key, value_to_insert, data.clone(), key_loc).await?;
 
@@ -1965,22 +1973,22 @@ pub async fn push<'c>(
     let mut args = command.take_args();
 
     let mut array = args.pop_front().unwrap();
-    let arg = args
+    let to_push = args
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NOT_NONE)
+        .as_raw_checked(data.clone(), NOT_NONE)
         .await?;
 
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
         Value::Text(text) => {
-            let text_to_push = arg.as_text(data.clone()).await?;
+            let text_to_push = to_push.as_text(data.clone()).await?;
             let mut text = text.into_owned();
             text.push_str(&text_to_push);
 
@@ -1988,7 +1996,7 @@ pub async fn push<'c>(
             Ok(return_value)
         }
         Value::List(mut list) => {
-            list.push(arg.value);
+            list.push(to_push.value);
 
             let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
             Ok(return_value)
@@ -2011,7 +2019,7 @@ pub async fn pop<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
     let array = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -2129,7 +2137,7 @@ pub async fn reverse<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
     let array = array
-        .as_raw(data.clone(), &[FslType::List, FslType::Text])
+        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -2237,12 +2245,12 @@ pub async fn contains<'c>(
     let collection = args
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), COLLECTION)
+        .as_raw_checked(data.clone(), COLLECTION)
         .await?;
     let item = args
         .pop_front()
         .unwrap()
-        .as_raw(data.clone(), NOT_NONE)
+        .as_raw_checked(data.clone(), NOT_NONE)
         .await?;
 
     match collection.value {
@@ -2253,7 +2261,7 @@ pub async fn contains<'c>(
         Value::List(list) => {
             let iter = tokio_stream::iter(list.into_iter());
             let list = iter
-                .then(|v| v.as_raw(data.clone(), NOT_NONE))
+                .then(|v| v.as_raw_checked(data.clone(), NOT_NONE))
                 .collect::<Result<Vec<_>, _>>()
                 .await
                 .map_err(|e| e.to_exec(command.span))?;
@@ -2416,7 +2424,11 @@ pub async fn is_none<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let mut args = command.take_args();
-    let value = args.pop_front().unwrap().as_raw(data.clone(), ANY).await?;
+    let value = args
+        .pop_front()
+        .unwrap()
+        .as_raw_checked(data.clone(), ANY)
+        .await?;
     Ok(Value::Bool(value.is_type(FslType::None)))
 }
 
@@ -2528,7 +2540,7 @@ pub async fn random_range<'c>(
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let mut args = args
-        .then(|v| v.as_raw(data.clone(), NUMBER))
+        .then(|v| v.as_raw_checked(data.clone(), NUMBER))
         .collect::<Result<Vec<Argument>, _>>()
         .await?;
 
@@ -2752,7 +2764,7 @@ pub async fn run<'c>(
         if let Value::Var(var) = arg.value {
             aliases.insert(parameter, var);
         } else {
-            let arg = arg.as_raw_unchecked(data.clone()).await?;
+            let arg = arg.as_raw(data.clone()).await?;
             data.vars
                 .insert(&parameter, arg.value)
                 .map_err(|e| e.to_exec(command.span))?;
@@ -2815,7 +2827,7 @@ pub async fn r#return<'c>(
 
     match return_value {
         Some(arg) => {
-            let arg = arg.as_raw_unchecked(data.clone()).await?;
+            let arg = arg.as_raw(data.clone()).await?;
             data.set_return_flag(true).await;
             Ok(arg.value)
         }
