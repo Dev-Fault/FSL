@@ -104,17 +104,18 @@ impl<'c> VarMap<'c> {
     pub fn get_cloned(&self, label: &str) -> Result<Value<'c>, ValueError<'c>> {
         let entry = self.map.lock().unwrap().get(label).cloned();
 
-        if let Some(entry) = entry {
-            if entry.value.is_type(FslType::Var) {
-                return self.get_cloned(&entry.value.get_var_label()?);
-            } else {
-                Ok(entry.value)
+        match entry {
+            Some(entry) => {
+                if entry.value.is_type(FslType::Var) {
+                    return self.get_cloned(&entry.value.get_var_label()?);
+                } else {
+                    Ok(entry.value)
+                }
             }
-        } else {
-            Err(RuntimeError::NonExistantVar {
+            None => Err(RuntimeError::NonExistantVar {
                 label: label.to_string(),
             }
-            .into())
+            .into()),
         }
     }
 

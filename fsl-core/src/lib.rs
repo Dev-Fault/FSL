@@ -396,10 +396,10 @@ impl FslInterpreter {
                     Value::Var(Cow::from(ident)),
                     Span::from(arg.token),
                 )),
-                ArgKind::List(args) => {
-                    let span = Span::from(&args);
-                    let mut list: Vec<Value> = vec![];
-                    for arg in args.data {
+                ArgKind::List(list_arg) => {
+                    let span = Span::from(&list_arg);
+                    let mut list: Vec<Value> = Vec::with_capacity(list_arg.data.len());
+                    for arg in list_arg.data {
                         let parsed_arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
                         list.push(parsed_arg.value);
                     }
@@ -407,7 +407,7 @@ impl FslInterpreter {
                 }
                 ArgKind::Map(map) => {
                     let span = Span::from(&map);
-                    let mut value_map = HashMap::new();
+                    let mut value_map = HashMap::with_capacity(map.data.len());
 
                     for (key, value) in map.data {
                         value_map.insert(

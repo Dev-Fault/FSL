@@ -779,7 +779,7 @@ pub async fn scope<'c>(
     data.vars.push();
     let mut return_value = Value::None;
     for value in args {
-        return_value = value.as_raw_checked(data.clone(), ANY).await?.value;
+        return_value = value.as_raw(data.clone()).await?.value;
     }
     data.vars.pop();
 
