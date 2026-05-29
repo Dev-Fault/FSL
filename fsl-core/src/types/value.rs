@@ -18,27 +18,28 @@ pub type ValueResult<'c, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Sen
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum List<'c> {
-    Resolved(Vec<Value<'c>>),
-    Unresolved(Vec<Value<'c>>),
+    Resolved(Arc<Vec<Value<'c>>>),
+    Unresolved(Arc<Vec<Value<'c>>>),
 }
 
 impl<'c> List<'c> {
     pub async fn resolve(self, data: Arc<InterpreterData<'c>>) -> Result<List<'c>, ValueError<'c>> {
         match self {
             List::Resolved(_) => Ok(self),
-            List::Unresolved(mut values) => {
+            List::Unresolved(arc) => {
+                let mut values = Arc::unwrap_or_clone(arc);
                 for value in values.iter_mut() {
                     *value = std::mem::take(value).as_raw(data.clone()).await?;
                 }
-                Ok(List::Resolved(values))
+                Ok(List::Resolved(Arc::new(values)))
             }
         }
     }
 
     pub fn take(self) -> Vec<Value<'c>> {
         match self {
-            List::Resolved(values) => values,
-            List::Unresolved(values) => values,
+            List::Resolved(values) => Arc::unwrap_or_clone(values),
+            List::Unresolved(values) => Arc::unwrap_or_clone(values),
         }
     }
 
@@ -147,35 +148,36 @@ impl<'c> Deref for List<'c> {
 impl<'c> DerefMut for List<'c> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            List::Resolved(values) => values,
-            List::Unresolved(values) => values,
+            List::Resolved(values) => Arc::make_mut(values),
+            List::Unresolved(values) => Arc::make_mut(values),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Map<'c> {
-    Resolved(FslMap<'c>),
-    Unresolved(FslMap<'c>),
+    Resolved(Arc<FslMap<'c>>),
+    Unresolved(Arc<FslMap<'c>>),
 }
 
 impl<'c> Map<'c> {
     pub async fn resolve(self, data: Arc<InterpreterData<'c>>) -> Result<Map<'c>, ValueError<'c>> {
         match self {
             Map::Resolved(_) => Ok(self),
-            Map::Unresolved(mut map) => {
+            Map::Unresolved(arc) => {
+                let mut map = Arc::unwrap_or_clone(arc);
                 for (_, value) in map.iter_mut() {
                     *value = std::mem::take(value).as_raw(data.clone()).await?;
                 }
-                Ok(Map::Resolved(map))
+                Ok(Map::Resolved(Arc::new(map)))
             }
         }
     }
 
     pub fn take(self) -> FslMap<'c> {
         match self {
-            Map::Resolved(map) => map,
-            Map::Unresolved(map) => map,
+            Map::Resolved(map) => Arc::unwrap_or_clone(map),
+            Map::Unresolved(map) => Arc::unwrap_or_clone(map),
         }
     }
 
@@ -309,8 +311,8 @@ impl<'c> Deref for Map<'c> {
 impl<'c> DerefMut for Map<'c> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            Map::Resolved(map) => map,
-            Map::Unresolved(map) => map,
+            Map::Resolved(map) => Arc::make_mut(map),
+            Map::Unresolved(map) => Arc::make_mut(map),
         }
     }
 }
@@ -1017,7 +1019,7 @@ impl<'c> From<bool> for Value<'c> {
 
 impl<'c> From<Vec<Value<'c>>> for Value<'c> {
     fn from(value: Vec<Value<'c>>) -> Self {
-        Value::List(List::Unresolved(value))
+        Value::List(List::Unresolved(Arc::new(value)))
     }
 }
 
@@ -1029,6 +1031,6 @@ impl<'c> From<Command<'c>> for Value<'c> {
 
 impl<'c> From<FslMap<'c>> for Value<'c> {
     fn from(value: FslMap<'c>) -> Self {
-        Value::Map(Map::Unresolved(value))
+        Value::Map(Map::Unresolved(Arc::new(value)))
     }
 }

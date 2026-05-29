@@ -2271,7 +2271,7 @@ pub async fn split<'c>(
             list.push(Value::from(split.to_string()));
         }
     }
-    Ok(Value::List(List::Resolved(list)))
+    Ok(Value::List(List::Resolved(Arc::new(list))))
 }
 
 pub const RANDOM_RANGE_RULES: &[ArgRule] = &[
