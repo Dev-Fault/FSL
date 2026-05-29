@@ -256,16 +256,26 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         })
     }
 
-    fn as_key(
+    fn as_list_key(
         self,
         data: Arc<InterpreterData<'c>>,
-        key_types: &'static [FslType],
-    ) -> ValueResult<'c, Vec<Argument<'c>>, ExecutionError<'c>> {
+    ) -> ValueResult<'c, Vec<usize>, ExecutionError<'c>> {
         Box::pin(async move {
             self.value
-                .as_key(data, key_types)
+                .as_list_key(data)
                 .await
-                .map(|v| v.into_iter().map(|v| Self::new(v, self.span)).collect())
+                .map_err(|e| e.to_exec(self.span))
+        })
+    }
+
+    fn as_map_key(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Vec<Cow<'c, str>>, ExecutionError<'c>> {
+        Box::pin(async move {
+            self.value
+                .as_map_key(data)
+                .await
                 .map_err(|e| e.to_exec(self.span))
         })
     }

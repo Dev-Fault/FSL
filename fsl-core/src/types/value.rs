@@ -8,7 +8,8 @@ use std::{
 
 use crate::{
     InterpreterData,
-    error::{ExecutionError, RuntimeError, ToExecutionError},
+    error::{ExecutionError, RuntimeError, Span, ToExecutionError},
+    libraries::standard::{LIST_KEY, MAP_KEY},
     standard::NUMBER,
     types::{FslType, command::Command},
 };
@@ -38,6 +39,96 @@ impl<'c> List<'c> {
         match self {
             List::Resolved(values) => values,
             List::Unresolved(values) => values,
+        }
+    }
+
+    pub fn get_nested(
+        &self,
+        indices: &[usize],
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<Value<'c>, ExecutionError<'c>> {
+        match indices {
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
+            [i] => {
+                let result = self.get(*i).cloned();
+                match result {
+                    Some(value) => Ok(value),
+                    None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
+                }
+            }
+            [i, rest @ ..] => match self.get(*i) {
+                Some(Value::List(inner_list)) => inner_list.get_nested(rest, data, span),
+                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
+                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
+            },
+        }
+    }
+
+    pub fn get_nested_mut(
+        &mut self,
+        indices: &[usize],
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<&mut Value<'c>, ExecutionError<'c>> {
+        match indices {
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
+            [i] => match self.get_mut(*i) {
+                Some(i) => Ok(i),
+                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
+            },
+            [i, rest @ ..] => match self.get_mut(*i) {
+                Some(Value::List(inner_list)) => inner_list.get_nested_mut(rest, data, span),
+                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
+                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
+            },
+        }
+    }
+
+    pub fn remove_nested(
+        &mut self,
+        indices: &[usize],
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<Value<'c>, ExecutionError<'c>> {
+        match indices {
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
+            [i] => match self.get(*i) {
+                Some(_) => Ok(self.remove(*i)),
+                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
+            },
+            [i, rest @ ..] => match self.get_mut(*i) {
+                Some(Value::List(inner_list)) => inner_list.remove_nested(rest, data, span),
+                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
+                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
+            },
+        }
+    }
+
+    pub fn insert_nested(
+        &mut self,
+        indices: &[usize],
+        value_to_insert: Value<'c>,
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<(), ExecutionError<'c>> {
+        match indices {
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
+            [i] => {
+                if *i <= self.len() {
+                    self.insert(*i, value_to_insert);
+                    Ok(())
+                } else {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span))
+                }
+            }
+            [i, rest @ ..] => match self.get_mut(*i) {
+                Some(Value::List(inner_list)) => {
+                    inner_list.insert_nested(rest, value_to_insert, data, span)
+                }
+                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
+                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
+            },
         }
     }
 }
@@ -85,6 +176,121 @@ impl<'c> Map<'c> {
         match self {
             Map::Resolved(map) => map,
             Map::Unresolved(map) => map,
+        }
+    }
+
+    pub fn set_nested(
+        &mut self,
+        keys: &[Cow<'c, str>],
+        value: Value<'c>,
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<Value<'c>, ExecutionError<'c>> {
+        match keys {
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
+            [key] => match self.get(&*key) {
+                Some(_) => {
+                    let return_value = self.insert(key.clone(), value);
+                    Ok(return_value.unwrap_or(Value::None))
+                }
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+            },
+            [key, rest @ ..] => match self.get_mut(&*key) {
+                Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, data, span),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+            },
+        }
+    }
+
+    pub fn remove_nested(
+        &mut self,
+        keys: &[Cow<'c, str>],
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<Value<'c>, ExecutionError<'c>> {
+        match keys {
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
+            [key] => {
+                let return_value = self.remove(&*key);
+                Ok(return_value.unwrap_or(Value::None))
+            }
+            [key, rest @ ..] => match self.get_mut(&*key) {
+                Some(Value::Map(inner_map)) => inner_map.remove_nested(rest, data, span),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+            },
+        }
+    }
+
+    pub fn insert_nested(
+        &mut self,
+        keys: &[Cow<'c, str>],
+        value: Value<'c>,
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<Value<'c>, ExecutionError<'c>> {
+        match keys {
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
+            [key] => {
+                let return_value = self.insert(key.clone(), value);
+                Ok(return_value.unwrap_or(Value::None))
+            }
+            [key, rest @ ..] => match self.get_mut(&*key) {
+                Some(Value::Map(inner_map)) => inner_map.insert_nested(rest, value, data, span),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+            },
+        }
+    }
+
+    pub fn get_nested(
+        &self,
+        keys: &[Cow<'c, str>],
+        data: Arc<InterpreterData<'c>>,
+        span: Span<'c>,
+    ) -> Result<Value<'c>, ExecutionError<'c>> {
+        match keys {
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
+            [key] => match self.get(&*key).cloned() {
+                Some(value) => Ok(value),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+            },
+            [key, rest @ ..] => match self.get(&*key) {
+                Some(Value::Map(inner_map)) => inner_map.get_nested(rest, data, span),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span)),
+            },
         }
     }
 }
@@ -188,12 +394,9 @@ pub trait FslValue<'c, T, E> {
     /// Converts value into it's most raw state without checking what the result type it is
     fn as_raw(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, T, E>;
 
-    // Attempts to convert value to a value that can be used to access indices in a map or list
-    fn as_key(
-        self,
-        data: Arc<InterpreterData<'c>>,
-        key_types: &'static [FslType],
-    ) -> ValueResult<'c, Vec<T>, E>;
+    fn as_list_key(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Vec<usize>, E>;
+
+    fn as_map_key(self, data: Arc<InterpreterData<'c>>) -> ValueResult<'c, Vec<Cow<'c, str>>, E>;
 
     fn as_command(self) -> Result<Command<'c>, E>;
 
@@ -637,17 +840,44 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
     }
 
     // Attempts to convert value to a value that can be used to access indices in a map or list
-    fn as_key(
+    fn as_list_key(
         self,
         data: Arc<InterpreterData<'c>>,
-        key_types: &'static [FslType],
-    ) -> ValueResult<'c, Vec<Value<'c>>, ValueError<'c>> {
+    ) -> ValueResult<'c, Vec<usize>, ValueError<'c>> {
         Box::pin(async move {
-            let accesor = self.as_raw_checked(data.clone(), key_types).await?;
+            let accesor = self.as_raw_checked(data.clone(), LIST_KEY).await?;
 
             match accesor {
-                Value::List(values) => Ok(values.resolve(data).await?.take()),
-                _ => Ok(vec![accesor]),
+                Value::List(values) => {
+                    let values = values.resolve(data.clone()).await?.take();
+                    let mut indices = Vec::with_capacity(values.len());
+                    for value in values {
+                        indices.push(value.as_usize(data.clone()).await?);
+                    }
+                    Ok(indices)
+                }
+                _ => Ok(vec![accesor.as_usize(data.clone()).await?]),
+            }
+        })
+    }
+
+    fn as_map_key(
+        self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> ValueResult<'c, Vec<Cow<'c, str>>, ValueError<'c>> {
+        Box::pin(async move {
+            let accesor = self.as_raw_checked(data.clone(), MAP_KEY).await?;
+
+            match accesor {
+                Value::List(values) => {
+                    let values = values.resolve(data.clone()).await?.take();
+                    let mut indices = Vec::with_capacity(values.len());
+                    for value in values {
+                        indices.push(value.as_text(data.clone()).await?);
+                    }
+                    Ok(indices)
+                }
+                _ => Ok(vec![accesor.as_text(data.clone()).await?]),
             }
         })
     }

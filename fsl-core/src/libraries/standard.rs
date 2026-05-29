@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use async_recursion::async_recursion;
 use rand::seq::SliceRandom;
 use tokio_stream::StreamExt;
 
@@ -1327,120 +1326,6 @@ pub async fn for_each<'c>(
     }
 }
 
-#[async_recursion]
-async fn get_index<'c>(
-    list: &Vec<Value<'c>>,
-    indices: &[Argument<'c>],
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
-    match indices {
-        [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
-        [i] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            let result = list.get(i).cloned();
-            match result {
-                Some(value) => Ok(value),
-                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
-            }
-        }
-        [i, rest @ ..] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            match list.get(i) {
-                Some(Value::List(inner_list)) => get_index(inner_list, rest, data, span).await,
-                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
-            }
-        }
-    }
-}
-
-#[async_recursion]
-async fn get_mut_index<'c, 'a>(
-    list: &'a mut Vec<Value<'c>>,
-    indices: &[Argument<'c>],
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<&'a mut Value<'c>, ExecutionError<'c>> {
-    match indices {
-        [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
-        [i] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            match list.get_mut(i) {
-                Some(i) => Ok(i),
-                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
-            }
-        }
-        [i, rest @ ..] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            match list.get_mut(i) {
-                Some(Value::List(inner_list)) => get_mut_index(inner_list, rest, data, span).await,
-                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
-            }
-        }
-    }
-}
-
-#[async_recursion]
-async fn remove_index<'c, 'a>(
-    list: &'a mut Vec<Value<'c>>,
-    indices: &[Argument<'c>],
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
-    match indices {
-        [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
-        [i] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            match list.get(i) {
-                Some(_) => Ok(list.remove(i)),
-                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
-            }
-        }
-        [i, rest @ ..] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            match list.get_mut(i) {
-                Some(Value::List(inner_list)) => remove_index(inner_list, rest, data, span).await,
-                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
-            }
-        }
-    }
-}
-
-#[async_recursion]
-async fn insert_at_index<'c>(
-    list: &mut Vec<Value<'c>>,
-    indices: &[Argument<'c>],
-    value_to_insert: Value<'c>,
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<(), ExecutionError<'c>> {
-    match indices {
-        [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span)),
-        [i] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            if i <= list.len() {
-                list.insert(i, value_to_insert);
-                Ok(())
-            } else {
-                Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span))
-            }
-        }
-        [i, rest @ ..] => {
-            let i = i.clone().as_usize(data.clone()).await?;
-            match list.get_mut(i) {
-                Some(Value::List(inner_list)) => {
-                    insert_at_index(inner_list, rest, value_to_insert, data, span).await
-                }
-                Some(_) => Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span)),
-                None => Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span)),
-            }
-        }
-    }
-}
-
 pub const INDEX_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE),
     ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
@@ -1453,8 +1338,8 @@ pub async fn index<'c>(
     let mut command = command;
     let mut args = command.take_args();
     let array = args.pop_front().unwrap();
-    let i = args.pop_front().unwrap();
-    let i_loc = i.span;
+    let key = args.pop_front().unwrap().as_raw(data.clone()).await?;
+    let key_span = key.span;
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1462,53 +1347,17 @@ pub async fn index<'c>(
 
     match array.value {
         Value::Text(text) => {
-            let i = i.as_usize(data).await?;
+            let i = key.as_usize(data).await?;
             match text.chars().nth(i) {
                 Some(char) => Ok(char.into()),
-                None => Err(RuntimeError::IndexOutOfBounds.to_exec(i_loc)),
+                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span)),
             }
         }
         Value::List(list) => {
-            let key = i.as_key(data.clone(), MAYBE_LIST_KEY).await?;
-            get_index(&list, &key, data, i_loc).await
+            let key = key.as_list_key(data.clone()).await?;
+            list.get_nested(&key, data, key_span)
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
-}
-
-#[async_recursion]
-async fn get_nested<'c>(
-    map: &FslMap<'c>,
-    keys: &[Argument<'c>],
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
-    match keys {
-        [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
-        [key] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            match map.get(&*key).cloned() {
-                Some(value) => Ok(value),
-                None => Err(RuntimeError::NonExistantKey {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-            }
-        }
-        [key, rest @ ..] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            match map.get(&*key) {
-                Some(Value::Map(inner_map)) => get_nested(inner_map, rest, data, span).await,
-                Some(_) => Err(RuntimeError::NotAMap {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-            }
-        }
     }
 }
 
@@ -1525,116 +1374,11 @@ pub async fn get<'c>(
     let mut values = command.take_args();
     let map = values.pop_front().unwrap();
     let key = values.pop_front().unwrap();
-    let key_loc = key.span;
-    let key = key.as_key(data.clone(), MAP_KEY).await?;
+    let key_span = key.span;
+    let key = key.as_map_key(data.clone()).await?;
     let map = map.as_map(data.clone()).await?;
 
-    get_nested(&map, &key, data, key_loc).await
-}
-
-#[async_recursion]
-async fn set_nested<'c>(
-    map: &mut FslMap<'c>,
-    keys: &[Argument<'c>],
-    value: Value<'c>,
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
-    match keys {
-        [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
-        [key] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            match map.get(&*key) {
-                Some(_) => {
-                    let return_value = map.insert(key, value);
-                    Ok(return_value.unwrap_or(Value::None))
-                }
-                None => Err(RuntimeError::NonExistantKey {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-            }
-        }
-        [key, rest @ ..] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            match map.get_mut(&*key) {
-                Some(Value::Map(inner_map)) => set_nested(inner_map, rest, value, data, span).await,
-                Some(_) => Err(RuntimeError::NotAMap {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-            }
-        }
-    }
-}
-
-#[async_recursion]
-async fn remove_nested<'c>(
-    map: &mut FslMap<'c>,
-    keys: &[Argument<'c>],
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
-    match keys {
-        [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
-        [key] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            let return_value = map.remove(&*key);
-            Ok(return_value.unwrap_or(Value::None))
-        }
-        [key, rest @ ..] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            match map.get_mut(&*key) {
-                Some(Value::Map(inner_map)) => remove_nested(inner_map, rest, data, span).await,
-                Some(_) => Err(RuntimeError::NotAMap {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-            }
-        }
-    }
-}
-
-#[async_recursion]
-async fn insert_nested<'c>(
-    map: &mut FslMap<'c>,
-    keys: &[Argument<'c>],
-    value: Value<'c>,
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
-    match keys {
-        [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span)),
-        [key] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            let return_value = map.insert(key, value);
-            Ok(return_value.unwrap_or(Value::None))
-        }
-        [key, rest @ ..] => {
-            let key = key.clone().as_text(data.clone()).await?;
-            match map.get_mut(&*key) {
-                Some(Value::Map(inner_map)) => {
-                    insert_nested(inner_map, rest, value, data, span).await
-                }
-                Some(_) => Err(RuntimeError::NotAMap {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-                None => Err(RuntimeError::NonExistantKey {
-                    key: key.to_string(),
-                }
-                .to_exec(span)),
-            }
-        }
-    }
+    map.get_nested(&key, data, key_span)
 }
 
 pub const SET_RULES: &'static [ArgRule] = &[
@@ -1653,7 +1397,7 @@ pub async fn set<'c>(
     let key = args.pop_front().unwrap();
     let arg = args.pop_front().unwrap();
 
-    let key = key.as_key(data.clone(), MAP_KEY).await?;
+    let key = key.as_map_key(data.clone()).await?;
 
     let arg = arg.as_raw_checked(data.clone(), NOT_NONE).await?;
 
@@ -1662,7 +1406,7 @@ pub async fn set<'c>(
 
     let mut map = map.as_map(data.clone()).await?;
 
-    let return_value = set_nested(&mut map, &key, arg.value, data.clone(), value_loc).await?;
+    let return_value = map.set_nested(&key, arg.value, data.clone(), value_loc)?;
 
     update_if_var(var, Value::Map(map), data, value_loc)?;
 
@@ -1703,9 +1447,8 @@ pub async fn remove<'c>(
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
     let key = args.pop_front().unwrap();
-
-    let key_loc = key.span;
-    let key = key.as_key(data.clone(), KEY).await?;
+    let key_span = key.span;
+    let key = key.as_raw(data.clone()).await?;
 
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
@@ -1714,14 +1457,7 @@ pub async fn remove<'c>(
 
     match array.value {
         Value::Text(text) => {
-            let mut key = key;
-            if key.len() > 1 {
-                return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
-            }
-            let Some(i) = key.pop() else {
-                return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
-            };
-            let i = i.as_usize(data.clone()).await?;
+            let i = key.as_usize(data.clone()).await?;
 
             match text.chars().nth(i) {
                 Some(_) => {
@@ -1737,14 +1473,18 @@ pub async fn remove<'c>(
             }
         }
         Value::List(mut list) => {
-            let return_value = remove_index(&mut list, &key, data.clone(), key_loc).await;
+            let key = key.as_list_key(data.clone()).await?;
+
+            let return_value = list.remove_nested(&key, data.clone(), key_span);
 
             update_if_var(var, Value::List(list), data, value_loc)?;
 
             return_value
         }
         Value::Map(mut map) => {
-            let return_value = remove_nested(&mut map, &key, data.clone(), key_loc).await;
+            let key = key.as_map_key(data.clone()).await?;
+
+            let return_value = map.remove_nested(&key, data.clone(), key_span);
 
             update_if_var(var, Value::Map(map), data, value_loc)?;
 
@@ -1769,10 +1509,10 @@ pub async fn swap<'c>(
 
     let mut array = args.pop_front().unwrap();
 
-    let i = args.pop_front().unwrap();
-    let j = args.pop_front().unwrap();
-    let i_loc = i.span;
-    let j_loc = j.span;
+    let a_key = args.pop_front().unwrap().as_raw(data.clone()).await?;
+    let b_key = args.pop_front().unwrap().as_raw(data.clone()).await?;
+    let a_key_span = a_key.span;
+    let b_key_span = b_key.span;
 
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
@@ -1783,8 +1523,8 @@ pub async fn swap<'c>(
 
     match array.value {
         Value::Text(text) => {
-            let i = i.as_int(data.clone()).await?;
-            let j = j.as_int(data.clone()).await?;
+            let i = a_key.as_int(data.clone()).await?;
+            let j = b_key.as_int(data.clone()).await?;
             let a = i as usize;
             let b = j as usize;
 
@@ -1800,15 +1540,15 @@ pub async fn swap<'c>(
             }
         }
         Value::List(mut list) => {
-            let i = i.as_key(data.clone(), LIST_KEY).await?;
-            let j = j.as_key(data.clone(), LIST_KEY).await?;
+            let i = a_key.as_list_key(data.clone()).await?;
+            let j = b_key.as_list_key(data.clone()).await?;
 
-            let a_value = get_index(&list, &i, data.clone(), i_loc).await?;
-            let b_value = get_index(&list, &j, data.clone(), j_loc).await?;
+            let a_value = list.get_nested(&i, data.clone(), a_key_span)?;
+            let b_value = list.get_nested(&j, data.clone(), b_key_span)?;
 
-            let a_swap = get_mut_index(&mut list, &i, data.clone(), i_loc).await?;
+            let a_swap = list.get_nested_mut(&i, data.clone(), a_key_span)?;
             *a_swap = b_value;
-            let b_swap = get_mut_index(&mut list, &j, data.clone(), j_loc).await?;
+            let b_swap = list.get_nested_mut(&j, data.clone(), b_key_span)?;
             *b_swap = a_value;
 
             let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
@@ -1837,8 +1577,8 @@ pub async fn replace<'c>(
     let arg = args.pop_front().unwrap();
     let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
-    let key_loc = key.span;
-    let key = key.as_key(data.clone(), LIST_KEY).await?;
+    let key_span = key.span;
+    let key = key.as_list_key(data.clone()).await?;
 
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
@@ -1856,7 +1596,6 @@ pub async fn replace<'c>(
             let Some(i) = key.pop() else {
                 return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
             };
-            let i = i.as_usize(data.clone()).await?;
             let replacement_loc = arg.span;
             let replacement = arg.as_text(data.clone()).await?;
 
@@ -1878,13 +1617,13 @@ pub async fn replace<'c>(
                     update_if_var(var, Value::from(text), data, value_loc)?;
                     Ok(Value::Text(Cow::Owned(old_ch.to_string())))
                 }
-                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_loc)),
+                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span)),
             }
         }
         Value::List(mut list) => {
             let new_value = arg.as_raw_checked(data.clone(), NOT_NONE).await?.value;
 
-            let old_value = get_mut_index(&mut list, &key, data.clone(), key_loc).await?;
+            let old_value = list.get_nested_mut(&key, data.clone(), key_span)?;
 
             let return_value = old_value.clone();
             *old_value = new_value;
@@ -1912,11 +1651,11 @@ pub async fn insert<'c>(
 
     let mut array = args.pop_front().unwrap();
     let key = args.pop_front().unwrap();
+    let key_span = key.span;
+    let key = key.as_raw(data.clone()).await?;
+
     let arg = args.pop_front().unwrap();
     let arg = arg.as_raw_checked(data.clone(), ANY).await?;
-
-    let key_loc = key.span;
-    let key = key.as_key(data.clone(), KEY).await?;
 
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
@@ -1925,14 +1664,7 @@ pub async fn insert<'c>(
 
     match array.value {
         Value::Text(text) => {
-            let mut key = key;
-            if key.len() > 1 {
-                return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
-            }
-            let Some(i) = key.pop() else {
-                return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
-            };
-            let i = i.as_usize(data.clone()).await?;
+            let i = key.as_usize(data.clone()).await?;
 
             let text_to_insert = arg.as_text(data.clone()).await?;
 
@@ -1949,18 +1681,22 @@ pub async fn insert<'c>(
             Ok(return_value)
         }
         Value::List(mut list) => {
+            let key = key.as_list_key(data.clone()).await?;
+
             let value_to_insert = arg.as_raw_checked(data.clone(), NOT_NONE).await?.value;
 
-            insert_at_index(&mut list, &key, value_to_insert, data.clone(), key_loc).await?;
+            list.insert_nested(&key, value_to_insert, data.clone(), key_span)?;
 
             let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
 
             Ok(return_value)
         }
         Value::Map(mut map) => {
+            let key = key.as_map_key(data.clone()).await?;
+
             let value_to_insert = arg.as_raw_checked(data.clone(), NOT_NONE).await?.value;
 
-            insert_nested(&mut map, &key, value_to_insert, data.clone(), key_loc).await?;
+            map.insert_nested(&key, value_to_insert, data.clone(), key_span)?;
 
             let return_value = update_if_var(var, Value::Map(map), data, value_loc)?;
 
@@ -2871,8 +2607,10 @@ pub mod tests {
             .interpret(code, InterpreterData::default())
             .await;
 
-        println!("DEBUG");
-        dbg!(&result);
+        match &result {
+            Ok(o) => println!("Result:\n{}", o),
+            Err(e) => println!("Result:\n{}", e.to_string()),
+        }
 
         let result = result.unwrap();
         println!("PRETTY PRINT");
