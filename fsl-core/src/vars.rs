@@ -195,43 +195,50 @@ impl<'c> VarStore<'c> {
         label: &Cow<'c, str>,
         replacement: Value<'c>,
     ) -> Result<(), RuntimeError> {
-        let mut map = self.data.last_mut().unwrap().write().await;
-        match map.get_mut(label) {
-            Some(var) => match var {
-                Var::Const(_) => Err(RuntimeError::AttemptToOverwriteConst {
-                    label: label.to_string(),
-                }),
-                Var::Mut(value) => {
-                    self.limiter.deallocate(value);
-                    self.limiter.allocate(&replacement)?;
-                    *value = replacement;
-                    Ok(())
+        for map in self.data.iter_mut().rev() {
+            let mut map = map.write().await;
+            if let Some(var) = map.get_mut(label) {
+                match var {
+                    Var::Const(_) => {
+                        return Err(RuntimeError::AttemptToOverwriteConst {
+                            label: label.to_string(),
+                        });
+                    }
+                    Var::Mut(value) => {
+                        self.limiter.deallocate(value);
+                        self.limiter.allocate(&replacement)?;
+                        *value = replacement;
+                        return Ok(());
+                    }
                 }
-            },
-            None => Err(RuntimeError::NonExistantVar {
-                label: label.to_string(),
-            }),
+            }
         }
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
     }
 
     pub async fn remove(
         &mut self,
         label: &Cow<'c, str>,
     ) -> Result<Option<Value<'c>>, RuntimeError> {
-        let mut map = self.data.last_mut().unwrap().write().await;
-        if let Some(Var::Const(_)) = map.get(label) {
-            Err(RuntimeError::AttemptToOverwriteConst {
-                label: label.to_string(),
-            })
-        } else {
-            match map.remove(label) {
-                Some(var) => {
-                    self.limiter.deallocate(&var);
-                    Ok(Some(var.take()))
+        for map in self.data.iter_mut().rev() {
+            let mut map = map.write().await;
+            if let Some(Var::Const(_)) = map.get(label) {
+                return Err(RuntimeError::AttemptToOverwriteConst {
+                    label: label.to_string(),
+                });
+            } else {
+                match map.remove(label) {
+                    Some(var) => {
+                        self.limiter.deallocate(&var);
+                        return Ok(Some(var.take()));
+                    }
+                    None => return Ok(None),
                 }
-                None => Ok(None),
             }
         }
+        Ok(None)
     }
 
     pub async fn take(&mut self, label: &Cow<'c, str>) -> Result<Value<'c>, RuntimeError> {
