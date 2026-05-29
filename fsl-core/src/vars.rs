@@ -229,12 +229,9 @@ impl<'c> VarStore<'c> {
                     label: label.to_string(),
                 });
             } else {
-                match map.remove(label) {
-                    Some(var) => {
-                        self.limiter.deallocate(&var);
-                        return Ok(Some(var.take()));
-                    }
-                    None => return Ok(None),
+                if let Some(var) = map.remove(label) {
+                    self.limiter.deallocate(&var);
+                    return Ok(Some(var.take()));
                 }
             }
         }

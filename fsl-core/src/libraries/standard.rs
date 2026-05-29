@@ -2847,6 +2847,46 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn take_params() {
+        test_interpreter(
+            r#"
+                person.store([])
+                make_person.def(name,
+                    person.local([name: name.take()]).return()
+                )
+                person.update(make_person("jake"))
+                person.print()
+            "#,
+            "[name: jake]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn pass_in_taken() {
+        test_interpreter(
+            r#"
+                person.store([])
+                make_person.def(name,
+                    debug(name)
+                    person.local([name: name.take()]).return()
+                )
+                make_jake.def(
+                    name.local("jake")
+                    say("local name: ", name)
+                    person.update(
+                        make_person(name.take())
+                    )
+                )
+                make_jake()
+                person.print()
+            "#,
+            "[name: jake]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn print_values() {
         test_interpreter(
             r#"a.store(1) print("1", " ", 1, " ", a, " ", [1])"#,
@@ -4083,6 +4123,27 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn update_constructor() {
+        test_interpreter(
+            r#"
+                person.store([])
+                create_person.def(name,
+                    person.local([name: name]).return()
+                )
+                test.def(
+                    person.update(
+                        create_person("jake")
+                    )
+                )
+                test()
+                person.name.get().print()
+            "#,
+            "jake",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn clamp_int() {
         test_interpreter(
             r#"
@@ -5117,6 +5178,64 @@ pub mod tests {
                 if(result.elapsed.get().gt(0), print(1))
             "#,
             "01",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn construct_local() {
+        test_interpreter(
+            r#"
+	            FULL_HEALTH.const(100)
+	            DEFAULT_REGEN.const(0)
+	            DEFAULT_STRENGTH.const(0)
+	            DEFAULT_DODGE.const(0)
+	            DEFAULT_SPEED.const(1)
+	            DEFAULT_LUCK.const(0)
+	            DEFAULT_ARMOR.const(0)
+
+	            *modifer = [value: 5, duration: 5]*
+	            create_character.def(name, actions, gold, image,
+	            	character.local([
+	            		name: name,
+	            		health: FULL_HEALTH,
+	            		regen: DEFAULT_REGEN,
+	            		dodge: DEFAULT_DODGE,
+	            		strength: DEFAULT_STRENGTH,
+	            		speed: DEFAULT_SPEED,
+	            		luck: DEFAULT_LUCK,
+	            		armor: DEFAULT_ARMOR,
+	            		actions: actions,
+	            		gold: gold,
+	            		image: image,
+	            		modifiers: [
+	            			health: [],
+	            			regen: [],
+	            			dodge: [],
+	            			strength: [],
+	            			speed: [],
+	            			luck: [],
+	            			armor: [],
+	            		],
+	            	]).return()
+	            )
+
+
+	        create_opponent.def(
+	        	debug(
+	        		create_character(
+	        			"test",
+	        			[],
+	        			random_range(50, 100),
+	        			"image.jpg",
+	        		)
+	        	)
+	        )
+
+	        create_opponent()
+	        print("done")
+            "#,
+            "done",
         )
         .await;
     }
