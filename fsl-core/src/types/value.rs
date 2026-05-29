@@ -22,6 +22,21 @@ pub enum List<'c> {
     Unresolved(Arc<Vec<Value<'c>>>),
 }
 
+impl<'c> IntoIterator for List<'c> {
+    type Item = Value<'c>;
+    type IntoIter = std::vec::IntoIter<Value<'c>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let arc_vec = match self {
+            List::Resolved(vec) => vec,
+            List::Unresolved(vec) => vec,
+        };
+
+        let vec = Arc::unwrap_or_clone(arc_vec);
+        vec.into_iter()
+    }
+}
+
 impl<'c> List<'c> {
     pub async fn resolve(self, data: Arc<InterpreterData<'c>>) -> Result<List<'c>, ValueError<'c>> {
         match self {
