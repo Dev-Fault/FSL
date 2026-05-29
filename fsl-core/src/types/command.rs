@@ -121,7 +121,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         self.value.is_type(fsl_type)
     }
 
-    fn mem_size(&self) -> Option<usize> {
+    fn mem_size(&self) -> Result<usize, RuntimeError> {
         self.value.mem_size()
     }
 
@@ -318,12 +318,14 @@ pub struct Command<'c> {
 }
 
 impl<'c> Command<'c> {
-    pub fn mem_size(&self) -> Option<usize> {
+    pub fn mem_size(&self) -> Result<usize, RuntimeError> {
         let mut size = size_of::<Command>();
         for arg in &self.args {
-            size = size.checked_add(arg.value.mem_size()?)?;
+            size = size
+                .checked_add(arg.value.mem_size()?)
+                .ok_or(RuntimeError::Overflow)?;
         }
-        Some(size)
+        Ok(size)
     }
 
     pub fn new(

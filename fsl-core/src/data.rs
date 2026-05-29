@@ -14,7 +14,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     error::RuntimeError,
-    types::{command::UserDef, value::Value},
+    types::{
+        command::UserDef,
+        value::{FslValue, Value},
+    },
     vars::{DEFAULT_MEMORY_LIMIT, VarStack},
 };
 
@@ -22,72 +25,76 @@ pub type UserDefinitions<'c> = HashMap<Cow<'c, str>, Arc<UserDef<'c>>>;
 
 #[derive(Debug, Default)]
 pub struct MemoryLimit {
-    pub limit: Option<usize>,
+    pub limit: usize,
     pub allocated: AtomicUsize,
 }
 
+#[derive(Debug)]
+pub enum Limiter {
+    NoLimit,
+    Limit(MemoryLimit),
+}
+
+impl Default for Limiter {
+    fn default() -> Self {
+        Self::NoLimit
+    }
+}
+
+impl Limiter {
+    pub fn allocate<'c>(&self, value: &Value<'c>) -> Result<(), RuntimeError> {
+        match self {
+            Limiter::NoLimit => Ok(()),
+            Limiter::Limit(memory_limit) => {
+                let mem = memory_limit.allocated.load(Ordering::Relaxed);
+                let size = value.mem_size()?;
+                if let Some(new_mem) = mem.checked_add(size)
+                    && new_mem < memory_limit.limit
+                {
+                    memory_limit.allocated.store(new_mem, Ordering::Relaxed);
+                } else {
+                    return Err(RuntimeError::VarMemoryLimitReached);
+                };
+                Ok(())
+            }
+        }
+    }
+
+    pub fn deallocate<'c>(&self, value: &Value<'c>) {
+        match self {
+            Limiter::NoLimit => {}
+            Limiter::Limit(memory_limit) => {
+                let mem = memory_limit.allocated.load(Ordering::Relaxed);
+                memory_limit.allocated.store(
+                    mem.saturating_sub(value.mem_size().unwrap_or(0)),
+                    Ordering::Relaxed,
+                );
+            }
+        }
+    }
+}
+
 impl MemoryLimit {
-    pub fn new(limit: Option<usize>) -> MemoryLimit {
+    pub fn new(limit: usize) -> MemoryLimit {
         MemoryLimit {
             limit,
             allocated: AtomicUsize::new(0),
         }
     }
-
-    pub fn allocate(&self, size: Option<usize>) -> Result<(), RuntimeError> {
-        let Some(limit) = self.limit else {
-            return Ok(());
-        };
-
-        let mem = self.allocated.load(Ordering::Relaxed);
-        match size {
-            Some(size) => {
-                match mem.checked_add(size) {
-                    Some(new_mem) => {
-                        if new_mem > limit {
-                            return Err(RuntimeError::VarMemoryLimitReached);
-                        }
-                        self.allocated.store(new_mem, Ordering::Relaxed);
-                    }
-                    None => return Err(RuntimeError::VarMemoryLimitReached),
-                };
-            }
-            None => return Err(RuntimeError::VarMemoryLimitReached),
-        }
-        Ok(())
-    }
-
-    pub fn deallocate(&self, size: usize) {
-        if self.limit.is_some() {
-            let mem = self.allocated.load(Ordering::Relaxed);
-            self.allocated
-                .store(mem.saturating_sub(size), Ordering::Relaxed);
-        }
-    }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct InterpreterFlags {
     pub break_flag: bool,
     pub continue_flag: bool,
     pub return_flag: bool,
 }
 
-impl Default for InterpreterFlags {
-    fn default() -> Self {
-        Self {
-            break_flag: Default::default(),
-            continue_flag: Default::default(),
-            return_flag: Default::default(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct InterpreterLimits {
     pub max_output_len: Option<usize>,
     pub max_loops: Option<usize>,
-    pub memory_limit: Arc<MemoryLimit>,
+    pub limiter: Arc<Limiter>,
 }
 
 impl InterpreterLimits {
@@ -102,15 +109,15 @@ impl InterpreterLimits {
     }
 
     pub fn with_memory_limit(mut self, limit: usize) -> Self {
-        self.memory_limit = Arc::new(MemoryLimit::new(Some(limit)));
+        self.limiter = Arc::new(Limiter::Limit(MemoryLimit::new(limit)));
         self
     }
 
-    pub fn bounded() -> Self {
+    pub fn default_limits() -> Self {
         InterpreterLimits {
             max_output_len: Some(DEFAULT_OUTPUT_LIMIT),
             max_loops: Some(DEFAULT_LOOP_LIMIT),
-            memory_limit: Arc::new(MemoryLimit::new(Some(DEFAULT_MEMORY_LIMIT))),
+            limiter: Arc::new(Limiter::Limit(MemoryLimit::new(DEFAULT_MEMORY_LIMIT))),
         }
     }
 }
@@ -143,7 +150,7 @@ impl<'c> InterpreterData<'c> {
     }
 
     pub fn with_limits(mut self, limits: InterpreterLimits) -> Self {
-        self.vars = VarStack::new(limits.memory_limit.clone());
+        self.vars = VarStack::new(limits.limiter.clone());
         self.limits = Arc::new(limits);
         self
     }
@@ -151,7 +158,7 @@ impl<'c> InterpreterData<'c> {
     pub fn from<'new>(data: &InterpreterData<'c>) -> InterpreterData<'new> {
         InterpreterData {
             args: data.args.clone(),
-            vars: VarStack::new(data.limits.memory_limit.clone()),
+            vars: VarStack::new(data.limits.limiter.clone()),
             limits: data.limits.clone(),
             ..Default::default()
         }

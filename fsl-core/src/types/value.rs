@@ -364,7 +364,7 @@ pub trait FslValue<'c, T, E> {
 
     fn is_type(&self, fsl_type: FslType) -> bool;
 
-    fn mem_size(&self) -> Option<usize>;
+    fn mem_size(&self) -> Result<usize, RuntimeError>;
 
     fn equal(&self, other: &T) -> Result<bool, E>;
 
@@ -448,33 +448,42 @@ impl<'c> FslValue<'c, Value<'c>, ValueError<'c>> for Value<'c> {
         return self.as_type() == fsl_type;
     }
 
-    fn mem_size(&self) -> Option<usize> {
+    fn mem_size(&self) -> Result<usize, RuntimeError> {
         match &self {
-            Value::Int(_) => Some(size_of::<Value>()),
-            Value::Float(_) => Some(size_of::<Value>()),
-            Value::Bool(_) => Some(size_of::<Value>()),
-            Value::Text(str) => Some(size_of::<Value>().checked_add(str.len())?),
+            Value::Int(_) => Ok(size_of::<Value>()),
+            Value::Float(_) => Ok(size_of::<Value>()),
+            Value::Bool(_) => Ok(size_of::<Value>()),
+            Value::Text(str) => size_of::<Value>()
+                .checked_add(str.len())
+                .ok_or(RuntimeError::Overflow),
             Value::List(list) => {
-                let mut size: usize = size_of::<Value>().checked_add(size_of::<Vec<Value>>())?;
+                let mut size: usize = size_of::<Value>();
                 for element in list.iter() {
-                    size = size.checked_add(element.mem_size()?)?;
+                    size = size
+                        .checked_add(element.mem_size()?)
+                        .ok_or(RuntimeError::Overflow)?;
                 }
-                Some(size)
+                Ok(size)
             }
             Value::Map(map) => {
-                let mut size: usize =
-                    size_of::<Value>().checked_add(size_of::<HashMap<String, Value>>())?;
+                let mut size: usize = size_of::<Value>();
                 for key_value_pair in map.iter() {
                     let key = key_value_pair.0;
                     let value = key_value_pair.1;
-                    size = size.checked_add(key.len())?;
-                    size = size.checked_add(value.mem_size()?)?;
+                    size = size.checked_add(key.len()).ok_or(RuntimeError::Overflow)?;
+                    size = size
+                        .checked_add(value.mem_size()?)
+                        .ok_or(RuntimeError::Overflow)?;
                 }
-                Some(size)
+                Ok(size)
             }
-            Value::Var(var) => Some(size_of::<Value>().checked_add(var.len())?),
-            Value::Command(command) => Some(size_of::<Value>().checked_add(command.mem_size()?)?),
-            Value::None => Some(size_of::<Value>()),
+            Value::Var(var) => size_of::<Value>()
+                .checked_add(var.len())
+                .ok_or(RuntimeError::Overflow),
+            Value::Command(command) => size_of::<Value>()
+                .checked_add(command.mem_size()?)
+                .ok_or(RuntimeError::Overflow),
+            Value::None => Ok(size_of::<Value>()),
         }
     }
 
