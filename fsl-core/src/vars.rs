@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     mem,
+    ops::Deref,
     sync::{Arc, Mutex},
 };
 
@@ -31,13 +32,6 @@ impl<'c> Var<'c> {
         }
     }
 
-    pub fn inner(&self) -> &Value<'c> {
-        match self {
-            Var::Const(value) => value,
-            Var::Literal(value) => value,
-        }
-    }
-
     pub fn inner_mut(&mut self, label: &str) -> Result<&mut Value<'c>, RuntimeError> {
         match self {
             Var::Const(_) => Err(RuntimeError::AttemptToOverwriteConst {
@@ -62,6 +56,17 @@ impl<'c> Var<'c> {
     }
 }
 
+impl<'c> Deref for Var<'c> {
+    type Target = Value<'c>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Var::Const(value) => value,
+            Var::Literal(value) => value,
+        }
+    }
+}
+
 impl<'c> Default for Var<'c> {
     fn default() -> Self {
         Self::Literal(Value::None)
@@ -79,13 +84,18 @@ impl<'c> VarStore<'c> {
     }
 
     pub fn pop(&mut self) {
+        if matches!(*self.limiter, Limiter::Limit(_)) {
+            for var in self.data.last().unwrap().values() {
+                self.limiter.deallocate(var);
+            }
+        }
         self.data.pop();
     }
 
     pub fn get_clone(&self, label: &str) -> Result<Value<'c>, RuntimeError> {
         for map in self.data.iter().rev() {
             if let Some(var) = map.get(label) {
-                return Ok(var.inner().clone());
+                return Ok(var.deref().clone());
             }
         }
         Err(RuntimeError::NonExistantVar {
@@ -96,7 +106,7 @@ impl<'c> VarStore<'c> {
     pub fn get(&self, label: &str) -> Result<&Value<'c>, RuntimeError> {
         for map in self.data.iter().rev() {
             if let Some(var) = map.get(label) {
-                return Ok(var.inner());
+                return Ok(var);
             }
         }
         Err(RuntimeError::NonExistantVar {
@@ -115,6 +125,7 @@ impl<'c> VarStore<'c> {
         })
     }
 
+    // TODO this needs to update the limiter allocations
     pub fn get_mut(&mut self, label: &str) -> Result<&mut Value<'c>, RuntimeError> {
         for map in self.data.iter_mut().rev() {
             if let Some(var) = map.get_mut(label) {
@@ -134,11 +145,14 @@ impl<'c> VarStore<'c> {
                         label: label.to_string(),
                     });
                 } else {
+                    self.limiter.deallocate(var);
+                    self.limiter.allocate(&new_var)?;
                     *var = new_var;
                     return Ok(());
                 }
             }
         }
+        self.limiter.allocate(&new_var)?;
         self.data.last_mut().unwrap().insert(label.clone(), new_var);
         Ok(())
     }
@@ -150,6 +164,10 @@ impl<'c> VarStore<'c> {
                 label: label.to_string(),
             })
         } else {
+            if let Some(old_var) = map.get(label) {
+                self.limiter.deallocate(old_var);
+            }
+            self.limiter.allocate(&var)?;
             map.insert(label.clone(), var);
             Ok(())
         }
@@ -167,6 +185,8 @@ impl<'c> VarStore<'c> {
                     label: label.to_string(),
                 }),
                 Var::Literal(value) => {
+                    self.limiter.deallocate(value);
+                    self.limiter.allocate(&replacement)?;
                     *value = replacement;
                     Ok(())
                 }
@@ -184,8 +204,13 @@ impl<'c> VarStore<'c> {
                 label: label.to_string(),
             })
         } else {
-            let removed = map.remove(label);
-            Ok(removed.map(|var| var.take()))
+            match map.remove(label) {
+                Some(var) => {
+                    self.limiter.deallocate(&var);
+                    Ok(Some(var.take()))
+                }
+                None => Ok(None),
+            }
         }
     }
 }
