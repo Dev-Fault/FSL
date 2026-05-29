@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
-    mem,
     sync::Arc,
     time::Duration,
 };
@@ -11,15 +10,14 @@ use tokio_stream::StreamExt;
 
 use crate::{
     FslInterpreter, InterpreterData,
-    error::{ExecutionError, ExpectedArgs, RuntimeError, ToExecutionError},
-    parser::Span,
+    error::{ExecutionError, ExpectedArgs, RuntimeError, Span, ToExecutionError},
     register_command,
     types::{
         FslType,
         command::{ArgPos, ArgRule, Argument, Command, Handler},
         value::{FslMap, FslValue, List, Value},
     },
-    vars::VarEntry,
+    vars::Var,
 };
 
 use futures::FutureExt;
@@ -251,43 +249,38 @@ pub async fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, RETURN, RETURN_RULES, r#return);
 }
 
-/// If value is var label replaces it with it's actual inner value and returns label + var entry otherwise returns None
 pub async fn take_if_var<'c>(
     value: &mut Value<'c>,
     data: Arc<InterpreterData<'c>>,
     span: Span<'c>,
-) -> Result<Option<(Cow<'c, str>, VarEntry<'c>)>, ExecutionError<'c>> {
-    if value.is_type(FslType::Var) {
-        let tmp_value = mem::take(value);
-        let label = tmp_value
-            .as_var_label(data.clone())
-            .await
-            .map_err(|e| e.to_exec(span))?;
-        let mut var_entry = data.vars.take_entry(&label).map_err(|e| e.to_exec(span))?;
-        *value = mem::take(&mut var_entry.value);
-        Ok(Some((label, var_entry)))
+) -> Result<Option<Cow<'c, str>>, ExecutionError<'c>> {
+    if let Value::Var(label) = value {
+        let label = label.clone();
+        let mut vars = data.vars.write().await;
+        *value = vars.take(&label).await.map_err(|e| e.to_exec(span))?;
+        Ok(Some(label))
     } else {
         Ok(None)
     }
 }
 
-/// If value is var updates var entry and returns Value::Var otherwise returns value that was passed in
-pub fn update_if_var<'c>(
-    var: Option<(Cow<'c, str>, VarEntry<'c>)>,
+pub async fn update_if_var<'c>(
+    var: Option<Cow<'c, str>>,
     value: Value<'c>,
     data: Arc<InterpreterData<'c>>,
     span: Span<'c>,
 ) -> Result<Value<'c>, ExecutionError<'c>> {
-    if let Some((label, mut var_entry)) = var {
-        var_entry.value = value;
-        data.vars
-            .insert_entry(label.clone(), var_entry)
-            .map_err(|e| e.to_exec(span))?;
-        return Ok(Value::Var(label));
+    match var {
+        Some(label) => {
+            let mut vars = data.vars.write().await;
+            vars.store(&label, Var::Mut(value))
+                .await
+                .map_err(|e| e.to_exec(span))?;
+            Ok(Value::Var(label))
+        }
+        None => Ok(value),
     }
-    Ok(value)
 }
-
 fn contains_float(values: &[Argument]) -> bool {
     values.iter().any(|v| v.is_type(FslType::Float))
 }
@@ -592,10 +585,13 @@ pub async fn store<'c>(
     let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
     data.vars
-        .create_or_update(&var, arg.value)
+        .write()
+        .await
+        .store(&var, Var::Mut(arg.value))
+        .await
         .map_err(|e| e.to_exec(arg.span))?;
 
-    Ok(data.vars.get(&var).map_err(|e| e.to_exec(arg.span))?)
+    Ok(Value::Var(var))
 }
 
 pub const LOCAL_RULES: &[ArgRule] = &[
@@ -616,10 +612,13 @@ pub async fn local<'c>(
     let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
     data.vars
-        .insert(&var, arg.value)
+        .write()
+        .await
+        .insert(&var, Var::Mut(arg.value))
+        .await
         .map_err(|e| e.to_exec(arg.span))?;
 
-    Ok(data.vars.get(&var).map_err(|e| e.to_exec(arg.span))?)
+    Ok(Value::Var(var))
 }
 
 pub const UPDATE_RULES: &[ArgRule] = &[
@@ -641,10 +640,13 @@ pub async fn update<'c>(
     let var_label = &var;
 
     data.vars
-        .update_var(var_label, arg.value)
+        .write()
+        .await
+        .replace(var_label, arg.value)
+        .await
         .map_err(|e| e.to_exec(arg.span))?;
 
-    Ok(data.vars.get(var_label).map_err(|e| e.to_exec(arg.span))?)
+    Ok(Value::Var(var))
 }
 
 pub const CONST_RULES: &[ArgRule] = &[
@@ -666,10 +668,13 @@ pub async fn r#const<'c>(
     let var_label = &var;
 
     data.vars
-        .insert_const(var_label, arg.value)
+        .write()
+        .await
+        .insert(var_label, Var::Const(arg.value))
+        .await
         .map_err(|e| e.to_exec(arg.span))?;
 
-    Ok(data.vars.get(var_label).map_err(|e| e.to_exec(arg.span))?)
+    Ok(Value::Var(var))
 }
 
 pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
@@ -693,7 +698,14 @@ pub async fn take<'c>(
     let mut command = command;
     let arg = command.take_args().pop_front().unwrap();
     let var = arg.get_var_label()?;
-    match data.vars.remove(&var).map_err(|e| e.to_exec(arg.span))? {
+    match data
+        .vars
+        .write()
+        .await
+        .remove(&var)
+        .await
+        .map_err(|e| e.to_exec(arg.span))?
+    {
         Some(value) => Ok(value),
         None => Ok(Value::None),
     }
@@ -776,12 +788,12 @@ pub async fn scope<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let args = command.take_args();
-    data.vars.push();
+    data.vars.write().await.push();
     let mut return_value = Value::None;
     for value in args {
         return_value = value.as_raw(data.clone()).await?.value;
     }
-    data.vars.pop();
+    data.vars.write().await.pop().await;
 
     Ok(return_value)
 }
@@ -1226,7 +1238,7 @@ pub async fn for_each<'c>(
     let label_span = label.span;
     let label = label.as_var_label(data.clone()).await?;
 
-    data.vars.push();
+    data.vars.write().await.push();
     data.inc_loop_depth().await;
 
     let mut return_value = None;
@@ -1239,19 +1251,24 @@ pub async fn for_each<'c>(
 
             'outer: for (i, c) in indices {
                 for command in &args {
-                    let mut character = Value::from(c.to_string());
                     data.vars
-                        .insert(&label, std::mem::take(&mut character))
+                        .write()
+                        .await
+                        .insert(&label, Var::Mut(Value::from(c.to_string())))
+                        .await
                         .map_err(|e| e.to_exec(label_span))?;
 
                     let command = command.clone().as_command()?;
                     let command_value = command.execute(data.clone()).await?;
 
-                    character = data
+                    let character = data
                         .vars
-                        .take_entry(&label)
+                        .write()
+                        .await
+                        .remove(&label)
+                        .await
                         .map_err(|e| e.to_exec(label_span))?
-                        .value;
+                        .unwrap();
 
                     let replacement = character
                         .as_text(data.clone())
@@ -1278,13 +1295,16 @@ pub async fn for_each<'c>(
                     .map_err(|e| e.to_exec(command.span))?;
             }
 
-            update_if_var(var, Value::from(text), data.clone(), array_span)?
+            update_if_var(var, Value::from(text), data.clone(), array_span).await?
         }
         Value::List(mut list) => {
             'outer: for element in list.iter_mut() {
                 for command in &args {
                     data.vars
-                        .insert(&label, std::mem::take(element))
+                        .write()
+                        .await
+                        .insert(&label, Var::Mut(std::mem::take(element)))
+                        .await
                         .map_err(|e| e.to_exec(label_span))?;
 
                     let command = command.clone().as_command()?;
@@ -1292,9 +1312,12 @@ pub async fn for_each<'c>(
 
                     *element = data
                         .vars
-                        .take_entry(&label)
+                        .write()
+                        .await
+                        .remove(&label)
+                        .await
                         .map_err(|e| e.to_exec(label_span))?
-                        .value;
+                        .unwrap();
 
                     if data.get_return_flag().await {
                         return_value = Some(command_value);
@@ -1312,12 +1335,12 @@ pub async fn for_each<'c>(
                     .map_err(|e| e.to_exec(command.span))?;
             }
 
-            update_if_var(var, Value::List(list), data.clone(), array_span)?
+            update_if_var(var, Value::List(list), data.clone(), array_span).await?
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
     };
 
-    data.vars.pop();
+    data.vars.write().await.pop().await;
     data.dec_loop_depth().await;
 
     match return_value {
@@ -1394,6 +1417,7 @@ pub async fn set<'c>(
     let mut command = command;
     let mut args = command.take_args();
     let mut map = args.pop_front().unwrap();
+    let map_span = map.span;
     let key = args.pop_front().unwrap();
     let arg = args.pop_front().unwrap();
 
@@ -1402,15 +1426,19 @@ pub async fn set<'c>(
     let arg = arg.as_raw_checked(data.clone(), NOT_NONE).await?;
 
     let value_loc = map.span;
-    let var = take_if_var(&mut map.value, data.clone(), value_loc).await?;
 
-    let mut map = map.as_map(data.clone()).await?;
-
-    let return_value = map.set_nested(&key, arg.value, data.clone(), value_loc)?;
-
-    update_if_var(var, Value::Map(map), data, value_loc)?;
-
-    Ok(return_value)
+    let return_value = map
+        .mut_with(data.clone(), |map| match map {
+            Value::Map(map) => {
+                let value = map.set_nested(&key, arg.value, data, value_loc)?;
+                Ok(value)
+            }
+            _ => Err(map
+                .conversion_err_to_types(&[FslType::Map])
+                .to_exec(map_span)),
+        })
+        .await?;
+    return Ok(return_value);
 }
 
 pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
@@ -1465,7 +1493,7 @@ pub async fn remove<'c>(
                     let return_value = text.remove(i).to_string();
                     let text = Value::from(std::mem::take(&mut text));
 
-                    update_if_var(var, text, data, value_loc)?;
+                    update_if_var(var, text, data, value_loc).await?;
 
                     Ok(Value::from(return_value))
                 }
@@ -1477,7 +1505,7 @@ pub async fn remove<'c>(
 
             let return_value = list.remove_nested(&key, data.clone(), key_span);
 
-            update_if_var(var, Value::List(list), data, value_loc)?;
+            update_if_var(var, Value::List(list), data, value_loc).await?;
 
             return_value
         }
@@ -1486,7 +1514,7 @@ pub async fn remove<'c>(
 
             let return_value = map.remove_nested(&key, data.clone(), key_span);
 
-            update_if_var(var, Value::Map(map), data, value_loc)?;
+            update_if_var(var, Value::Map(map), data, value_loc).await?;
 
             return_value
         }
@@ -1533,7 +1561,7 @@ pub async fn swap<'c>(
             if a < chars.len() && b < chars.len() {
                 chars.swap(a, b);
                 let text: String = chars.iter().collect();
-                let return_value = update_if_var(var, Value::from(text), data, value_loc)?;
+                let return_value = update_if_var(var, Value::from(text), data, value_loc).await?;
                 Ok(return_value)
             } else {
                 Err(RuntimeError::IndexOutOfBounds.to_exec(command.span))
@@ -1551,7 +1579,7 @@ pub async fn swap<'c>(
             let b_swap = list.get_nested_mut(&j, data.clone(), b_key_span)?;
             *b_swap = a_value;
 
-            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc).await?;
 
             Ok(return_value)
         }
@@ -1614,7 +1642,7 @@ pub async fn replace<'c>(
                     *ch = replacement.chars().nth(0).unwrap();
 
                     let text: String = chars.iter().collect();
-                    update_if_var(var, Value::from(text), data, value_loc)?;
+                    update_if_var(var, Value::from(text), data, value_loc).await?;
                     Ok(Value::Text(Cow::Owned(old_ch.to_string())))
                 }
                 None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span)),
@@ -1628,7 +1656,7 @@ pub async fn replace<'c>(
             let return_value = old_value.clone();
             *old_value = new_value;
 
-            update_if_var(var, Value::List(list), data.clone(), value_loc)?;
+            update_if_var(var, Value::List(list), data.clone(), value_loc).await?;
 
             Ok(return_value)
         }
@@ -1676,7 +1704,7 @@ pub async fn insert<'c>(
             }
 
             let return_value =
-                update_if_var(var, Value::from(std::mem::take(&mut text)), data, value_loc)?;
+                update_if_var(var, Value::from(std::mem::take(&mut text)), data, value_loc).await?;
 
             Ok(return_value)
         }
@@ -1687,7 +1715,7 @@ pub async fn insert<'c>(
 
             list.insert_nested(&key, value_to_insert, data.clone(), key_span)?;
 
-            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc).await?;
 
             Ok(return_value)
         }
@@ -1698,7 +1726,7 @@ pub async fn insert<'c>(
 
             map.insert_nested(&key, value_to_insert, data.clone(), key_span)?;
 
-            let return_value = update_if_var(var, Value::Map(map), data, value_loc)?;
+            let return_value = update_if_var(var, Value::Map(map), data, value_loc).await?;
 
             Ok(return_value)
         }
@@ -1738,13 +1766,13 @@ pub async fn push<'c>(
             let mut text = text.into_owned();
             text.push_str(&text_to_push);
 
-            let return_value = update_if_var(var, Value::from(text), data, value_loc)?;
+            let return_value = update_if_var(var, Value::from(text), data, value_loc).await?;
             Ok(return_value)
         }
         Value::List(mut list) => {
             list.push(to_push.value);
 
-            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc).await?;
             Ok(return_value)
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
@@ -1776,13 +1804,13 @@ pub async fn pop<'c>(
                 .map(|c| Value::from(c.to_string()))
                 .unwrap_or(Value::None);
 
-            update_if_var(var, Value::from(text), data, value_loc)?;
+            update_if_var(var, Value::from(text), data, value_loc).await?;
             Ok(popped_text)
         }
         Value::List(mut list) => {
             let popped_value = list.pop().unwrap_or(Value::None);
 
-            update_if_var(var, Value::List(list), data, value_loc)?;
+            update_if_var(var, Value::List(list), data, value_loc).await?;
             Ok(popped_value)
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
@@ -1813,7 +1841,7 @@ pub async fn search_replace<'c>(
 
     let input = string.replace(&*to_replace, &with);
 
-    let return_value = update_if_var(var, Value::from(input), data, value_loc)?;
+    let return_value = update_if_var(var, Value::from(input), data, value_loc).await?;
     Ok(return_value)
 }
 
@@ -1866,7 +1894,7 @@ pub async fn slice_replace<'c>(
     let mut input = string.into_owned();
     input.replace_range(from..to, &with);
 
-    let return_value = update_if_var(var, Value::from(input), data, value_loc)?;
+    let return_value = update_if_var(var, Value::from(input), data, value_loc).await?;
     Ok(return_value)
 }
 
@@ -1890,13 +1918,13 @@ pub async fn reverse<'c>(
         Value::Text(text) => {
             let text = text.chars().rev().collect();
 
-            let return_value = update_if_var(var, Value::Text(text), data, value_loc)?;
+            let return_value = update_if_var(var, Value::Text(text), data, value_loc).await?;
             Ok(return_value)
         }
         Value::List(mut list) => {
             list.reverse();
 
-            let return_value = update_if_var(var, Value::List(list), data, value_loc)?;
+            let return_value = update_if_var(var, Value::List(list), data, value_loc).await?;
             Ok(return_value)
         }
         _ => unreachable!("as_raw should enforce array is List or Text"),
@@ -1914,7 +1942,9 @@ pub async fn inc<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let mut args = command.take_args();
-    let label = args.pop_front().unwrap().as_var_label(data.clone()).await?;
+    let label = args.pop_front().unwrap();
+    let label_span = label.span;
+    let label = label.as_var_label(data.clone()).await?;
 
     let amount = if let Some(value) = args.pop_front() {
         value.as_int(data.clone()).await?
@@ -1922,22 +1952,19 @@ pub async fn inc<'c>(
         1
     };
 
-    let mut var_entry = data
-        .vars
-        .take_entry(&label)
-        .map_err(|e| e.to_exec(command.span))?;
-    let mut int = var_entry
-        .value
-        .as_int(data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
-    int = int + amount;
-    var_entry.value = Value::Int(int);
-    data.vars
-        .insert_entry(label, var_entry)
-        .map_err(|e| e.to_exec(command.span))?;
+    let vars = data.vars.write().await;
 
-    Ok(Value::Int(int))
+    vars.with_mut(&label, |value| match value {
+        Value::Int(value) => {
+            *value += amount;
+            Ok(Value::Var(label.clone()))
+        }
+        _ => Err(value
+            .conversion_err_to_types(&[FslType::Int])
+            .to_exec(label_span)),
+    })
+    .await
+    .map_err(|e| e.to_exec(label_span))?
 }
 
 pub const DEC_RULES: &[ArgRule] = &[
@@ -1951,7 +1978,9 @@ pub async fn dec<'c>(
 ) -> Result<Value<'c>, ExecutionError<'c>> {
     let mut command = command;
     let mut args = command.take_args();
-    let label = args.pop_front().unwrap().as_var_label(data.clone()).await?;
+    let label = args.pop_front().unwrap();
+    let label_span = label.span;
+    let label = label.as_var_label(data.clone()).await?;
 
     let amount = if let Some(value) = args.pop_front() {
         value.as_int(data.clone()).await?
@@ -1959,22 +1988,19 @@ pub async fn dec<'c>(
         1
     };
 
-    let mut var_entry = data
-        .vars
-        .take_entry(&label)
-        .map_err(|e| e.to_exec(command.span))?;
-    let mut int = var_entry
-        .value
-        .as_int(data.clone())
-        .await
-        .map_err(|e| e.to_exec(command.span))?;
-    int = int - amount;
-    var_entry.value = Value::Int(int);
-    data.vars
-        .insert_entry(label, var_entry)
-        .map_err(|e| e.to_exec(command.span))?;
+    let vars = data.vars.write().await;
 
-    Ok(Value::Int(int))
+    vars.with_mut(&label, |value| match value {
+        Value::Int(value) => {
+            *value -= amount;
+            Ok(Value::Var(label.clone()))
+        }
+        _ => Err(value
+            .conversion_err_to_types(&[FslType::Int])
+            .to_exec(label_span)),
+    })
+    .await
+    .map_err(|e| e.to_exec(label_span))?
 }
 
 pub const CONTAINS_RULES: &[ArgRule] = &[
@@ -2500,7 +2526,7 @@ pub async fn run<'c>(
         .to_exec(command.span));
     }
 
-    data.vars.push();
+    data.vars.write().await.push();
 
     let mut aliases: HashMap<Cow<'c, str>, Cow<'c, str>> = HashMap::new();
     let parameters = parameter_labels.len();
@@ -2512,7 +2538,10 @@ pub async fn run<'c>(
         } else {
             let arg = arg.as_raw(data.clone()).await?;
             data.vars
-                .insert(&parameter, arg.value)
+                .write()
+                .await
+                .insert(&parameter, Var::Mut(arg.value))
+                .await
                 .map_err(|e| e.to_exec(command.span))?;
         }
     }
@@ -2529,7 +2558,7 @@ pub async fn run<'c>(
             break;
         }
     }
-    data.vars.pop();
+    data.vars.write().await.pop().await;
 
     data.pop_def().await;
 
@@ -3800,7 +3829,7 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn const_cannot_be_took() {
+    async fn const_cannot_be_taken() {
         let err = test_interpreter_err_type(
             r#"
                 const(MY_CONST, 42)
@@ -3808,7 +3837,7 @@ pub mod tests {
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::AttemptToTakeConst { .. })
+        assert_runtime_err!(err, RuntimeError::AttemptToOverwriteConst { .. })
     }
 
     #[tokio::test]

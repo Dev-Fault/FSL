@@ -108,13 +108,36 @@ pub struct Argument<'c> {
     pub span: Span<'c>,
 }
 
+impl<'c> Argument<'c> {
+    pub async fn mut_with<F, R>(
+        &mut self,
+        data: Arc<InterpreterData<'c>>,
+        f: F,
+    ) -> Result<R, ExecutionError<'c>>
+    where
+        F: FnOnce(&mut Value<'c>) -> Result<R, ExecutionError<'c>>,
+    {
+        if let Value::Var(label) = &self.value {
+            let vars = data.vars.read().await;
+            vars.with_mut(&label, f)
+                .await
+                .map_err(|e| e.to_exec(self.span))?
+        } else {
+            f(&mut self.value)
+        }
+    }
+}
+
 impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
     fn as_type(&self) -> FslType {
         self.value.as_type()
     }
 
-    fn as_literal_type(&self, data: Arc<InterpreterData>) -> FslType {
-        self.value.as_literal_type(data)
+    async fn as_literal_type(
+        &self,
+        data: Arc<InterpreterData<'c>>,
+    ) -> Result<FslType, RuntimeError> {
+        self.value.as_literal_type(data).await
     }
 
     fn is_type(&self, fsl_type: FslType) -> bool {
@@ -290,16 +313,6 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
 
     fn get_command_label(&self) -> Option<&str> {
         self.value.get_command_label()
-    }
-
-    fn get_var_value(
-        &self,
-        data: Arc<InterpreterData<'c>>,
-    ) -> Result<Argument<'c>, ExecutionError<'c>> {
-        let val = self.value.get_var_value(data);
-        let val = val.map(|v| Self::new(v, self.span));
-        let val = val.map_err(|e| e.to_exec(self.span));
-        val
     }
 }
 

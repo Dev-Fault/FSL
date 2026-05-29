@@ -173,9 +173,6 @@ pub enum RuntimeError {
     AttemptToOverwriteConst {
         label: String,
     },
-    AttemptToTakeConst {
-        label: String,
-    },
     InvalidVarValue {
         invalid_value: FslType,
     },
@@ -333,9 +330,6 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::VarMemoryLimitReached => "interpreter var memory limit reached",
             RuntimeError::AttemptToOverwriteConst { label } => {
                 &format!("cannot overwrite const var `{}`", label)
-            }
-            RuntimeError::AttemptToTakeConst { label } => {
-                &format!("cannot take const var `{}`", label)
             }
             RuntimeError::NotAMap { key } => {
                 &format!("cannot use key `{}` on value that is not a map", key)

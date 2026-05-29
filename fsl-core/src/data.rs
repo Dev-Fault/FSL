@@ -10,7 +10,7 @@ use std::{
 pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
 pub const DEFAULT_LOOP_LIMIT: usize = u16::MAX as usize;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     error::RuntimeError,
@@ -18,7 +18,7 @@ use crate::{
         command::UserDef,
         value::{FslValue, Value},
     },
-    vars::{DEFAULT_MEMORY_LIMIT, VarStack},
+    vars::{DEFAULT_MEMORY_LIMIT, VarStore},
 };
 
 pub type UserDefinitions<'c> = HashMap<Cow<'c, str>, Arc<UserDef<'c>>>;
@@ -138,7 +138,7 @@ pub struct InterpreterData<'c> {
     pub total_loops: Arc<AtomicUsize>,
     pub limits: Arc<InterpreterLimits>,
 
-    pub vars: VarStack<'c>,
+    pub vars: Arc<RwLock<VarStore<'c>>>,
 
     pub ctx: Mutex<ExecutionContext<'c>>,
 }
@@ -150,7 +150,7 @@ impl<'c> InterpreterData<'c> {
     }
 
     pub fn with_limits(mut self, limits: InterpreterLimits) -> Self {
-        self.vars = VarStack::new(limits.limiter.clone());
+        self.vars = Arc::new(RwLock::new(VarStore::new(limits.limiter.clone())));
         self.limits = Arc::new(limits);
         self
     }
@@ -158,7 +158,7 @@ impl<'c> InterpreterData<'c> {
     pub fn from<'new>(data: &InterpreterData<'c>) -> InterpreterData<'new> {
         InterpreterData {
             args: data.args.clone(),
-            vars: VarStack::new(data.limits.limiter.clone()),
+            vars: Arc::new(RwLock::new(VarStore::new(data.limits.limiter.clone()))),
             limits: data.limits.clone(),
             ..Default::default()
         }
@@ -171,7 +171,7 @@ impl<'c> InterpreterData<'c> {
             user_defs: self.user_defs.clone(),
             total_loops: self.total_loops.clone(),
             output: self.output.clone(),
-            vars: self.vars.clone(),
+            vars: Arc::new(RwLock::new(self.vars.read().await.clone())),
             ctx: Mutex::new(self.ctx.lock().await.clone()),
         }
         .into()
