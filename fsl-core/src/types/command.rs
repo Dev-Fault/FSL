@@ -15,7 +15,7 @@ use crate::{
     parser::Span,
     types::{
         FslType,
-        value::{FslValue, Value, ValueResult},
+        value::{FslValue, List, Map, Value, ValueResult},
     },
 };
 
@@ -197,7 +197,7 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
     fn as_list(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Vec<Value<'c>>, ExecutionError<'c>> {
+    ) -> ValueResult<'c, List<'c>, ExecutionError<'c>> {
         Box::pin(async move {
             self.value
                 .as_list(data)
@@ -206,39 +206,13 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
         })
     }
 
-    fn as_raw_list(
-        self,
-        data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Vec<Value<'c>>, ExecutionError<'c>> {
-        Box::pin(async move {
-            self.value
-                .as_raw_list(data)
-                .await
-                .map_err(|e| e.to_exec(self.span))
-        })
-    }
-
     fn as_map(
         self,
         data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, std::collections::HashMap<Cow<'c, str>, Value<'c>>, ExecutionError<'c>>
-    {
+    ) -> ValueResult<'c, Map<'c>, ExecutionError<'c>> {
         Box::pin(async move {
             self.value
                 .as_map(data)
-                .await
-                .map_err(|e| e.to_exec(self.span))
-        })
-    }
-
-    fn as_raw_map(
-        self,
-        data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, std::collections::HashMap<Cow<'c, str>, Value<'c>>, ExecutionError<'c>>
-    {
-        Box::pin(async move {
-            self.value
-                .as_raw_map(data)
                 .await
                 .map_err(|e| e.to_exec(self.span))
         })
@@ -276,31 +250,6 @@ impl<'c> FslValue<'c, Argument<'c>, ExecutionError<'c>> for Argument<'c> {
     ) -> ValueResult<'c, Argument<'c>, ExecutionError<'c>> {
         Box::pin(async move {
             let raw = self.value.as_raw(data).await;
-            let raw = raw.map(|v| Self::new(v, self.span));
-            let raw = raw.map_err(|e| e.to_exec(self.span));
-            raw
-        })
-    }
-
-    fn as_base(
-        self,
-        data: Arc<InterpreterData<'c>>,
-    ) -> ValueResult<'c, Argument<'c>, ExecutionError<'c>> {
-        Box::pin(async move {
-            let raw = self.value.as_base(data).await;
-            let raw = raw.map(|v| Self::new(v, self.span));
-            let raw = raw.map_err(|e| e.to_exec(self.span));
-            raw
-        })
-    }
-
-    fn as_base_checked(
-        self,
-        data: Arc<InterpreterData<'c>>,
-        valid_types: &'static [FslType],
-    ) -> ValueResult<'c, Argument<'c>, ExecutionError<'c>> {
-        Box::pin(async move {
-            let raw = self.value.as_base_checked(data, valid_types).await;
             let raw = raw.map(|v| Self::new(v, self.span));
             let raw = raw.map_err(|e| e.to_exec(self.span));
             raw

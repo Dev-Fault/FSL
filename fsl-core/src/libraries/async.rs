@@ -47,7 +47,7 @@ pub async fn join<'c>(
         list.push(value);
     }
 
-    Ok(Value::List(list))
+    Ok(Value::from(list))
 }
 
 pub const YIELD_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Command])];

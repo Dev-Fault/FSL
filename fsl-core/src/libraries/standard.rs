@@ -18,7 +18,7 @@ use crate::{
     types::{
         FslType,
         command::{ArgPos, ArgRule, Argument, Command, Handler},
-        value::{FslMap, FslValue, Value},
+        value::{FslMap, FslValue, List, Value},
     },
     vars::VarEntry,
 };
@@ -165,6 +165,7 @@ pub async fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, ARGS, ARGS_RULES, args);
     register_command!(interpreter, DEBUG, DEBUG_RULES, debug);
     register_command!(interpreter, SCOPE, SCOPE_RULES, scope);
+    register_command!(interpreter, NO_OP, NO_OP_RULES, no_op);
     register_command!(interpreter, EQ, EQ_RULES, eq);
     register_command!(interpreter, GT, GT_RULES, gt);
     register_command!(interpreter, GTOE, GTOE_RULES, gtoe);
@@ -745,8 +746,8 @@ pub async fn args<'c>(
     _: Command<'c>,
     data: Arc<InterpreterData<'c>>,
 ) -> Result<Value<'c>, ExecutionError<'c>> {
-    let mut input = data.args.lock().await;
-    let arg_list = Value::List(std::mem::take(&mut input));
+    let input = data.args.lock().await;
+    let arg_list = Value::from(input.clone());
     Ok(arg_list)
 }
 
@@ -784,6 +785,15 @@ pub async fn scope<'c>(
     data.vars.pop();
 
     Ok(return_value)
+}
+
+pub const NO_OP_RULES: &'static [ArgRule] = NO_ARGS;
+pub const NO_OP: &str = "no_op";
+pub async fn no_op<'c>(
+    _: Command<'c>,
+    _: Arc<InterpreterData<'c>>,
+) -> Result<Value<'c>, ExecutionError<'c>> {
+    Ok(Value::None)
 }
 
 pub const EQ_RULES: &'static [ArgRule] = &[
@@ -1210,7 +1220,7 @@ pub async fn for_each<'c>(
     let array_span = array.span;
     let var = take_if_var(&mut array.value, data.clone(), array_span).await?;
     let array = array
-        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
+        .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     let label = args.pop_front().unwrap();
@@ -1700,7 +1710,7 @@ pub async fn remove<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
-    let array = array.as_base_checked(data.clone(), COLLECTION).await?;
+    let array = array.as_raw_checked(data.clone(), COLLECTION).await?;
 
     match array.value {
         Value::Text(text) => {
@@ -1768,7 +1778,7 @@ pub async fn swap<'c>(
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
-        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
+        .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -1834,7 +1844,7 @@ pub async fn replace<'c>(
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
-        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
+        .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -1911,7 +1921,7 @@ pub async fn insert<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
-    let array = array.as_base_checked(data.clone(), COLLECTION).await?;
+    let array = array.as_raw_checked(data.clone(), COLLECTION).await?;
 
     match array.value {
         Value::Text(text) => {
@@ -1983,7 +1993,7 @@ pub async fn push<'c>(
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
 
     let array = array
-        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
+        .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -2019,7 +2029,7 @@ pub async fn pop<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
     let array = array
-        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
+        .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -2137,7 +2147,7 @@ pub async fn reverse<'c>(
     let value_loc = array.span;
     let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
     let array = array
-        .as_base_checked(data.clone(), &[FslType::List, FslType::Text])
+        .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
@@ -2259,7 +2269,7 @@ pub async fn contains<'c>(
             Ok(Value::Bool(text.contains(&**item)))
         }
         Value::List(list) => {
-            let iter = tokio_stream::iter(list.into_iter());
+            let iter = tokio_stream::iter(list.take());
             let list = iter
                 .then(|v| v.as_raw_checked(data.clone(), NOT_NONE))
                 .collect::<Result<Vec<_>, _>>()
@@ -2525,7 +2535,7 @@ pub async fn split<'c>(
             list.push(Value::from(split.to_string()));
         }
     }
-    Ok(Value::List(list))
+    Ok(Value::List(List::Resolved(list)))
 }
 
 pub const RANDOM_RANGE_RULES: &[ArgRule] = &[

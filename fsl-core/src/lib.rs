@@ -403,7 +403,7 @@ impl FslInterpreter {
                         let parsed_arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
                         list.push(parsed_arg.value);
                     }
-                    Ok(Argument::new(Value::List(list), span))
+                    Ok(Argument::new(Value::from(list), span))
                 }
                 ArgKind::Map(map) => {
                     let span = Span::from(&map);
@@ -418,7 +418,7 @@ impl FslInterpreter {
                         );
                     }
 
-                    Ok(Argument::new(Value::Map(value_map), span))
+                    Ok(Argument::new(Value::from(value_map), span))
                 }
                 ArgKind::Expression(expression) => {
                     let span = Span::from(&expression);
