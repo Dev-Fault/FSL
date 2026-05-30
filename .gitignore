@@ -1,2 +1,2 @@
 /target
-fsl-cli/test.fsl
+fsl-cli/*.fsl
