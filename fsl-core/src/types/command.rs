@@ -12,7 +12,7 @@ use crate::{
         ExpectedArgs::{self},
         RuntimeError, ToExecutionError,
     },
-    parser::Span,
+    span::Span,
     types::{
         FslType,
         value::{FslValue, List, Map, Value, ValueResult},

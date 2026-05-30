@@ -8,8 +8,9 @@ use std::{
 
 use crate::{
     InterpreterData,
-    error::{ExecutionError, RuntimeError, Span, ToExecutionError},
+    error::{ExecutionError, RuntimeError, ToExecutionError},
     libraries::standard::{LIST_KEY, MAP_KEY},
+    span::Span,
     standard::NUMBER,
     types::{FslType, command::Command},
 };
@@ -352,7 +353,7 @@ pub enum ValueError<'c> {
 }
 
 impl<'c> ToExecutionError<'c> for ValueError<'c> {
-    fn to_exec(self, span: crate::parser::Span<'c>) -> ExecutionError<'c> {
+    fn to_exec(self, span: Span<'c>) -> ExecutionError<'c> {
         match self {
             ValueError::Runtime(runtime_error) => runtime_error.to_exec(span),
             ValueError::Execution(execution_error) => execution_error,

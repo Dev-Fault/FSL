@@ -10,8 +10,9 @@ use tokio_stream::StreamExt;
 
 use crate::{
     FslInterpreter, InterpreterData,
-    error::{ExecutionError, ExpectedArgs, RuntimeError, Span, ToExecutionError},
+    error::{ExecutionError, ExpectedArgs, RuntimeError, ToExecutionError},
     register_command,
+    span::Span,
     types::{
         FslType,
         command::{ArgPos, ArgRule, Argument, Command, Handler},

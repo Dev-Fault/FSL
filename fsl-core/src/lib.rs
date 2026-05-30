@@ -18,7 +18,8 @@ use crate::{
         io::register_io,
         standard::{self, *},
     },
-    parser::{Arg, ArgKind, Expression, Parser, Span},
+    parser::{Arg, ArgKind, Expression, Parser},
+    span::Span,
     types::{
         FslType,
         command::{ArgRule, Argument, Command, CommandDef, Handler, UserDef},
@@ -31,6 +32,7 @@ pub mod error;
 mod lexer;
 pub mod libraries;
 mod parser;
+pub mod span;
 pub mod types;
 mod vars;
 pub type CommandDefinitions = HashMap<&'static str, CommandDef>;

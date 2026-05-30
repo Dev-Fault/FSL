@@ -2,9 +2,7 @@ use std::fmt::Debug;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::{parser::ParseError, types::FslType};
-
-pub use crate::parser::Span;
+use crate::{parser::ParseError, span::Span, types::FslType};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorContext<T> {
