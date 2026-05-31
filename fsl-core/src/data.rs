@@ -15,6 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     error::RuntimeError,
     source_str::SourceStr,
+    span::Span,
     types::{
         command::UserDef,
         value::{FslValue, Value},
@@ -139,7 +140,7 @@ pub struct InterpreterData {
     pub args: Arc<Mutex<Vec<Value>>>,
     pub output: Arc<Mutex<String>>,
     pub total_loops: Arc<AtomicUsize>,
-    pub limits: Arc<InterpreterLimits>,
+    pub limits: InterpreterLimits,
 
     pub vars: Arc<RwLock<VarStore>>,
 
@@ -155,6 +156,10 @@ impl InterpreterData {
         SourceStr::Borrowed(self.source.clone())
     }
 
+    pub fn source_span(&self, span: Span) -> SourceStr {
+        SourceStr::from_span(span, self)
+    }
+
     pub fn with_args(mut self, args: Vec<Value>) -> Self {
         self.args = Arc::new(Mutex::new(args));
         self
@@ -162,7 +167,7 @@ impl InterpreterData {
 
     pub fn with_limits(mut self, limits: InterpreterLimits) -> Self {
         self.vars = Arc::new(RwLock::new(VarStore::new(limits.limiter.clone())));
-        self.limits = Arc::new(limits);
+        self.limits = limits;
         self
     }
 

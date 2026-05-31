@@ -2,7 +2,7 @@ use std::{fmt::Display, ops::Deref};
 
 use bytes::Bytes;
 
-use crate::{lexer::Token, span::Span};
+use crate::{data::InterpreterData, lexer::Token, span::Span};
 
 #[derive(Debug, Clone)]
 pub enum SourceStr {
@@ -16,8 +16,8 @@ impl SourceStr {
         Self::Borrowed(source.slice(Span::from(&token)))
     }
 
-    pub fn from_span<'c>(span: Span, source: Bytes) -> Self {
-        Self::Borrowed(source.slice(span))
+    pub fn from_span<'c>(span: Span, data: &InterpreterData) -> Self {
+        Self::Borrowed(data.source.slice(span))
     }
 }
 

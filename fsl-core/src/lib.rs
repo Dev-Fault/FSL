@@ -386,7 +386,7 @@ impl FslInterpreter {
 
             if let Some(def) = user_def {
                 let mut command = Command::new(
-                    SourceStr::from_span(Span::from(&expression), data.source.clone()),
+                    SourceStr::from_span(Span::from(&expression), &data),
                     RUN_RULES,
                     Handler::new(|command, data| standard::run(command, data).boxed()),
                     Span::from(&expression),
@@ -466,7 +466,7 @@ impl FslInterpreter {
                     _ => unreachable!("parser should validate keywords"),
                 },
                 ArgKind::Identifier(_) => Ok(Argument::new(
-                    Value::Var(SourceStr::from_span(span, data.source.clone())),
+                    Value::Var(SourceStr::from_span(span, &data)),
                     span,
                 )),
                 ArgKind::List(list_arg) => {
