@@ -1,7 +1,5 @@
 use std::{pin::Pin, sync::Arc};
 
-use bytes::Bytes;
-
 use crate::{
     InterpreterData,
     error::{ExecutionError, RuntimeError, ToExecutionError},
@@ -36,9 +34,9 @@ pub enum ValueError {
 }
 
 impl ToExecutionError for ValueError {
-    fn to_exec(self, span: Span, source: Bytes) -> ExecutionError {
+    fn to_exec(self, span: Span, data: Arc<InterpreterData>) -> ExecutionError {
         match self {
-            ValueError::Runtime(runtime_error) => runtime_error.to_exec(span, source),
+            ValueError::Runtime(runtime_error) => runtime_error.to_exec(span, data),
             ValueError::Execution(execution_error) => execution_error,
         }
     }

@@ -116,7 +116,7 @@ impl Argument {
             let vars = data.vars.read().await;
             vars.with_mut(&label, f)
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))?
+                .map_err(|e| e.to_exec(self.span, data.clone()))?
         } else {
             f(&mut self.value)
         }
@@ -143,7 +143,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
     fn equal(&self, other: &Argument, data: Arc<InterpreterData>) -> Result<bool, ExecutionError> {
         self.value
             .equal(&other.value, data.clone())
-            .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+            .map_err(|e| e.to_exec(self.span, data.clone()))
     }
 
     fn soft_equal(
@@ -153,7 +153,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
     ) -> Result<bool, ExecutionError> {
         self.value
             .soft_equal(&other.value, data.clone())
-            .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+            .map_err(|e| e.to_exec(self.span, data.clone()))
     }
 
     fn as_int(self, data: Arc<InterpreterData>) -> ValueResult<i64, ExecutionError> {
@@ -161,7 +161,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_int(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -170,7 +170,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_usize(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -179,7 +179,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_float(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -188,7 +188,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_bool(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -197,7 +197,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_var_label(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -206,7 +206,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_text(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -215,7 +215,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_list(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -224,16 +224,16 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_map(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
     fn as_number(self, data: Arc<InterpreterData>) -> ValueResult<Argument, ExecutionError> {
         Box::pin(async move {
             let number = self.value.as_number(data.clone()).await;
-            // dbg!(self.span.clone());
-            let number = number.map(|v| Self::new(v, self.span.clone()));
-            let number = number.map_err(|e| e.to_exec(self.span.clone(), data.source.clone()));
+            // dbg!(self.span);
+            let number = number.map(|v| Self::new(v, self.span));
+            let number = number.map_err(|e| e.to_exec(self.span, data.clone()));
             number
         })
     }
@@ -245,8 +245,8 @@ impl FslValue<Argument, ExecutionError> for Argument {
     ) -> ValueResult<Argument, ExecutionError> {
         Box::pin(async move {
             let raw = self.value.as_raw_checked(data.clone(), valid_types).await;
-            let raw = raw.map(|v| Self::new(v, self.span.clone()));
-            let raw = raw.map_err(|e| e.to_exec(self.span.clone(), data.source.clone()));
+            let raw = raw.map(|v| Self::new(v, self.span));
+            let raw = raw.map_err(|e| e.to_exec(self.span, data.clone()));
             raw
         })
     }
@@ -254,8 +254,8 @@ impl FslValue<Argument, ExecutionError> for Argument {
     fn as_raw(self, data: Arc<InterpreterData>) -> ValueResult<Argument, ExecutionError> {
         Box::pin(async move {
             let raw = self.value.as_raw(data.clone()).await;
-            let raw = raw.map(|v| Self::new(v, self.span.clone()));
-            let raw = raw.map_err(|e| e.to_exec(self.span.clone(), data.source.clone()));
+            let raw = raw.map(|v| Self::new(v, self.span));
+            let raw = raw.map_err(|e| e.to_exec(self.span, data.clone()));
             raw
         })
     }
@@ -265,7 +265,7 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_list_key(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
@@ -274,20 +274,20 @@ impl FslValue<Argument, ExecutionError> for Argument {
             self.value
                 .as_map_key(data.clone())
                 .await
-                .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+                .map_err(|e| e.to_exec(self.span, data.clone()))
         })
     }
 
     fn as_command(self, data: Arc<InterpreterData>) -> Result<Command, ExecutionError> {
         self.value
             .as_command(data.clone())
-            .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+            .map_err(|e| e.to_exec(self.span, data.clone()))
     }
 
     fn get_var_label(&self, data: Arc<InterpreterData>) -> Result<SourceStr, ExecutionError> {
         self.value
             .get_var_label(data.clone())
-            .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+            .map_err(|e| e.to_exec(self.span, data.clone()))
     }
 
     fn get_command_label(&self) -> Option<&str> {
@@ -389,7 +389,7 @@ impl Command {
                     fsl_type,
                     expected: arg_rule.valid_types,
                 }
-                .to_exec(arg.span.clone(), data.source.clone()));
+                .to_exec(arg.span, data.clone()));
             }
         }
         Ok(())
@@ -415,7 +415,7 @@ impl Command {
                                 command_label: self.get_label().to_string(),
                                 arg_number: *i,
                             }
-                            .to_exec(self.span.clone(), data.source.clone()));
+                            .to_exec(self.span, data.clone()));
                         }
                     }
                 }
@@ -431,14 +431,14 @@ impl Command {
                             expected: ExpectedArgs::AtLeast(range.start),
                             got: self.args.len(),
                         }
-                        .to_exec(self.span.clone(), data.source.clone()));
+                        .to_exec(self.span, data.clone()));
                     } else if self.args.len() > range.end {
                         return Err(RuntimeError::WrongArgCount {
                             command_label: self.get_label().to_string(),
                             expected: ExpectedArgs::AtMost(range.end),
                             got: self.args.len(),
                         }
-                        .to_exec(self.span.clone(), data.source.clone()));
+                        .to_exec(self.span, data.clone()));
                     } else {
                         self.validate_arg_range(arg_rule, range, data.clone())?;
                     }
@@ -450,7 +450,7 @@ impl Command {
                             expected: ExpectedArgs::None,
                             got: self.args.len(),
                         }
-                        .to_exec(self.span.clone(), data.source.clone()));
+                        .to_exec(self.span, data.clone()));
                     }
                 }
                 ArgPos::AnyFrom(i) => {
@@ -478,7 +478,7 @@ impl Command {
                 expected: ExpectedArgs::Exactly(max_args),
                 got: self.args.len(),
             }
-            .to_exec(self.span.clone(), data.source.clone()));
+            .to_exec(self.span, data.clone()));
         }
         Ok(())
     }
@@ -524,7 +524,7 @@ impl Clone for Command {
             handler: self.handler.clone(),
             label: self.label.clone(),
             arg_rules: self.arg_rules,
-            span: self.span.clone(),
+            span: self.span,
         }
     }
 }

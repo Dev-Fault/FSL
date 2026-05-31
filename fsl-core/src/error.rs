@@ -1,9 +1,8 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
-use bytes::Bytes;
 use unicode_width::UnicodeWidthStr;
 
-use crate::{parser::ParseError, span::Span, types::FslType};
+use crate::{data::InterpreterData, parser::ParseError, span::Span, types::FslType};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorContext<T> {
@@ -70,19 +69,25 @@ impl std::fmt::Display for InterpreterError {
 }
 impl std::error::Error for InterpreterError {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ExecutionError {
     pub command_error: RuntimeError,
     pub span: Span,
-    pub source: Bytes,
+    pub data: Arc<InterpreterData>,
+}
+
+impl PartialEq for ExecutionError {
+    fn eq(&self, other: &Self) -> bool {
+        self.command_error == other.command_error && self.span == other.span
+    }
 }
 
 impl ExecutionError {
-    pub fn new(command_error: RuntimeError, span: Span, source: Bytes) -> Self {
+    pub fn new(command_error: RuntimeError, span: Span, data: Arc<InterpreterData>) -> Self {
         Self {
             command_error,
             span,
-            source,
+            data,
         }
     }
     pub fn exited_program(&self) -> bool {
@@ -101,7 +106,7 @@ fn normalize_tab(c: char) -> String {
 
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let source = unsafe { std::str::from_utf8_unchecked(&self.source) };
+        let source = &self.data.source_str();
         let line_header = format!("{}: ", self.span.line_number(source));
 
         let upto_line_position = &self.span.line(source)[..self.span.line_location(source)];
@@ -351,15 +356,15 @@ impl std::fmt::Display for RuntimeError {
 }
 
 pub trait ToExecutionError {
-    fn to_exec(self, span: Span, source: Bytes) -> ExecutionError;
+    fn to_exec(self, span: Span, data: Arc<InterpreterData>) -> ExecutionError;
 }
 
 impl ToExecutionError for RuntimeError {
-    fn to_exec(self, span: Span, source: Bytes) -> ExecutionError {
+    fn to_exec(self, span: Span, data: Arc<InterpreterData>) -> ExecutionError {
         ExecutionError {
             command_error: self,
             span,
-            source,
+            data,
         }
     }
 }

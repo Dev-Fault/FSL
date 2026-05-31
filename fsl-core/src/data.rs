@@ -133,9 +133,10 @@ pub struct ExecutionContext {
 
 #[derive(Debug, Default)]
 pub struct InterpreterData {
-    pub source: Bytes,
+    pub(crate) source: Bytes,
+    pub(crate) user_defs: Arc<Mutex<UserDefinitions>>,
+
     pub args: Arc<Mutex<Vec<Value>>>,
-    pub user_defs: Arc<Mutex<UserDefinitions>>,
     pub output: Arc<Mutex<String>>,
     pub total_loops: Arc<AtomicUsize>,
     pub limits: Arc<InterpreterLimits>,

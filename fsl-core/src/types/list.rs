@@ -72,21 +72,23 @@ impl List {
         span: Span,
     ) -> Result<Value, ExecutionError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.clone())),
             [i] => {
                 let result = self.get(*i).cloned();
                 match result {
                     Some(value) => Ok(value),
                     None => Err(RuntimeError::IndexOutOfBounds)
-                        .map_err(|e| e.to_exec(span, data.source.clone())),
+                        .map_err(|e| e.to_exec(span, data.clone())),
                 }
             }
             [i, rest @ ..] => match self.get(*i) {
                 Some(Value::List(inner_list)) => inner_list.get_nested(rest, data, span),
-                Some(_) => Err(RuntimeError::NotIndexable)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
-                None => Err(RuntimeError::IndexOutOfBounds)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
+                Some(_) => {
+                    Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span, data.clone()))
+                }
+                None => {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
+                }
             },
         }
     }
@@ -98,18 +100,21 @@ impl List {
         span: Span,
     ) -> Result<&mut Value, ExecutionError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.clone())),
             [i] => match self.get_mut(*i) {
                 Some(i) => Ok(i),
-                None => Err(RuntimeError::IndexOutOfBounds)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
+                None => {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
+                }
             },
             [i, rest @ ..] => match self.get_mut(*i) {
                 Some(Value::List(inner_list)) => inner_list.get_nested_mut(rest, data, span),
-                Some(_) => Err(RuntimeError::NotIndexable)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
-                None => Err(RuntimeError::IndexOutOfBounds)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
+                Some(_) => {
+                    Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span, data.clone()))
+                }
+                None => {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
+                }
             },
         }
     }
@@ -121,18 +126,21 @@ impl List {
         span: Span,
     ) -> Result<Value, ExecutionError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.clone())),
             [i] => match self.get(*i) {
                 Some(_) => Ok(self.remove(*i)),
-                None => Err(RuntimeError::IndexOutOfBounds)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
+                None => {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
+                }
             },
             [i, rest @ ..] => match self.get_mut(*i) {
                 Some(Value::List(inner_list)) => inner_list.remove_nested(rest, data, span),
-                Some(_) => Err(RuntimeError::NotIndexable)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
-                None => Err(RuntimeError::IndexOutOfBounds)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
+                Some(_) => {
+                    Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span, data.clone()))
+                }
+                None => {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
+                }
             },
         }
     }
@@ -145,24 +153,25 @@ impl List {
         span: Span,
     ) -> Result<(), ExecutionError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.clone())),
             [i] => {
                 if *i <= self.len() {
                     self.insert(*i, value_to_insert);
                     Ok(())
                 } else {
-                    Err(RuntimeError::IndexOutOfBounds)
-                        .map_err(|e| e.to_exec(span, data.source.clone()))
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
                 }
             }
             [i, rest @ ..] => match self.get_mut(*i) {
                 Some(Value::List(inner_list)) => {
                     inner_list.insert_nested(rest, value_to_insert, data, span)
                 }
-                Some(_) => Err(RuntimeError::NotIndexable)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
-                None => Err(RuntimeError::IndexOutOfBounds)
-                    .map_err(|e| e.to_exec(span, data.source.clone())),
+                Some(_) => {
+                    Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span, data.clone()))
+                }
+                None => {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
+                }
             },
         }
     }

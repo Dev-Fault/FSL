@@ -159,8 +159,7 @@ impl FslInterpreter {
         data: InterpreterData,
     ) -> Result<String, InterpreterError> {
         let mut data = data;
-        // TODO remove clone once lifetime is gone
-        data.set_source(input.to_string());
+        data.set_source(input);
         let data = Arc::new(data);
         Self::execute_expressions(
             data.clone(),
@@ -177,14 +176,14 @@ impl FslInterpreter {
         data: InterpreterData,
     ) -> Result<String, InterpreterError> {
         let mut data = data;
-        data.set_source(input.to_string());
+        data.set_source(input);
 
-        let mut output = String::with_capacity(input.len());
+        let mut output = String::with_capacity(data.source_str().len());
         let mut code_stack: Vec<String> = Vec::new();
 
         let mut code_depth: i16 = 0;
 
-        for c in input.chars() {
+        for c in data.source_str().chars() {
             if c == '{' {
                 code_stack.push(String::new());
                 code_depth += 1;
@@ -287,7 +286,7 @@ impl FslInterpreter {
                             command_label: expression.name.to_string(),
                             arg_number: 0,
                         })
-                        .to_exec(Span::from(expression), data.source.clone())
+                        .to_exec(Span::from(expression), data.clone())
                         .into());
                     }
                 };
@@ -410,7 +409,7 @@ impl FslInterpreter {
                 return Err(RuntimeError::NonExistantCommand {
                     label: expression.name.to_string(),
                 }
-                .to_exec(Span::from(&expression), data.source.clone())
+                .to_exec(Span::from(&expression), data.clone())
                 .into());
             }
         }
@@ -432,7 +431,7 @@ impl FslInterpreter {
                                 value: number.to_string(),
                                 valid_types: vec![FslType::Float],
                             }
-                            .to_exec(Span::from(&arg), data.source.clone())
+                            .to_exec(Span::from(&arg), data.clone())
                             .into()),
                         }
                     } else {
@@ -446,7 +445,7 @@ impl FslInterpreter {
                                     value: number.to_string(),
                                     valid_types: vec![FslType::Int, FslType::Int],
                                 }
-                                .to_exec(span, data.source.clone())
+                                .to_exec(span, data.clone())
                                 .into())
                             }
                         }

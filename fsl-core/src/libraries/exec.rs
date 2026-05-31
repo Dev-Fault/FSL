@@ -26,7 +26,7 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut command = command;
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
-    let arg_span = arg.span.clone();
+    let arg_span = arg.span;
     let program = arg.as_text(data.clone()).await?;
     let args = tokio_stream::iter(args.into_iter());
     let args: Vec<SourceStr> = args
@@ -42,13 +42,14 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             RuntimeError::FailedToRun {
                 process: program.to_string(),
             }
-            .to_exec(arg_span, data.source.clone())
+            .to_exec(arg_span, data.clone())
         })?;
 
     if !output.status.success() {
         let output = String::from_utf8_lossy(&output.stderr);
-        return Err(RuntimeError::OutputFailure(output.trim().into())
-            .to_exec(arg_span, data.source.clone()));
+        return Err(
+            RuntimeError::OutputFailure(output.trim().into()).to_exec(arg_span, data.clone())
+        );
     }
 
     let output = output.stdout;
@@ -74,7 +75,7 @@ pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, E
             RuntimeError::FailedToRun {
                 process: "sh".into(),
             }
-            .to_exec(command.span, data.source.clone())
+            .to_exec(command.span, data.clone())
         })?;
 
     if !output.status.success() {

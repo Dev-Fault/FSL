@@ -47,7 +47,7 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
                     "Failed to join threads:\n {}",
                     e.to_string()
                 ))
-                .to_exec(command.span, data.source.clone()));
+                .to_exec(command.span, data.clone()));
             }
         }
     }

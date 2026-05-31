@@ -62,7 +62,7 @@ impl Map {
         span: Span,
     ) -> Result<Value, ExecutionError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
             [key] => match self.get(&*key) {
                 Some(_) => {
                     let return_value = self.insert(key.clone(), value);
@@ -71,18 +71,18 @@ impl Map {
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
             },
             [key, rest @ ..] => match self.get_mut(&*key) {
                 Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
             },
         }
     }
@@ -94,7 +94,7 @@ impl Map {
         span: Span,
     ) -> Result<Value, ExecutionError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
             [key] => {
                 let return_value = self.remove(&*key);
                 Ok(return_value.unwrap_or(Value::None))
@@ -104,11 +104,11 @@ impl Map {
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
             },
         }
     }
@@ -121,7 +121,7 @@ impl Map {
         span: Span,
     ) -> Result<Value, ExecutionError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
             [key] => {
                 let return_value = self.insert(key.clone(), value);
                 Ok(return_value.unwrap_or(Value::None))
@@ -131,11 +131,11 @@ impl Map {
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
             },
         }
     }
@@ -147,24 +147,24 @@ impl Map {
         span: Span,
     ) -> Result<Value, ExecutionError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.source.clone())),
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
             [key] => match self.get(&*key).cloned() {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
             },
             [key, rest @ ..] => match self.get(&*key) {
                 Some(Value::Map(inner_map)) => inner_map.get_nested(rest, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.source.clone())),
+                .to_exec(span, data.clone())),
             },
         }
     }
