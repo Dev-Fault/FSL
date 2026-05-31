@@ -1,10 +1,11 @@
-use std::{borrow::Cow, collections::HashMap, ops::Deref, sync::Arc};
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 
 use tokio::sync::RwLock;
 
 use crate::{
     data::Limiter,
     error::RuntimeError,
+    source_str::SourceStr,
     types::{
         FslType,
         value::{FslValue, Value},
@@ -15,20 +16,20 @@ const MEGABYTE: usize = 1024 * 1024;
 pub const DEFAULT_MEMORY_LIMIT: usize = 5 * MEGABYTE;
 
 #[derive(Debug, Clone)]
-pub enum Var<'c> {
-    Const(Value<'c>),
-    Mut(Value<'c>),
+pub enum Var {
+    Const(Value),
+    Mut(Value),
 }
 
-impl<'c> Var<'c> {
-    pub fn take(self) -> Value<'c> {
+impl Var {
+    pub fn take(self) -> Value {
         match self {
             Var::Const(_) => panic!("cannot take const var"),
             Var::Mut(value) => value,
         }
     }
 
-    pub fn inner_mut(&mut self, label: &str) -> Result<&mut Value<'c>, RuntimeError> {
+    pub fn inner_mut(&mut self, label: &str) -> Result<&mut Value, RuntimeError> {
         match self {
             Var::Const(_) => Err(RuntimeError::AttemptToOverwriteConst {
                 label: label.to_string(),
@@ -52,8 +53,8 @@ impl<'c> Var<'c> {
     }
 }
 
-impl<'c> Deref for Var<'c> {
-    type Target = Value<'c>;
+impl Deref for Var {
+    type Target = Value;
 
     fn deref(&self) -> &Self::Target {
         match self {
@@ -63,21 +64,21 @@ impl<'c> Deref for Var<'c> {
     }
 }
 
-impl<'c> Default for Var<'c> {
+impl Default for Var {
     fn default() -> Self {
         Self::Mut(Value::None)
     }
 }
 
-type VarMap<'c> = HashMap<Cow<'c, str>, Var<'c>>;
+type VarMap = HashMap<SourceStr, Var>;
 
 #[derive(Debug, Clone)]
-pub struct VarStore<'c> {
-    data: Vec<Arc<RwLock<VarMap<'c>>>>,
+pub struct VarStore {
+    data: Vec<Arc<RwLock<VarMap>>>,
     limiter: Arc<Limiter>,
 }
 
-impl<'c> Default for VarStore<'c> {
+impl Default for VarStore {
     fn default() -> Self {
         Self {
             data: vec![Arc::new(RwLock::new(VarMap::new()))],
@@ -86,7 +87,7 @@ impl<'c> Default for VarStore<'c> {
     }
 }
 
-impl<'c> VarStore<'c> {
+impl VarStore {
     pub fn new(limiter: Arc<Limiter>) -> Self {
         Self {
             limiter,
@@ -107,9 +108,9 @@ impl<'c> VarStore<'c> {
         self.data.pop();
     }
 
-    pub async fn with_mut<F, R>(&self, label: &str, f: F) -> Result<R, RuntimeError>
+    pub async fn with_mut<F, R>(&self, label: &SourceStr, f: F) -> Result<R, RuntimeError>
     where
-        F: FnOnce(&mut Value<'c>) -> R,
+        F: FnOnce(&mut Value) -> R,
     {
         for map in self.data.iter().rev() {
             let mut map = map.write().await;
@@ -123,7 +124,7 @@ impl<'c> VarStore<'c> {
         })
     }
 
-    pub async fn get_clone(&self, label: &str) -> Result<Value<'c>, RuntimeError> {
+    pub async fn get_clone(&self, label: &SourceStr) -> Result<Value, RuntimeError> {
         for map in self.data.iter().rev() {
             if let Some(var) = map.read().await.get(label) {
                 return Ok(var.deref().clone());
@@ -134,7 +135,7 @@ impl<'c> VarStore<'c> {
         })
     }
 
-    pub async fn get_type(&self, label: &str) -> Result<FslType, RuntimeError> {
+    pub async fn get_type(&self, label: &SourceStr) -> Result<FslType, RuntimeError> {
         for map in self.data.iter().rev() {
             if let Some(var) = map.read().await.get(label) {
                 return Ok(var.type_of());
@@ -145,11 +146,7 @@ impl<'c> VarStore<'c> {
         })
     }
 
-    pub async fn store(
-        &mut self,
-        label: &Cow<'c, str>,
-        new_var: Var<'c>,
-    ) -> Result<(), RuntimeError> {
+    pub async fn store(&mut self, label: &SourceStr, new_var: Var) -> Result<(), RuntimeError> {
         for map in self.data.iter_mut().rev() {
             if let Some(var) = map.write().await.get_mut(label) {
                 if var.is_const() {
@@ -174,7 +171,7 @@ impl<'c> VarStore<'c> {
         Ok(())
     }
 
-    pub async fn insert(&mut self, label: &Cow<'c, str>, var: Var<'c>) -> Result<(), RuntimeError> {
+    pub async fn insert(&mut self, label: &SourceStr, var: Var) -> Result<(), RuntimeError> {
         let mut map = self.data.last_mut().unwrap().write().await;
         if let Some(Var::Const(_)) = map.get(label) {
             Err(RuntimeError::AttemptToOverwriteConst {
@@ -192,8 +189,8 @@ impl<'c> VarStore<'c> {
 
     pub async fn replace(
         &mut self,
-        label: &Cow<'c, str>,
-        replacement: Value<'c>,
+        label: &SourceStr,
+        replacement: Value,
     ) -> Result<(), RuntimeError> {
         for map in self.data.iter_mut().rev() {
             let mut map = map.write().await;
@@ -218,10 +215,7 @@ impl<'c> VarStore<'c> {
         })
     }
 
-    pub async fn remove(
-        &mut self,
-        label: &Cow<'c, str>,
-    ) -> Result<Option<Value<'c>>, RuntimeError> {
+    pub async fn remove(&mut self, label: &SourceStr) -> Result<Option<Value>, RuntimeError> {
         for map in self.data.iter_mut().rev() {
             let mut map = map.write().await;
             if let Some(Var::Const(_)) = map.get(label) {
@@ -238,7 +232,7 @@ impl<'c> VarStore<'c> {
         Ok(None)
     }
 
-    pub async fn take(&mut self, label: &Cow<'c, str>) -> Result<Value<'c>, RuntimeError> {
+    pub async fn take(&mut self, label: &SourceStr) -> Result<Value, RuntimeError> {
         for map in self.data.iter_mut().rev() {
             let mut map = map.write().await;
             if let Some(Var::Const(_)) = map.get(label) {

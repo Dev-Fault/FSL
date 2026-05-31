@@ -151,6 +151,7 @@ name = "fsl-core"
 version = "0.1.0"
 dependencies = [
  "async-recursion",
+ "bytes",
  "futures",
  "rand",
  "tokio",

@@ -1,53 +1,18 @@
+use std::ops::{Range, RangeBounds};
+
 use crate::{
     lexer::Token,
     parser::{Arg, Expression, List, Map},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Span<'c> {
-    pub start: Token<'c>,
-    pub end: Token<'c>,
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
 }
 
-impl<'c> Span<'c> {
-    pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
-        Self { start, end }
-    }
-
-    pub fn as_str(&self) -> &'c str {
-        Token::span(self.start, self.end)
-    }
-}
-
-impl<'c> From<Token<'c>> for Span<'c> {
-    fn from(value: Token<'c>) -> Self {
-        Self {
-            start: value,
-            end: value,
-        }
-    }
-}
-
-impl<'c> From<Arg<'c>> for Span<'c> {
-    fn from(value: Arg<'c>) -> Self {
-        Self {
-            start: value.token,
-            end: value.token,
-        }
-    }
-}
-
-impl<'c> From<&Expression<'c>> for Span<'c> {
-    fn from(value: &Expression<'c>) -> Self {
-        Self {
-            start: value.name,
-            end: value.end,
-        }
-    }
-}
-
-impl<'c> From<&List<'c>> for Span<'c> {
-    fn from(value: &List<'c>) -> Self {
+impl From<Range<usize>> for Span {
+    fn from(value: Range<usize>) -> Self {
         Self {
             start: value.start,
             end: value.end,
@@ -55,11 +20,103 @@ impl<'c> From<&List<'c>> for Span<'c> {
     }
 }
 
-impl<'c> From<&Map<'c>> for Span<'c> {
-    fn from(value: &Map<'c>) -> Self {
+impl RangeBounds<usize> for Span {
+    fn start_bound(&self) -> std::ops::Bound<&usize> {
+        std::ops::Bound::Included(&self.start)
+    }
+
+    fn end_bound(&self) -> std::ops::Bound<&usize> {
+        std::ops::Bound::Excluded(&self.end)
+    }
+}
+
+impl Into<Range<usize>> for Span {
+    fn into(self) -> Range<usize> {
+        Range {
+            start: self.start,
+            end: self.end,
+        }
+    }
+}
+
+impl Span {
+    pub fn new<'c>(start: Token<'c>, end: Token<'c>) -> Self {
         Self {
-            start: value.start,
-            end: value.end,
+            start: start.location,
+            end: end.location + end.len(),
+        }
+    }
+
+    fn line_start(&self, source: &str) -> usize {
+        source[..self.start].rfind('\n').map(|i| i + 1).unwrap_or(0)
+    }
+
+    fn line_end(&self, source: &str) -> usize {
+        source[self.start..]
+            .find('\n')
+            .map(|i| self.start + i)
+            .unwrap_or(source.len())
+    }
+
+    pub fn line<'a>(&self, source: &'a str) -> &'a str {
+        let start = self.line_start(source);
+        let end = self.line_end(source);
+        &source[start..end]
+    }
+
+    pub fn line_location(&self, source: &str) -> usize {
+        let start = self.line_start(source);
+        self.start - start
+    }
+
+    pub fn line_number(&self, source: &str) -> usize {
+        let slice = &source[..self.start];
+        let line = slice.lines().count().max(1);
+        line
+    }
+}
+
+impl<'c> From<&Expression<'c>> for Span {
+    fn from(expression: &Expression<'c>) -> Self {
+        Self {
+            start: expression.name.location,
+            end: expression.end.location + expression.end.len(),
+        }
+    }
+}
+
+impl<'c> From<&Arg<'c>> for Span {
+    fn from(arg: &Arg<'c>) -> Self {
+        Self {
+            start: arg.token.location,
+            end: arg.token.location + arg.token.len(),
+        }
+    }
+}
+
+impl<'c> From<&Token<'c>> for Span {
+    fn from(token: &Token<'c>) -> Self {
+        Self {
+            start: token.location,
+            end: token.location + token.len(),
+        }
+    }
+}
+
+impl<'c> From<&List<'c>> for Span {
+    fn from(list: &List<'c>) -> Self {
+        Self {
+            start: list.start.location,
+            end: list.end.location + list.end.len(),
+        }
+    }
+}
+
+impl<'c> From<&Map<'c>> for Span {
+    fn from(map: &Map<'c>) -> Self {
+        Self {
+            start: map.start.location,
+            end: map.end.location + map.end.len(),
         }
     }
 }

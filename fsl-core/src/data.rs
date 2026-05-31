@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     collections::HashMap,
     sync::{
         Arc,
@@ -10,10 +9,12 @@ use std::{
 pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
 pub const DEFAULT_LOOP_LIMIT: usize = u16::MAX as usize;
 
+use bytes::Bytes;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     error::RuntimeError,
+    source_str::SourceStr,
     types::{
         command::UserDef,
         value::{FslValue, Value},
@@ -21,7 +22,7 @@ use crate::{
     vars::{DEFAULT_MEMORY_LIMIT, VarStore},
 };
 
-pub type UserDefinitions<'c> = HashMap<Cow<'c, str>, Arc<UserDef<'c>>>;
+pub type UserDefinitions = HashMap<SourceStr, Arc<UserDef>>;
 
 #[derive(Debug, Default)]
 pub struct MemoryLimit {
@@ -42,7 +43,7 @@ impl Default for Limiter {
 }
 
 impl Limiter {
-    pub fn allocate<'c>(&self, value: &Value<'c>) -> Result<(), RuntimeError> {
+    pub fn allocate(&self, value: &Value) -> Result<(), RuntimeError> {
         match self {
             Limiter::NoLimit => Ok(()),
             Limiter::Limit(memory_limit) => {
@@ -60,7 +61,7 @@ impl Limiter {
         }
     }
 
-    pub fn deallocate<'c>(&self, value: &Value<'c>) {
+    pub fn deallocate(&self, value: &Value) {
         match self {
             Limiter::NoLimit => {}
             Limiter::Limit(memory_limit) => {
@@ -123,28 +124,37 @@ impl InterpreterLimits {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct ExecutionContext<'c> {
-    pub call_stack: Vec<&'c str>,
-    pub def_stack: Vec<Cow<'c, str>>,
+pub struct ExecutionContext {
+    pub call_stack: Vec<SourceStr>,
+    pub def_stack: Vec<SourceStr>,
     pub flags: InterpreterFlags,
     pub loop_depth: usize,
 }
 
 #[derive(Debug, Default)]
-pub struct InterpreterData<'c> {
-    pub args: Arc<Mutex<Vec<Value<'static>>>>,
-    pub user_defs: Arc<Mutex<UserDefinitions<'c>>>,
+pub struct InterpreterData {
+    pub source: Bytes,
+    pub args: Arc<Mutex<Vec<Value>>>,
+    pub user_defs: Arc<Mutex<UserDefinitions>>,
     pub output: Arc<Mutex<String>>,
     pub total_loops: Arc<AtomicUsize>,
     pub limits: Arc<InterpreterLimits>,
 
-    pub vars: Arc<RwLock<VarStore<'c>>>,
+    pub vars: Arc<RwLock<VarStore>>,
 
-    pub ctx: Mutex<ExecutionContext<'c>>,
+    pub ctx: Mutex<ExecutionContext>,
 }
 
-impl<'c> InterpreterData<'c> {
-    pub fn with_args(mut self, args: Vec<Value<'static>>) -> Self {
+impl InterpreterData {
+    pub(crate) fn set_source(&mut self, source: String) {
+        self.source = Bytes::from_owner(source)
+    }
+
+    pub fn source_str(&self) -> SourceStr {
+        SourceStr::Borrowed(self.source.clone())
+    }
+
+    pub fn with_args(mut self, args: Vec<Value>) -> Self {
         self.args = Arc::new(Mutex::new(args));
         self
     }
@@ -155,7 +165,7 @@ impl<'c> InterpreterData<'c> {
         self
     }
 
-    pub fn from<'new>(data: &InterpreterData<'c>) -> InterpreterData<'new> {
+    pub fn from<'new>(data: &InterpreterData) -> InterpreterData {
         InterpreterData {
             args: data.args.clone(),
             vars: Arc::new(RwLock::new(VarStore::new(data.limits.limiter.clone()))),
@@ -164,8 +174,9 @@ impl<'c> InterpreterData<'c> {
         }
     }
 
-    pub async fn fork(&self) -> Arc<InterpreterData<'c>> {
+    pub async fn fork(&self) -> Arc<InterpreterData> {
         InterpreterData {
+            source: self.source.clone(),
             args: self.args.clone(),
             limits: self.limits.clone(),
             user_defs: self.user_defs.clone(),
@@ -206,7 +217,7 @@ impl<'c> InterpreterData<'c> {
         }
     }
 
-    pub async fn push_call(&self, command_label: &'c str) {
+    pub async fn push_call(&self, command_label: SourceStr) {
         let mut ctx = self.ctx.lock().await;
         ctx.call_stack.push(command_label);
     }
@@ -216,7 +227,7 @@ impl<'c> InterpreterData<'c> {
         ctx.call_stack.pop();
     }
 
-    pub async fn push_def(&self, def: Cow<'c, str>) {
+    pub async fn push_def(&self, def: SourceStr) {
         let mut ctx = self.ctx.lock().await;
         ctx.def_stack.push(def);
     }
@@ -291,7 +302,7 @@ impl<'c> InterpreterData<'c> {
         ctx.flags.return_flag || ctx.flags.continue_flag || ctx.flags.break_flag
     }
 
-    pub async fn find_user_def(&self, label: &str) -> Option<Arc<UserDef<'c>>> {
+    pub async fn find_user_def(&self, label: &SourceStr) -> Option<Arc<UserDef>> {
         let ctx = self.ctx.lock().await;
         let root = self.user_defs.clone();
 

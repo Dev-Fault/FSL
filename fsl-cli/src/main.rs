@@ -48,7 +48,7 @@ async fn main() {
     let result = if args.embeded {
         interpreter
             .interpret_embedded_code(
-                &script,
+                script,
                 InterpreterData::default()
                     .with_args(vec![Value::from(input.unwrap_or("".to_string()))]),
             )
@@ -56,7 +56,7 @@ async fn main() {
     } else {
         interpreter
             .interpret(
-                &script,
+                script,
                 InterpreterData::default()
                     .with_args(vec![Value::from(input.unwrap_or("".to_string()))]),
             )

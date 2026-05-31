@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use bytes::Bytes;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{parser::ParseError, span::Span, types::FslType};
@@ -16,8 +17,8 @@ impl<T> ErrorContext<T> {
     }
 }
 
-impl<'c> From<ExecutionError<'c>> for ErrorContext<RuntimeError> {
-    fn from(value: ExecutionError<'c>) -> Self {
+impl From<ExecutionError> for ErrorContext<RuntimeError> {
+    fn from(value: ExecutionError) -> Self {
         let context = value.to_string();
         let kind = value.command_error;
         Self { kind, context }
@@ -47,8 +48,8 @@ impl<'c> From<ParseError<'c>> for InterpreterError {
     }
 }
 
-impl<'c> From<ExecutionError<'c>> for InterpreterError {
-    fn from(value: ExecutionError<'c>) -> Self {
+impl From<ExecutionError> for InterpreterError {
+    fn from(value: ExecutionError) -> Self {
         InterpreterError::Execution(ErrorContext::from(value))
     }
 }
@@ -70,16 +71,18 @@ impl std::fmt::Display for InterpreterError {
 impl std::error::Error for InterpreterError {}
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExecutionError<'c> {
+pub struct ExecutionError {
     pub command_error: RuntimeError,
-    pub span: Span<'c>,
+    pub span: Span,
+    pub source: Bytes,
 }
 
-impl<'c> ExecutionError<'c> {
-    pub fn new(command_error: RuntimeError, span: Span<'c>) -> Self {
+impl ExecutionError {
+    pub fn new(command_error: RuntimeError, span: Span, source: Bytes) -> Self {
         Self {
             command_error,
             span,
+            source,
         }
     }
     pub fn exited_program(&self) -> bool {
@@ -96,15 +99,16 @@ fn normalize_tab(c: char) -> String {
     }
 }
 
-impl<'c> std::fmt::Display for ExecutionError<'c> {
+impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let line_header = format!("{}: ", self.span.start.line_number());
+        let source = unsafe { std::str::from_utf8_unchecked(&self.source) };
+        let line_header = format!("{}: ", self.span.line_number(source));
 
-        let upto_line_position = &self.span.start.line()[..self.span.start.line_location()];
+        let upto_line_position = &self.span.line(source)[..self.span.line_location(source)];
 
         let upto_line_position: String = upto_line_position.chars().map(normalize_tab).collect();
 
-        let line: String = self.span.start.line().chars().map(normalize_tab).collect();
+        let line: String = self.span.line(source).chars().map(normalize_tab).collect();
 
         let padding = upto_line_position.width() + line_header.width();
         write!(
@@ -118,7 +122,7 @@ impl<'c> std::fmt::Display for ExecutionError<'c> {
     }
 }
 
-impl<'c> std::error::Error for ExecutionError<'c> {}
+impl std::error::Error for ExecutionError {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpectedArgs {
@@ -346,15 +350,16 @@ impl std::fmt::Display for RuntimeError {
     }
 }
 
-pub trait ToExecutionError<'c> {
-    fn to_exec(self, span: Span<'c>) -> ExecutionError<'c>;
+pub trait ToExecutionError {
+    fn to_exec(self, span: Span, source: Bytes) -> ExecutionError;
 }
 
-impl<'c> ToExecutionError<'c> for RuntimeError {
-    fn to_exec(self, span: Span<'c>) -> ExecutionError<'c> {
+impl ToExecutionError for RuntimeError {
+    fn to_exec(self, span: Span, source: Bytes) -> ExecutionError {
         ExecutionError {
             command_error: self,
             span,
+            source,
         }
     }
 }

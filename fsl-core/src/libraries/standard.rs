@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     collections::{HashMap, VecDeque},
     sync::Arc,
     time::Duration,
@@ -12,6 +11,7 @@ use crate::{
     FslInterpreter, InterpreterData,
     error::{ExecutionError, ExpectedArgs, RuntimeError, ToExecutionError},
     register_command,
+    source_str::SourceStr,
     span::Span,
     types::{
         FslType,
@@ -250,33 +250,36 @@ pub async fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, RETURN, RETURN_RULES, r#return);
 }
 
-pub async fn take_if_var<'c>(
-    value: &mut Value<'c>,
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Option<Cow<'c, str>>, ExecutionError<'c>> {
+pub async fn take_if_var(
+    value: &mut Value,
+    data: Arc<InterpreterData>,
+    span: Span,
+) -> Result<Option<SourceStr>, ExecutionError> {
     if let Value::Var(label) = value {
         let label = label.clone();
         let mut vars = data.vars.write().await;
-        *value = vars.take(&label).await.map_err(|e| e.to_exec(span))?;
+        *value = vars
+            .take(&label)
+            .await
+            .map_err(|e| e.to_exec(span, data.source.clone()))?;
         Ok(Some(label))
     } else {
         Ok(None)
     }
 }
 
-pub async fn update_if_var<'c>(
-    var: Option<Cow<'c, str>>,
-    value: Value<'c>,
-    data: Arc<InterpreterData<'c>>,
-    span: Span<'c>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn update_if_var(
+    var: Option<SourceStr>,
+    value: Value,
+    data: Arc<InterpreterData>,
+    span: Span,
+) -> Result<Value, ExecutionError> {
     match var {
         Some(label) => {
             let mut vars = data.vars.write().await;
             vars.store(&label, Var::Mut(value))
                 .await
-                .map_err(|e| e.to_exec(span))?;
+                .map_err(|e| e.to_exec(span, data.source.clone()))?;
             Ok(Value::Var(label))
         }
         None => Ok(value),
@@ -287,10 +290,7 @@ fn contains_float(values: &[Argument]) -> bool {
 }
 
 pub const ADD: &str = "add";
-pub async fn add<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let args = args
@@ -310,17 +310,14 @@ pub async fn add<'c>(
             let value = value.as_int(data.clone()).await?;
             sum = sum
                 .checked_add(value)
-                .ok_or(RuntimeError::Overflow.to_exec(command.span))?;
+                .ok_or(RuntimeError::Overflow.to_exec(command.span.clone(), data.source.clone()))?;
         }
         Ok(Value::Int(sum))
     }
 }
 
 pub const SUB: &str = "sub";
-pub async fn sub<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let args = args
@@ -341,17 +338,14 @@ pub async fn sub<'c>(
             let value = value.as_int(data.clone()).await?;
             diff = diff
                 .checked_sub(value)
-                .ok_or(RuntimeError::Overflow.to_exec(command.span))?;
+                .ok_or(RuntimeError::Overflow.to_exec(command.span.clone(), data.source.clone()))?;
         }
         Ok(Value::Int(diff))
     }
 }
 
 pub const MUL: &str = "mul";
-pub async fn mul<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let args = args
@@ -372,17 +366,14 @@ pub async fn mul<'c>(
             let value = value.as_int(data.clone()).await?;
             product = product
                 .checked_mul(value)
-                .ok_or(RuntimeError::Overflow.to_exec(command.span))?;
+                .ok_or(RuntimeError::Overflow.to_exec(command.span.clone(), data.source.clone()))?;
         }
         Ok(Value::Int(product))
     }
 }
 
 pub const DIV: &str = "div";
-pub async fn div<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let args = args
@@ -396,7 +387,9 @@ pub async fn div<'c>(
         for value in iter {
             let value = value.as_float(data.clone()).await?;
             if value == 0.0 {
-                return Err(RuntimeError::DivisionByZero.to_exec(command.span));
+                return Err(
+                    RuntimeError::DivisionByZero.to_exec(command.span.clone(), data.source.clone())
+                );
             };
             quotient = quotient / value;
         }
@@ -406,28 +399,32 @@ pub async fn div<'c>(
         for value in iter {
             let value = value.as_int(data.clone()).await?;
             if value == 0 {
-                return Err(RuntimeError::DivisionByZero.to_exec(command.span));
+                return Err(
+                    RuntimeError::DivisionByZero.to_exec(command.span.clone(), data.source.clone())
+                );
             };
             quotient = quotient
                 .checked_div(value)
-                .ok_or(RuntimeError::Overflow.to_exec(command.span))?;
+                .ok_or(RuntimeError::Overflow.to_exec(command.span.clone(), data.source.clone()))?;
         }
         Ok(Value::Int(quotient))
     }
 }
 
 pub const MODULUS: &str = "mod";
-pub async fn modulus<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn modulus(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut remainder = args.pop_front().unwrap().as_int(data.clone()).await?;
     while let Some(value) = args.pop_front() {
         let value = value.as_int(data.clone()).await?;
         if value == 0 {
-            return Err(RuntimeError::DivisionByZero.to_exec(command.span));
+            return Err(
+                RuntimeError::DivisionByZero.to_exec(command.span.clone(), data.source.clone())
+            );
         };
         remainder = remainder % value;
     }
@@ -440,10 +437,7 @@ pub const CLAMP_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), MAYBE_NUMBER),
 ];
 pub const CLAMP: &str = "clamp";
-pub async fn clamp<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let to_clamp = args.pop_front().unwrap().as_number(data.clone()).await?;
@@ -456,7 +450,9 @@ pub async fn clamp<'c>(
             let max = max.as_int(data.clone()).await?;
 
             if min > max {
-                return Err(RuntimeError::InvalidRange.to_exec(command.span));
+                return Err(
+                    RuntimeError::InvalidRange.to_exec(command.span.clone(), data.source.clone())
+                );
             }
 
             return Ok(Value::Int(to_clamp.clamp(min, max)));
@@ -466,7 +462,9 @@ pub async fn clamp<'c>(
             let max = max.as_float(data.clone()).await?;
 
             if min > max {
-                return Err(RuntimeError::InvalidRange.to_exec(command.span));
+                return Err(
+                    RuntimeError::InvalidRange.to_exec(command.span.clone(), data.source.clone())
+                );
             }
 
             return Ok(Value::Float(to_clamp.clamp(min, max)));
@@ -479,10 +477,10 @@ pub const CLAMP_MIN_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const CLAMP_MIN: &str = "clamp_min";
-pub async fn clamp_min<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn clamp_min(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let to_clamp = args.pop_front().unwrap().as_number(data.clone()).await?;
@@ -516,10 +514,10 @@ pub const CLAMP_MAX_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const CLAMP_MAX: &str = "clamp_max";
-pub async fn clamp_max<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn clamp_max(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let to_clamp = args.pop_front().unwrap().as_number(data.clone()).await?;
@@ -553,10 +551,10 @@ pub const PRECISION_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_INT),
 ];
 pub const PRECISION: &str = "precision";
-pub async fn precision<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn precision(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let arg_0 = args.pop_front().unwrap();
@@ -565,7 +563,7 @@ pub async fn precision<'c>(
     let precision = arg_1.as_usize(data).await?;
     let formatted = format!("{:.prec$}", num, prec = precision);
 
-    Ok(Value::Text(Cow::Owned(formatted)))
+    Ok(Value::Text(SourceStr::Owned(formatted)))
 }
 
 pub const STORE_RULES: &[ArgRule] = &[
@@ -573,10 +571,7 @@ pub const STORE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const STORE: &str = "store";
-pub async fn store<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
@@ -590,7 +585,7 @@ pub async fn store<'c>(
         .await
         .store(&var, Var::Mut(arg.value))
         .await
-        .map_err(|e| e.to_exec(arg.span))?;
+        .map_err(|e| e.to_exec(arg.span.clone(), data.source.clone()))?;
 
     Ok(Value::Var(var))
 }
@@ -600,10 +595,7 @@ pub const LOCAL_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const LOCAL: &str = "local";
-pub async fn local<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
@@ -617,7 +609,7 @@ pub async fn local<'c>(
         .await
         .insert(&var, Var::Mut(arg.value))
         .await
-        .map_err(|e| e.to_exec(arg.span))?;
+        .map_err(|e| e.to_exec(arg.span.clone(), data.source.clone()))?;
 
     Ok(Value::Var(var))
 }
@@ -627,10 +619,7 @@ pub const UPDATE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const UPDATE: &str = "update";
-pub async fn update<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
@@ -645,7 +634,7 @@ pub async fn update<'c>(
         .await
         .replace(var_label, arg.value)
         .await
-        .map_err(|e| e.to_exec(arg.span))?;
+        .map_err(|e| e.to_exec(arg.span.clone(), data.source.clone()))?;
 
     Ok(Value::Var(var))
 }
@@ -655,10 +644,10 @@ pub const CONST_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const CONST: &str = "const";
-pub async fn r#const<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn r#const(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
@@ -673,17 +662,14 @@ pub async fn r#const<'c>(
         .await
         .insert(var_label, Var::Const(arg.value))
         .await
-        .map_err(|e| e.to_exec(arg.span))?;
+        .map_err(|e| e.to_exec(arg.span.clone(), data.source.clone()))?;
 
     Ok(Value::Var(var))
 }
 
 pub const CLONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
 pub const CLONE: &str = "clone";
-pub async fn clone<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let arg = command.take_args().pop_front().unwrap();
     let arg = arg.as_raw(data).await?;
@@ -692,20 +678,17 @@ pub async fn clone<'c>(
 
 pub const TAKE: &str = "take";
 pub const TAKE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
-pub async fn take<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn take(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let arg = command.take_args().pop_front().unwrap();
-    let var = arg.get_var_label()?;
+    let var = arg.get_var_label(data.clone())?;
     match data
         .vars
         .write()
         .await
         .remove(&var)
         .await
-        .map_err(|e| e.to_exec(arg.span))?
+        .map_err(|e| e.to_exec(arg.span.clone(), data.source.clone()))?
     {
         Some(value) => Ok(value),
         None => Ok(Value::None),
@@ -714,21 +697,15 @@ pub async fn take<'c>(
 
 pub const REF: &str = "ref";
 pub const REF_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Var])];
-pub async fn r#ref<'c>(
-    command: Command<'c>,
-    _: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn r#ref(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let arg = command.take_args().pop_front().unwrap();
-    Ok(Value::Var(arg.get_var_label()?))
+    Ok(Value::Var(arg.get_var_label(data.clone())?))
 }
 
 pub const PRINT_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const PRINT: &str = "print";
-pub async fn print<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = command.take_args();
 
@@ -738,7 +715,8 @@ pub async fn print<'c>(
             // Must be locked after as_text (could require evaluating command that calls print)
             let mut output = data.output.lock().await;
             if text.len() + output.len() > limit {
-                return Err(RuntimeError::OutputLimitExceeded.to_exec(command.span));
+                return Err(RuntimeError::OutputLimitExceeded
+                    .to_exec(command.span.clone(), data.source.clone()));
             }
             output.push_str(&text);
         }
@@ -754,10 +732,7 @@ pub async fn print<'c>(
 
 pub const ARGS_RULES: &'static [ArgRule] = NO_ARGS;
 pub const ARGS: &str = "args";
-pub async fn args<'c>(
-    _: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn args(_: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let input = data.args.lock().await;
     let arg_list = Value::from(input.clone());
     Ok(arg_list)
@@ -765,10 +740,7 @@ pub async fn args<'c>(
 
 pub const DEBUG_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const DEBUG: &str = "debug";
-pub async fn debug<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = command.take_args();
     let mut output = String::new();
@@ -783,10 +755,7 @@ pub async fn debug<'c>(
 
 pub const SCOPE_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub const SCOPE: &str = "";
-pub async fn scope<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = command.take_args();
     data.vars.write().await.push();
@@ -801,10 +770,7 @@ pub async fn scope<'c>(
 
 pub const NO_OP_RULES: &'static [ArgRule] = NO_ARGS;
 pub const NO_OP: &str = "no_op";
-pub async fn no_op<'c>(
-    _: Command<'c>,
-    _: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn no_op(_: Command, _: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     Ok(Value::None)
 }
 
@@ -813,10 +779,7 @@ pub const EQ_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const EQ: &str = "eq";
-pub async fn eq<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let a = args
@@ -830,7 +793,7 @@ pub async fn eq<'c>(
         .as_raw_checked(data.clone(), ANY)
         .await?;
 
-    Ok(Value::Bool(a.equal(&b)?))
+    Ok(Value::Bool(a.equal(&b, data.clone())?))
 }
 
 pub const GT_RULES: &[ArgRule; 2] = &[
@@ -838,10 +801,7 @@ pub const GT_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const GT: &str = "gt";
-pub async fn gt<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let mut args = args
@@ -866,10 +826,7 @@ pub const GTOE_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const GTOE: &str = "gtoe";
-pub async fn gtoe<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn gtoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let mut args = args
@@ -894,10 +851,7 @@ pub const LT_RULES: &[ArgRule; 2] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const LT: &str = "lt";
-pub async fn lt<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let mut args = args
@@ -922,10 +876,7 @@ pub const LTOE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const LTOE: &str = "ltoe";
-pub async fn ltoe<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn ltoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let mut args = args
@@ -947,10 +898,7 @@ pub async fn ltoe<'c>(
 
 pub const NOT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_BOOL)];
 pub const NOT: &str = "not";
-pub async fn not<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let a = args.pop_front().unwrap().as_bool(data.clone()).await?;
@@ -959,10 +907,7 @@ pub async fn not<'c>(
 
 pub const AND_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_BOOL)];
 pub const AND: &str = "and";
-pub async fn and<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut return_value = args.pop_front().unwrap().as_bool(data.clone()).await?;
@@ -974,10 +919,7 @@ pub async fn and<'c>(
 
 pub const OR_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_BOOL)];
 pub const OR: &str = "or";
-pub async fn or<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut return_value = args.pop_front().unwrap().as_bool(data.clone()).await?;
@@ -992,10 +934,7 @@ pub const IF_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const IF: &str = "if";
-pub async fn r#if<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let condition = args.pop_front().unwrap().as_bool(data.clone()).await?;
@@ -1012,7 +951,8 @@ pub async fn r#if<'c>(
         match label {
             THEN => {
                 if then_command.is_some() {
-                    return Err(RuntimeError::MultipleThenCommandsInIf.to_exec(command.span));
+                    return Err(RuntimeError::MultipleThenCommandsInIf
+                        .to_exec(command.span.clone(), data.source.clone()));
                 }
                 then_command = Some(command)
             }
@@ -1022,36 +962,44 @@ pub async fn r#if<'c>(
             }
             ELSE => {
                 if else_command.is_some() {
-                    return Err(RuntimeError::MultipleElseCommandsInIf.to_exec(command.span));
+                    return Err(RuntimeError::MultipleElseCommandsInIf
+                        .to_exec(command.span.clone(), data.source.clone()));
                 }
                 else_command = Some(command)
             }
             _ => {
                 if command_count == 1 {
                     if condition {
-                        return Ok(command.as_command()?.execute(data).await?);
+                        return Ok(command.as_command(data.clone())?.execute(data).await?);
                     } else {
                         return Ok(Value::None);
                     }
                 } else {
-                    return Err(RuntimeError::InvalidCommandInIf.to_exec(command.span));
+                    return Err(RuntimeError::InvalidCommandInIf
+                        .to_exec(command.span.clone(), data.source.clone()));
                 }
             }
         }
     }
 
-    let then_command = then_command.ok_or(RuntimeError::IfMustContainThen.to_exec(command.span))?;
+    let then_command = then_command.ok_or(
+        RuntimeError::IfMustContainThen.to_exec(command.span.clone(), data.source.clone()),
+    )?;
 
     if requires_else && else_command.is_none() {
-        return Err(RuntimeError::ElseIfMustBePairedWithElse.to_exec(command.span));
+        return Err(RuntimeError::ElseIfMustBePairedWithElse
+            .to_exec(command.span.clone(), data.source.clone()));
     }
 
     if condition == true {
-        let result = then_command.as_command()?.execute(data.clone()).await;
+        let result = then_command
+            .as_command(data.clone())?
+            .execute(data.clone())
+            .await;
         return result;
     } else {
         for else_if in else_ifs {
-            let mut else_if = else_if.as_command()?;
+            let mut else_if = else_if.as_command(data.clone())?;
             let condition = else_if.pop_front_arg().unwrap();
             let condition = condition.as_bool(data.clone()).await?;
 
@@ -1064,7 +1012,10 @@ pub async fn r#if<'c>(
 
         if else_command.is_some() {
             let else_command = else_command.unwrap();
-            return else_command.as_command()?.execute(data.clone()).await;
+            return else_command
+                .as_command(data.clone())?
+                .execute(data.clone())
+                .await;
         }
 
         return Ok(Value::None);
@@ -1076,10 +1027,7 @@ pub const SWITCH_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const SWITCH: &str = "switch";
-pub async fn switch<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let expression = args.pop_front().unwrap();
@@ -1097,7 +1045,7 @@ pub async fn switch<'c>(
         && let Some(fallback) = fallback.pop_front()
     {
         for case in cases {
-            let mut case = case.as_command()?;
+            let mut case = case.as_command(data.clone())?;
             let arg = case.pop_front_arg().unwrap();
             let arg = arg.as_raw(data.clone()).await?;
 
@@ -1108,11 +1056,15 @@ pub async fn switch<'c>(
             }
         }
 
-        let result = fallback.as_command()?.execute(data.clone()).await;
+        let result = fallback
+            .as_command(data.clone())?
+            .execute(data.clone())
+            .await;
 
         return result;
     } else {
-        return Err(RuntimeError::SwitchMustHaveSingleFallbackCommand.to_exec(command.span));
+        return Err(RuntimeError::SwitchMustHaveSingleFallbackCommand
+            .to_exec(command.span.clone(), data.source.clone()));
     }
 }
 
@@ -1122,10 +1074,7 @@ pub const FALLBACK: &str = "fallback";
 pub const THEN: &str = "then";
 pub const ELSE_IF: &str = "else_if";
 pub const ELSE: &str = "else";
-pub async fn block<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn block(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = command.take_args();
 
@@ -1141,10 +1090,10 @@ pub const WHILE_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const WHILE_LOOP: &str = "while";
-pub async fn while_command<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn while_command(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let while_condition = args.pop_front().unwrap();
@@ -1155,7 +1104,7 @@ pub async fn while_command<'c>(
 
     'outer: while while_condition.clone().as_bool(data.clone()).await? {
         for command in &args {
-            let command = command.clone().as_command()?;
+            let command = command.clone().as_command(data.clone())?;
             final_value = command.execute(data.clone()).await?;
 
             if data.get_break_flag().await || data.get_return_flag().await {
@@ -1168,7 +1117,7 @@ pub async fn while_command<'c>(
             }
         }
         data.inc_total_loops()
-            .map_err(|e| e.to_exec(command.span))?;
+            .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?;
     }
 
     data.dec_loop_depth().await;
@@ -1181,10 +1130,7 @@ pub const REPEAT_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Command]),
 ];
 pub const REPEAT: &str = "repeat";
-pub async fn repeat<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let repetitions = args.pop_front().unwrap().as_int(data.clone()).await?;
@@ -1194,7 +1140,7 @@ pub async fn repeat<'c>(
 
     'outer: for _ in 0..repetitions {
         for command in &args {
-            let command = command.clone().as_command()?;
+            let command = command.clone().as_command(data.clone())?;
             final_value = command.execute(data.clone()).await?;
 
             if data.get_break_flag().await || data.get_return_flag().await {
@@ -1207,7 +1153,7 @@ pub async fn repeat<'c>(
             }
         }
         data.inc_total_loops()
-            .map_err(|e| e.to_exec(command.span))?;
+            .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?;
     }
 
     data.dec_loop_depth().await;
@@ -1221,22 +1167,22 @@ pub const FOR_EACH_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(2), &[FslType::Command]),
 ];
 pub const FOR_EACH: &str = "for_each";
-pub async fn for_each<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn for_each(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
     let mut array = args.pop_front().unwrap();
-    let array_span = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), array_span).await?;
+    let array_span = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), array_span.clone()).await?;
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     let label = args.pop_front().unwrap();
-    let label_span = label.span;
+    let label_span = label.span.clone();
     let label = label.as_var_label(data.clone()).await?;
 
     data.vars.write().await.push();
@@ -1246,7 +1192,7 @@ pub async fn for_each<'c>(
     let result = match array.value {
         Value::Text(text) => {
             let original_len = text.len();
-            let mut text = text.into_owned();
+            let mut text = text.to_string();
             let indices: Vec<_> = text.char_indices().collect();
             let mut offset: isize = 0;
 
@@ -1257,9 +1203,9 @@ pub async fn for_each<'c>(
                         .await
                         .insert(&label, Var::Mut(Value::from(c.to_string())))
                         .await
-                        .map_err(|e| e.to_exec(label_span))?;
+                        .map_err(|e| e.to_exec(label_span.clone(), data.source.clone()))?;
 
-                    let command = command.clone().as_command()?;
+                    let command = command.clone().as_command(data.clone())?;
                     let command_value = command.execute(data.clone()).await?;
 
                     let character = data
@@ -1268,13 +1214,13 @@ pub async fn for_each<'c>(
                         .await
                         .remove(&label)
                         .await
-                        .map_err(|e| e.to_exec(label_span))?
+                        .map_err(|e| e.to_exec(label_span.clone(), data.source.clone()))?
                         .unwrap();
 
                     let replacement = character
                         .as_text(data.clone())
                         .await
-                        .map_err(|e| e.to_exec(label_span))?;
+                        .map_err(|e| e.to_exec(label_span.clone(), data.source.clone()))?;
 
                     let i = (i as isize + offset) as usize;
                     text.replace_range(i..i + c.len_utf8(), &replacement);
@@ -1293,7 +1239,7 @@ pub async fn for_each<'c>(
                 }
 
                 data.inc_total_loops()
-                    .map_err(|e| e.to_exec(command.span))?;
+                    .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?;
             }
 
             update_if_var(var, Value::from(text), data.clone(), array_span).await?
@@ -1306,9 +1252,9 @@ pub async fn for_each<'c>(
                         .await
                         .insert(&label, Var::Mut(std::mem::take(element)))
                         .await
-                        .map_err(|e| e.to_exec(label_span))?;
+                        .map_err(|e| e.to_exec(label_span.clone(), data.source.clone()))?;
 
-                    let command = command.clone().as_command()?;
+                    let command = command.clone().as_command(data.clone())?;
                     let command_value = command.execute(data.clone()).await?;
 
                     *element = data
@@ -1317,7 +1263,7 @@ pub async fn for_each<'c>(
                         .await
                         .remove(&label)
                         .await
-                        .map_err(|e| e.to_exec(label_span))?
+                        .map_err(|e| e.to_exec(label_span.clone(), data.source.clone()))?
                         .unwrap();
 
                     if data.get_return_flag().await {
@@ -1333,7 +1279,7 @@ pub async fn for_each<'c>(
                 }
 
                 data.inc_total_loops()
-                    .map_err(|e| e.to_exec(command.span))?;
+                    .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?;
             }
 
             update_if_var(var, Value::List(list), data.clone(), array_span).await?
@@ -1355,15 +1301,12 @@ pub const INDEX_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
 ];
 pub const INDEX: &str = "index";
-pub async fn index<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let array = args.pop_front().unwrap();
     let key = args.pop_front().unwrap().as_raw(data.clone()).await?;
-    let key_span = key.span;
+    let key_span = key.span.clone();
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1371,10 +1314,10 @@ pub async fn index<'c>(
 
     match array.value {
         Value::Text(text) => {
-            let i = key.as_usize(data).await?;
+            let i = key.as_usize(data.clone()).await?;
             match text.chars().nth(i) {
                 Some(char) => Ok(char.into()),
-                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span)),
+                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span, data.source.clone())),
             }
         }
         Value::List(list) => {
@@ -1390,15 +1333,12 @@ pub const GET_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_MAP_KEY),
 ];
 pub const GET: &str = "get";
-pub async fn get<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut values = command.take_args();
     let map = values.pop_front().unwrap();
     let key = values.pop_front().unwrap();
-    let key_span = key.span;
+    let key_span = key.span.clone();
     let key = key.as_map_key(data.clone()).await?;
     let map = map.as_map(data.clone()).await?;
 
@@ -1411,14 +1351,11 @@ pub const SET_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), NOT_NONE),
 ];
 pub const SET: &str = "set";
-pub async fn set<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut map = args.pop_front().unwrap();
-    let map_span = map.span;
+    let map_span = map.span.clone();
     let key = args.pop_front().unwrap();
     let arg = args.pop_front().unwrap();
 
@@ -1426,7 +1363,7 @@ pub async fn set<'c>(
 
     let arg = arg.as_raw_checked(data.clone(), NOT_NONE).await?;
 
-    let value_loc = map.span;
+    let value_loc = map.span.clone();
 
     let return_value = map
         .mut_with(data.clone(), |map| match map {
@@ -1436,7 +1373,7 @@ pub async fn set<'c>(
             }
             _ => Err(map
                 .conversion_err_to_types(&[FslType::Map])
-                .to_exec(map_span)),
+                .to_exec(map_span, data.source.clone())),
         })
         .await?;
     return Ok(return_value);
@@ -1444,10 +1381,7 @@ pub async fn set<'c>(
 
 pub const LENGTH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
 pub const LENGTH: &str = "length";
-pub async fn length<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let array = args
@@ -1468,19 +1402,16 @@ pub const REMOVE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_LIST_KEY),
 ];
 pub const REMOVE: &str = "remove";
-pub async fn remove<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
     let key = args.pop_front().unwrap();
-    let key_span = key.span;
+    let key_span = key.span.clone();
     let key = key.as_raw(data.clone()).await?;
 
-    let value_loc = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
+    let value_loc = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), value_loc.clone()).await?;
 
     let array = array.as_raw_checked(data.clone(), COLLECTION).await?;
 
@@ -1490,7 +1421,7 @@ pub async fn remove<'c>(
 
             match text.chars().nth(i) {
                 Some(_) => {
-                    let mut text = text.into_owned();
+                    let mut text = text.to_string();
                     let return_value = text.remove(i).to_string();
                     let text = Value::from(std::mem::take(&mut text));
 
@@ -1498,7 +1429,8 @@ pub async fn remove<'c>(
 
                     Ok(Value::from(return_value))
                 }
-                None => Err(RuntimeError::IndexOutOfBounds.to_exec(command.span)),
+                None => Err(RuntimeError::IndexOutOfBounds
+                    .to_exec(command.span.clone(), data.source.clone())),
             }
         }
         Value::List(mut list) => {
@@ -1529,10 +1461,7 @@ pub const SWAP_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), MAYBE_LIST_KEY),
 ];
 pub const SWAP: &str = "swap";
-pub async fn swap<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
@@ -1540,11 +1469,11 @@ pub async fn swap<'c>(
 
     let a_key = args.pop_front().unwrap().as_raw(data.clone()).await?;
     let b_key = args.pop_front().unwrap().as_raw(data.clone()).await?;
-    let a_key_span = a_key.span;
-    let b_key_span = b_key.span;
+    let a_key_span = a_key.span.clone();
+    let b_key_span = b_key.span.clone();
 
-    let value_loc = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
+    let value_loc = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), value_loc.clone()).await?;
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1565,15 +1494,16 @@ pub async fn swap<'c>(
                 let return_value = update_if_var(var, Value::from(text), data, value_loc).await?;
                 Ok(return_value)
             } else {
-                Err(RuntimeError::IndexOutOfBounds.to_exec(command.span))
+                Err(RuntimeError::IndexOutOfBounds
+                    .to_exec(command.span.clone(), data.source.clone()))
             }
         }
         Value::List(mut list) => {
             let i = a_key.as_list_key(data.clone()).await?;
             let j = b_key.as_list_key(data.clone()).await?;
 
-            let a_value = list.get_nested(&i, data.clone(), a_key_span)?;
-            let b_value = list.get_nested(&j, data.clone(), b_key_span)?;
+            let a_value = list.get_nested(&i, data.clone(), a_key_span.clone())?;
+            let b_value = list.get_nested(&j, data.clone(), b_key_span.clone())?;
 
             let a_swap = list.get_nested_mut(&i, data.clone(), a_key_span)?;
             *a_swap = b_value;
@@ -1594,10 +1524,10 @@ pub const REPLACE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), NOT_NONE),
 ];
 pub const REPLACE: &str = "replace";
-pub async fn replace<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn replace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
@@ -1606,11 +1536,11 @@ pub async fn replace<'c>(
     let arg = args.pop_front().unwrap();
     let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
-    let key_span = key.span;
+    let key_span = key.span.clone();
     let key = key.as_list_key(data.clone()).await?;
 
-    let value_loc = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
+    let value_loc = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), value_loc.clone()).await?;
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1620,19 +1550,21 @@ pub async fn replace<'c>(
         Value::Text(text) => {
             let mut key = key;
             if key.len() > 1 {
-                return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
+                return Err(RuntimeError::IndexOutOfBounds
+                    .to_exec(command.span.clone(), data.source.clone()));
             }
             let Some(i) = key.pop() else {
-                return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
+                return Err(RuntimeError::IndexOutOfBounds
+                    .to_exec(command.span.clone(), data.source.clone()));
             };
-            let replacement_loc = arg.span;
+            let replacement_loc = arg.span.clone();
             let replacement = arg.as_text(data.clone()).await?;
 
             if replacement.len() != 1 {
                 return Err(RuntimeError::InvalidArgument(format!(
                     "replacement value must be a single character"
                 ))
-                .to_exec(replacement_loc));
+                .to_exec(replacement_loc, data.source.clone()));
             }
 
             let mut chars: Vec<char> = text.chars().collect();
@@ -1644,9 +1576,9 @@ pub async fn replace<'c>(
 
                     let text: String = chars.iter().collect();
                     update_if_var(var, Value::from(text), data, value_loc).await?;
-                    Ok(Value::Text(Cow::Owned(old_ch.to_string())))
+                    Ok(Value::Text(SourceStr::Owned(old_ch.to_string())))
                 }
-                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span)),
+                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span, data.source.clone())),
             }
         }
         Value::List(mut list) => {
@@ -1671,23 +1603,20 @@ pub const INSERT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), NOT_NONE),
 ];
 pub const INSERT: &str = "insert";
-pub async fn insert<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
     let mut array = args.pop_front().unwrap();
     let key = args.pop_front().unwrap();
-    let key_span = key.span;
+    let key_span = key.span.clone();
     let key = key.as_raw(data.clone()).await?;
 
     let arg = args.pop_front().unwrap();
     let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
-    let value_loc = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
+    let value_loc = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), value_loc.clone()).await?;
 
     let array = array.as_raw_checked(data.clone(), COLLECTION).await?;
 
@@ -1697,11 +1626,12 @@ pub async fn insert<'c>(
 
             let text_to_insert = arg.as_text(data.clone()).await?;
 
-            let mut text = text.into_owned();
+            let mut text = text.to_string();
             if i <= text.len() {
                 text.insert_str(i, &text_to_insert);
             } else {
-                return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
+                return Err(RuntimeError::IndexOutOfBounds
+                    .to_exec(command.span.clone(), data.source.clone()));
             }
 
             let return_value =
@@ -1740,10 +1670,7 @@ pub const PUSH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const PUSH: &str = "push";
-pub async fn push<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
@@ -1754,8 +1681,8 @@ pub async fn push<'c>(
         .as_raw_checked(data.clone(), NOT_NONE)
         .await?;
 
-    let value_loc = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
+    let value_loc = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), value_loc.clone()).await?;
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1764,10 +1691,11 @@ pub async fn push<'c>(
     match array.value {
         Value::Text(text) => {
             let text_to_push = to_push.as_text(data.clone()).await?;
-            let mut text = text.into_owned();
+            let mut text = text.to_string();
             text.push_str(&text_to_push);
 
-            let return_value = update_if_var(var, Value::from(text), data, value_loc).await?;
+            let return_value =
+                update_if_var(var, Value::from(text), data, value_loc.clone()).await?;
             Ok(return_value)
         }
         Value::List(mut list) => {
@@ -1782,24 +1710,21 @@ pub async fn push<'c>(
 
 pub const POP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
 pub const POP: &str = "pop";
-pub async fn pop<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
     let mut array = args.pop_front().unwrap();
 
-    let value_loc = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
+    let value_loc = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), value_loc.clone()).await?;
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
         Value::Text(text) => {
-            let mut text = text.into_owned();
+            let mut text = text.to_string();
             let popped_text = text
                 .pop()
                 .map(|c| Value::from(c.to_string()))
@@ -1824,10 +1749,10 @@ pub const SEARCH_REPLACE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), MAYBE_TEXT),
 ];
 pub const SEARCH_REPLACE: &str = "search_replace";
-pub async fn search_replace<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn search_replace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut string = args.pop_front().unwrap();
@@ -1835,8 +1760,8 @@ pub async fn search_replace<'c>(
     let to_replace = args.pop_front().unwrap().as_text(data.clone()).await?;
     let with = args.pop_front().unwrap().as_text(data.clone()).await?;
 
-    let value_loc = string.span;
-    let var = take_if_var(&mut string.value, data.clone(), value_loc).await?;
+    let value_loc = string.span.clone();
+    let var = take_if_var(&mut string.value, data.clone(), value_loc.clone()).await?;
 
     let string = string.as_text(data.clone()).await?;
 
@@ -1852,10 +1777,10 @@ pub const SLICE_REPLACE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(2), MAYBE_TEXT),
 ];
 pub const SLICE_REPLACE: &str = "slice_replace";
-pub async fn slice_replace<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn slice_replace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut string = args.pop_front().unwrap();
@@ -1863,36 +1788,40 @@ pub async fn slice_replace<'c>(
     let mut range = args.pop_front().unwrap().as_list(data.clone()).await?;
     let with = args.pop_front().unwrap().as_text(data.clone()).await?;
 
-    let value_loc = string.span;
-    let var = take_if_var(&mut string.value, data.clone(), value_loc).await?;
+    let value_loc = string.span.clone();
+    let var = take_if_var(&mut string.value, data.clone(), value_loc.clone()).await?;
 
     let string = string.as_text(data.clone()).await?;
 
     if range.len() != 2 {
-        return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
+        return Err(
+            RuntimeError::IndexOutOfBounds.to_exec(command.span.clone(), data.source.clone())
+        );
     }
 
     let (from, to) = (
         std::mem::take(&mut range[0])
             .as_usize(data.clone())
             .await
-            .map_err(|e| e.to_exec(command.span))?,
+            .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?,
         std::mem::take(&mut range[1])
             .as_usize(data.clone())
             .await
-            .map_err(|e| e.to_exec(command.span))?,
+            .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?,
     );
 
     if from > string.len() || to > string.len() || from > to {
-        return Err(RuntimeError::IndexOutOfBounds.to_exec(command.span));
+        return Err(
+            RuntimeError::IndexOutOfBounds.to_exec(command.span.clone(), data.source.clone())
+        );
     } else if !string.is_char_boundary(from) || !string.is_char_boundary(to) {
         return Err(RuntimeError::InvalidArgument(format!(
             "slice of text must lie within char boundries"
         ))
-        .to_exec(command.span));
+        .to_exec(command.span.clone(), data.source.clone()));
     }
 
-    let mut input = string.into_owned();
+    let mut input = string.to_string();
     input.replace_range(from..to, &with);
 
     let return_value = update_if_var(var, Value::from(input), data, value_loc).await?;
@@ -1901,23 +1830,23 @@ pub async fn slice_replace<'c>(
 
 pub const REVERSE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_INDEXABLE)];
 pub const REVERSE: &str = "reverse";
-pub async fn reverse<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn reverse(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
     let mut array = args.pop_front().unwrap();
-    let value_loc = array.span;
-    let var = take_if_var(&mut array.value, data.clone(), value_loc).await?;
+    let value_loc = array.span.clone();
+    let var = take_if_var(&mut array.value, data.clone(), value_loc.clone()).await?;
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
     match array.value {
         Value::Text(text) => {
-            let text = text.chars().rev().collect();
+            let text = SourceStr::Owned(text.chars().rev().collect());
 
             let return_value = update_if_var(var, Value::Text(text), data, value_loc).await?;
             Ok(return_value)
@@ -1937,14 +1866,11 @@ pub const INC_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::OptionalIndex(1), MAYBE_INT),
 ];
 pub const INC: &str = "inc";
-pub async fn inc<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let label = args.pop_front().unwrap();
-    let label_span = label.span;
+    let label_span = label.span.clone();
     let label = label.as_var_label(data.clone()).await?;
 
     let amount = if let Some(value) = args.pop_front() {
@@ -1962,10 +1888,10 @@ pub async fn inc<'c>(
         }
         _ => Err(value
             .conversion_err_to_types(&[FslType::Int])
-            .to_exec(label_span)),
+            .to_exec(label_span.clone(), data.source.clone())),
     })
     .await
-    .map_err(|e| e.to_exec(label_span))?
+    .map_err(|e| e.to_exec(label_span, data.source.clone()))?
 }
 
 pub const DEC_RULES: &[ArgRule] = &[
@@ -1973,14 +1899,11 @@ pub const DEC_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::OptionalIndex(1), MAYBE_INT),
 ];
 pub const DEC: &str = "dec";
-pub async fn dec<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let label = args.pop_front().unwrap();
-    let label_span = label.span;
+    let label_span = label.span.clone();
     let label = label.as_var_label(data.clone()).await?;
 
     let amount = if let Some(value) = args.pop_front() {
@@ -1998,10 +1921,10 @@ pub async fn dec<'c>(
         }
         _ => Err(value
             .conversion_err_to_types(&[FslType::Int])
-            .to_exec(label_span)),
+            .to_exec(label_span.clone(), data.source.clone())),
     })
     .await
-    .map_err(|e| e.to_exec(label_span))?
+    .map_err(|e| e.to_exec(label_span, data.source.clone()))?
 }
 
 pub const CONTAINS_RULES: &[ArgRule] = &[
@@ -2009,10 +1932,10 @@ pub const CONTAINS_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), NOT_NONE),
 ];
 pub const CONTAINS: &str = "contains";
-pub async fn contains<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn contains(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let collection = args
@@ -2037,12 +1960,12 @@ pub async fn contains<'c>(
                 .then(|v| v.as_raw_checked(data.clone(), NOT_NONE))
                 .collect::<Result<Vec<_>, _>>()
                 .await
-                .map_err(|e| e.to_exec(command.span))?;
+                .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?;
             Ok(Value::Bool(list.contains(&item.value)))
         }
         Value::Map(map) => {
             let key = item.as_text(data).await?;
-            Ok(Value::Bool(map.contains_key(&*key)))
+            Ok(Value::Bool(map.contains_key(&key)))
         }
         _ => unreachable!("as_raw should enforce type"),
     }
@@ -2053,10 +1976,10 @@ pub const STARTS_WITH_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const STARTS_WITH: &str = "starts_with";
-pub async fn starts_with<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn starts_with(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let string = args.pop_front().unwrap().as_text(data.clone()).await?;
@@ -2069,10 +1992,10 @@ pub const ENDS_WITH_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const ENDS_WITH: &str = "ends_with";
-pub async fn ends_with<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn ends_with(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let string = args.pop_front().unwrap().as_text(data.clone()).await?;
@@ -2082,10 +2005,7 @@ pub async fn ends_with<'c>(
 
 pub const CONCAT_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const CONCAT: &str = "concat";
-pub async fn concat<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = command.take_args();
 
@@ -2100,16 +2020,16 @@ pub async fn concat<'c>(
 
 pub const CAPITALIZE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const CAPITALIZE: &str = "capitalize";
-pub async fn capitalize<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn capitalize(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let text = args.pop_front().unwrap().as_text(data).await?;
     let mut chars = text.chars();
     let text = if let Some(ch) = chars.next() {
-        Cow::Owned(ch.to_uppercase().collect::<String>() + chars.as_str())
+        SourceStr::Owned(ch.to_uppercase().collect::<String>() + chars.as_str())
     } else {
         text
     };
@@ -2118,10 +2038,10 @@ pub async fn capitalize<'c>(
 
 pub const UPPERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const UPPERCASE: &str = "uppercase";
-pub async fn uppercase<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn uppercase(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let text = args.pop_front().unwrap().as_text(data).await?;
@@ -2130,10 +2050,10 @@ pub async fn uppercase<'c>(
 
 pub const LOWERCASE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const LOWERCASE: &str = "lowercase";
-pub async fn lowercase<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn lowercase(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let text = args.pop_front().unwrap().as_text(data).await?;
@@ -2145,44 +2065,33 @@ pub const TRIM_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const TRIM: &str = "trim";
-pub async fn trim<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn trim(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let text = args.pop_front().unwrap().as_text(data.clone()).await?;
     let pattern = args.pop_front().unwrap().as_text(data).await?;
     let chars: Vec<char> = pattern.chars().collect();
-    let trimmed = match text {
-        Cow::Borrowed(s) => Cow::Borrowed(s.trim_matches(chars.as_slice())),
-        Cow::Owned(s) => Cow::Owned(s.trim_matches(chars.as_slice()).to_owned()),
-    };
-    Ok(Value::from(trimmed))
+    Ok(Value::from(text.trim_matches(chars.as_slice()).to_string()))
 }
 
 pub const TRIM_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const TRIM_WHITESPACE: &str = "trim_whitespace";
-pub async fn trim_whitespace<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn trim_whitespace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let text = args.pop_front().unwrap().as_text(data.clone()).await?;
-    let trimmed = match text {
-        Cow::Borrowed(s) => Cow::Borrowed(s.trim()),
-        Cow::Owned(s) => Cow::Owned(s.trim().to_owned()),
-    };
-    Ok(Value::from(trimmed))
+    Ok(Value::from(text.trim().to_string()))
 }
 
 pub const IS_NUMBER_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
 pub const IS_NUMBER: &str = "is_number";
-pub async fn is_number<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn is_number(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let value = args.pop_front().unwrap().as_number(data).await;
@@ -2191,10 +2100,10 @@ pub async fn is_number<'c>(
 
 pub const IS_NONE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), ANY)];
 pub const IS_NONE: &str = "is_none";
-pub async fn is_none<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn is_none(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let value = args
@@ -2207,10 +2116,10 @@ pub async fn is_none<'c>(
 
 pub const IS_ALPHA_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const IS_ALPHA: &str = "is_alpha";
-pub async fn is_alpha<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn is_alpha(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let value = args.pop_front().unwrap();
@@ -2225,10 +2134,10 @@ pub async fn is_alpha<'c>(
 
 pub const IS_ALPHA_EN_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const IS_ALPHA_EN: &str = "is_alpha_en";
-pub async fn is_alpha_en<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn is_alpha_en(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let value = args.pop_front().unwrap();
@@ -2250,10 +2159,10 @@ pub async fn is_alpha_en<'c>(
 
 pub const IS_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const IS_WHITESPACE: &str = "is_whitespace";
-pub async fn is_whitespace<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn is_whitespace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let value = args.pop_front().unwrap();
@@ -2268,10 +2177,10 @@ pub async fn is_whitespace<'c>(
 
 pub const REMOVE_WHITESPACE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
-pub async fn remove_whitespace<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn remove_whitespace(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let text = args.pop_front().unwrap().as_text(data).await?;
@@ -2283,10 +2192,7 @@ pub const SPLIT_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_TEXT),
 ];
 pub const SPLIT: &str = "split";
-pub async fn split<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let text_to_split = args.pop_front().unwrap().as_text(data.clone()).await?;
@@ -2306,10 +2212,10 @@ pub const RANDOM_RANGE_RULES: &[ArgRule] = &[
     ArgRule::new(ArgPos::Index(1), MAYBE_NUMBER),
 ];
 pub const RANDOM_RANGE: &str = "random_range";
-pub async fn random_range<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn random_range(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = tokio_stream::iter(command.take_args());
     let mut args = args
@@ -2321,9 +2227,9 @@ pub async fn random_range<'c>(
         let max = args.pop().unwrap().as_float(data.clone()).await?;
         let min = args.pop().unwrap().as_float(data.clone()).await?;
         if min >= max {
-            Err(RuntimeError::InvalidRange.to_exec(command.span))
+            Err(RuntimeError::InvalidRange.to_exec(command.span.clone(), data.source.clone()))
         } else if !min.is_finite() || !max.is_finite() {
-            Err(RuntimeError::NonFiniteValue.to_exec(command.span))
+            Err(RuntimeError::NonFiniteValue.to_exec(command.span.clone(), data.source.clone()))
         } else {
             Ok(rand::random_range(min..=max).into())
         }
@@ -2331,7 +2237,7 @@ pub async fn random_range<'c>(
         let max = args.pop().unwrap().as_int(data.clone()).await?;
         let min = args.pop().unwrap().as_int(data.clone()).await?;
         if min >= max {
-            Err(RuntimeError::InvalidRange.to_exec(command.span))
+            Err(RuntimeError::InvalidRange.to_exec(command.span.clone(), data.source.clone()))
         } else {
             Ok(rand::random_range(min..=max).into())
         }
@@ -2340,28 +2246,25 @@ pub async fn random_range<'c>(
 
 pub const SLEEP: &str = "sleep";
 pub const SLEEP_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_NUMBER)];
-pub async fn sleep<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn sleep(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
-    let arg_loc = arg.span;
-    let delay = arg.as_float(data).await?;
+    let arg_loc = arg.span.clone();
+    let delay = arg.as_float(data.clone()).await?;
     if !delay.is_finite() {
-        Err(RuntimeError::NonFiniteValue.to_exec(command.span))
+        Err(RuntimeError::NonFiniteValue.to_exec(command.span.clone(), data.source.clone()))
     } else if delay.is_sign_negative() {
         Err(
             RuntimeError::InvalidArgument("sleep time cannot be a negative number".into())
-                .to_exec(arg_loc),
+                .to_exec(arg_loc, data.source.clone()),
         )
     } else if delay > Duration::MAX.as_secs_f64() {
         Err(RuntimeError::InvalidArgument(format!(
             "sleep time cannot exceed {} seconds",
             Duration::MAX.as_secs_f64()
         ))
-        .to_exec(arg_loc))
+        .to_exec(arg_loc, data.source.clone()))
     } else {
         tokio::time::sleep(Duration::from_secs_f64(delay)).await;
         Ok(Value::None)
@@ -2370,37 +2273,40 @@ pub async fn sleep<'c>(
 
 pub const STOPWATCH: &str = "stopwatch";
 pub const STOPWATCH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
-pub async fn stopwatch<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn stopwatch(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = command.take_args();
     let start = std::time::Instant::now();
     let mut final_value = Value::None;
     for command in args {
-        final_value = command.as_command()?.execute(data.clone()).await?;
+        final_value = command
+            .as_command(data.clone())?
+            .execute(data.clone())
+            .await?;
     }
     let elapsed = start.elapsed().as_secs_f64();
     let return_value = Value::from(FslMap::from([
-        (Cow::Borrowed("value"), final_value),
-        (Cow::Borrowed("elapsed"), Value::from(elapsed)),
+        (SourceStr::Static("value"), final_value),
+        (SourceStr::Static("elapsed"), Value::from(elapsed)),
     ]));
     return Ok(return_value);
 }
 
 pub const RANDOM_ENTRY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_LIST)];
 pub const RANDOM_ENTRY: &str = "random_entry";
-pub async fn random_entry<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn random_entry(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
-    let list = args.pop_front().unwrap().as_list(data).await?;
+    let list = args.pop_front().unwrap().as_list(data.clone()).await?;
     let range = 0..list.len();
     if range.is_empty() {
-        Err(RuntimeError::InvalidRange.to_exec(command.span))
+        Err(RuntimeError::InvalidRange.to_exec(command.span.clone(), data.source.clone()))
     } else {
         Ok(list[rand::random_range(range)].clone())
     }
@@ -2408,10 +2314,10 @@ pub async fn random_entry<'c>(
 
 pub const SHUFFLE_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_LIST)];
 pub const SHUFFLE: &str = "shuffle";
-pub async fn shuffle<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn shuffle(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut list = args.pop_front().unwrap().as_list(data).await?;
@@ -2424,14 +2330,11 @@ pub const DEF_RULES: &'static [ArgRule] = &[
     ArgRule::new(ArgPos::AnyFrom(1), &[FslType::Var, FslType::Command]),
 ];
 pub const DEF: &str = "def";
-pub async fn def<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
-    let label = args.pop_front().unwrap().get_var_label()?;
-    let mut parameters: VecDeque<Cow<'c, str>> = VecDeque::new();
+    let label = args.pop_front().unwrap().get_var_label(data.clone())?;
+    let mut parameters: VecDeque<SourceStr> = VecDeque::new();
     let mut commands: Vec<Command> = Vec::new();
 
     let values_len = args.len();
@@ -2440,7 +2343,8 @@ pub async fn def<'c>(
         match args[i].value {
             Value::Var(ref label) => {
                 if encountered_command {
-                    return Err(RuntimeError::ParametersOutOfOrder.to_exec(command.span));
+                    return Err(RuntimeError::ParametersOutOfOrder
+                        .to_exec(command.span.clone(), data.source.clone()));
                 }
                 parameters.push_back(label.clone());
             }
@@ -2455,7 +2359,7 @@ pub async fn def<'c>(
                     fsl_type: args[i].value.as_type(),
                     expected: &[FslType::Var, FslType::Command],
                 }
-                .to_exec(args[i].span));
+                .to_exec(args[i].span.clone(), data.source.clone()));
             }
         }
     }
@@ -2470,7 +2374,7 @@ pub async fn def<'c>(
     Ok(Value::None)
 }
 
-fn alias_parameter<'c>(parameter: &mut Value<'c>, aliases: &HashMap<Cow<'c, str>, Cow<'c, str>>) {
+fn alias_parameter(parameter: &mut Value, aliases: &HashMap<SourceStr, SourceStr>) {
     match parameter {
         Value::List(values) => {
             for value in values.iter_mut() {
@@ -2496,14 +2400,11 @@ fn alias_parameter<'c>(parameter: &mut Value<'c>, aliases: &HashMap<Cow<'c, str>
 }
 
 pub const RUN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
-pub async fn run<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
 
-    let command_label = args.pop_front().unwrap().get_var_label()?;
+    let command_label = args.pop_front().unwrap().get_var_label(data.clone())?;
 
     data.push_def(command_label.clone()).await;
 
@@ -2524,12 +2425,12 @@ pub async fn run<'c>(
             expected: ExpectedArgs::Exactly(parameter_labels.len()),
             got: args.len(),
         }
-        .to_exec(command.span));
+        .to_exec(command.span.clone(), data.source.clone()));
     }
 
     data.vars.write().await.push();
 
-    let mut aliases: HashMap<Cow<'c, str>, Cow<'c, str>> = HashMap::new();
+    let mut aliases: HashMap<SourceStr, SourceStr> = HashMap::new();
     let parameters = parameter_labels.len();
     for _ in 0..parameters {
         let arg = args.pop_front().unwrap();
@@ -2543,7 +2444,7 @@ pub async fn run<'c>(
                 .await
                 .insert(&parameter, Var::Mut(arg.value))
                 .await
-                .map_err(|e| e.to_exec(command.span))?;
+                .map_err(|e| e.to_exec(command.span.clone(), data.source.clone()))?;
         }
     }
 
@@ -2567,37 +2468,41 @@ pub async fn run<'c>(
 }
 
 pub const BREAK: &str = "break";
-pub async fn r#break<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn r#break(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     if data.loop_depth().await > 0 {
         data.set_break_flag(true).await;
     } else {
-        return Err(RuntimeError::BreakOutsideLoop.to_exec(command.span));
+        return Err(
+            RuntimeError::BreakOutsideLoop.to_exec(command.span.clone(), data.source.clone())
+        );
     }
     Ok(Value::None)
 }
 
 pub const CONTINUE: &str = "continue";
-pub async fn r#continue<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn r#continue(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     if data.loop_depth().await > 0 {
         data.set_continue_flag(true).await;
     } else {
-        return Err(RuntimeError::ContinueOutsideLoop.to_exec(command.span));
+        return Err(
+            RuntimeError::ContinueOutsideLoop.to_exec(command.span.clone(), data.source.clone())
+        );
     }
     Ok(Value::None)
 }
 
 pub const RETURN_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::OptionalIndex(0), ANY)];
 pub const RETURN: &str = "return";
-pub async fn r#return<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn r#return(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let return_value = command.take_args().pop_front();
 
@@ -2615,11 +2520,8 @@ pub async fn r#return<'c>(
 }
 
 pub const EXIT: &str = "exit";
-pub async fn exit<'c>(
-    command: Command<'c>,
-    _: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
-    Err(RuntimeError::ProgramExited.to_exec(command.span))
+pub async fn exit(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
+    Err(RuntimeError::ProgramExited.to_exec(command.span.clone(), data.source.clone()))
 }
 
 #[cfg(test)]
@@ -2634,7 +2536,7 @@ pub mod tests {
         let mut interpreter = FslInterpreter::new().await;
         interpreter.register_all_libraries().await;
         let result = interpreter
-            .interpret(code, InterpreterData::default())
+            .interpret(code.to_string(), InterpreterData::default())
             .await;
 
         match &result {
@@ -2643,7 +2545,9 @@ pub mod tests {
         }
 
         let result = result.unwrap();
-        println!("PRETTY PRINT");
+        println!("EXPECTED:\n");
+        println!("{}", expected_output);
+        println!("\nGOT:\n");
         println!("{}", &result);
 
         assert!(result == expected_output);
@@ -2652,7 +2556,7 @@ pub mod tests {
     pub async fn observe_interpreter(code: &str) {
         let result = FslInterpreter::new()
             .await
-            .interpret(code, InterpreterData::default())
+            .interpret(code.to_string(), InterpreterData::default())
             .await;
 
         println!("DEBUG");
@@ -2666,7 +2570,7 @@ pub mod tests {
     pub async fn test_interpreter_embedded(code: &str, expected_output: &str) {
         let result = FslInterpreter::new()
             .await
-            .interpret_embedded_code(code, InterpreterData::default())
+            .interpret_embedded_code(code.to_string(), InterpreterData::default())
             .await;
 
         println!("DEBUG");
@@ -2682,7 +2586,7 @@ pub mod tests {
     pub async fn test_interpreter_err_type(code: &str) -> InterpreterError {
         let result = FslInterpreter::new()
             .await
-            .interpret(code, InterpreterData::default())
+            .interpret(code.to_string(), InterpreterData::default())
             .await;
         dbg!(&result);
         assert!(result.is_err());
@@ -2692,7 +2596,7 @@ pub mod tests {
     pub async fn interpreter_throws_err(code: &str, err: InterpreterError) -> bool {
         let result = FslInterpreter::new()
             .await
-            .interpret(code, InterpreterData::default())
+            .interpret(code.to_string(), InterpreterData::default())
             .await;
         dbg!(&result);
         result.is_err_and(|e| {
@@ -2704,7 +2608,7 @@ pub mod tests {
     pub async fn interpreter_results_in_error(code: &str) -> bool {
         let result = FslInterpreter::new()
             .await
-            .interpret(code, InterpreterData::default())
+            .interpret(code.to_string(), InterpreterData::default())
             .await;
         dbg!(&result);
         result.is_err()

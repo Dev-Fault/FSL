@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::ExecutionError,
+    error::{ExecutionError, RuntimeError, ToExecutionError},
     register_command,
     types::{
         FslType,
@@ -21,30 +21,35 @@ pub async fn register_async(interpreter: &mut FslInterpreter) {
 
 pub const JOIN_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
 pub const JOIN: &str = "join";
-pub async fn join<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let args = command.take_args();
     let args = args.into_iter();
-    let args: Result<Vec<Command<'c>>, ExecutionError> = args
-        .map(|arg| arg.as_command())
-        .collect::<Result<Vec<Command<'c>>, ExecutionError>>();
+    let args: Result<Vec<Command>, ExecutionError> =
+        args.map(|arg| arg.as_command(data.clone()))
+            .collect::<Result<Vec<Command>, ExecutionError>>();
     let commands = args?;
     let mut executors = Vec::new();
     for command in commands {
-        let future = command.execute(data.fork().await);
+        let data = data.fork().await;
+        let future = tokio::spawn(command.execute(data));
         executors.push(future);
     }
 
     let results = join_all(executors).await;
-
     let mut list: Vec<Value> = Vec::new();
-
     for result in results {
-        let value = result?;
-        list.push(value);
+        match result {
+            Ok(Ok(value)) => list.push(value),
+            Ok(Err(e)) => return Err(e),
+            Err(e) => {
+                return Err(RuntimeError::Custom(format!(
+                    "Failed to join threads:\n {}",
+                    e.to_string()
+                ))
+                .to_exec(command.span, data.source.clone()));
+            }
+        }
     }
 
     Ok(Value::from(list))
@@ -52,13 +57,13 @@ pub async fn join<'c>(
 
 pub const YIELD_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Command])];
 pub const YIELD: &str = "yield";
-pub async fn r#yield<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn r#yield(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
-    let command = args.pop_front().unwrap().as_command()?;
+    let command = args.pop_front().unwrap().as_command(data.clone())?;
     tokio::task::yield_now().await;
     let result = command.execute(data).await?;
 

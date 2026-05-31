@@ -1,9 +1,6 @@
 use std::{borrow::Cow, collections::VecDeque, fmt::Display};
 
-use crate::{
-    lexer::{LexError, Lexer, Symbol, Token, TokenType},
-    span::Span,
-};
+use crate::lexer::{LexError, Lexer, Symbol, Token, TokenType};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path<'c> {
@@ -161,7 +158,28 @@ pub enum ParseError<'c> {
     UnfinishedExpression(Expression<'c>),
     UnfinishedMap(Map<'c>),
     UnfinishedList(List<'c>),
-    ValueOutsideOfExpression(Span<'c>),
+    ValueOutsideOfExpression(ParserSpan<'c>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParserSpan<'c> {
+    pub start: Token<'c>,
+    pub end: Token<'c>,
+}
+
+impl<'c> ParserSpan<'c> {
+    pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
+        Self { start, end }
+    }
+}
+
+impl<'c> From<Token<'c>> for ParserSpan<'c> {
+    fn from(value: Token<'c>) -> Self {
+        Self {
+            start: value,
+            end: value,
+        }
+    }
 }
 
 impl<'c> Display for ParseError<'c> {
@@ -708,13 +726,15 @@ impl<'c> Parser<'c> {
                     }
                     _ => end = arg.token,
                 }
-                ParseError::ValueOutsideOfExpression(Span::new(start, end))
+                ParseError::ValueOutsideOfExpression(ParserSpan::new(start, end))
             }
-            PendingArg::DotArg(arg) => ParseError::ValueOutsideOfExpression(Span::from(arg.token)),
+            PendingArg::DotArg(arg) => {
+                ParseError::ValueOutsideOfExpression(ParserSpan::from(arg.token))
+            }
             PendingArg::PathArg(path) => {
-                ParseError::ValueOutsideOfExpression(Span::new(path.start, path.end))
+                ParseError::ValueOutsideOfExpression(ParserSpan::new(path.start, path.end))
             }
-            PendingArg::Key(token) => ParseError::ValueOutsideOfExpression(Span::from(token)),
+            PendingArg::Key(token) => ParseError::ValueOutsideOfExpression(ParserSpan::from(token)),
             PendingArg::Expression(expression) => ParseError::UnfinishedExpression(expression),
             PendingArg::List(list) => ParseError::UnfinishedList(list),
             PendingArg::Map(map) => ParseError::UnfinishedMap(map),

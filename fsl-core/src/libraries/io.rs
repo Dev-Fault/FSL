@@ -20,10 +20,7 @@ pub async fn register_io(interpreter: &mut FslInterpreter) {
 }
 pub const SAY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const SAY: &str = "say";
-pub async fn say<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn say(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let values = command.take_args();
 
@@ -40,10 +37,7 @@ pub async fn say<'c>(
 
 pub const ASK_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
 pub const ASK: &str = "ask";
-pub async fn ask<'c>(
-    command: Command<'c>,
-    data: Arc<InterpreterData<'c>>,
-) -> Result<Value<'c>, ExecutionError<'c>> {
+pub async fn ask(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let values = command.take_args();
 
@@ -58,6 +52,8 @@ pub async fn ask<'c>(
     let mut input = String::new();
     match std::io::stdin().read_line(&mut input) {
         Ok(_) => Ok(Value::from(input.trim().to_string())),
-        Err(e) => Err(RuntimeError::Custom(format!("{e}")).to_exec(command.span)),
+        Err(e) => {
+            Err(RuntimeError::Custom(format!("{e}")).to_exec(command.span, data.source.clone()))
+        }
     }
 }
