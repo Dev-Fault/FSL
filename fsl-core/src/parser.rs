@@ -1786,4 +1786,96 @@ mod tests {
         }];
         assert!(expected == parsed)
     }
+
+    // #[test]
+    fn parser_stress_test() {
+        let complex_expressions = r#"
+        add(
+            mul(
+                div(
+                    sub(100, add(1, 2)),
+                    add(3, mul(4, 5))
+                ),
+                add(sub(10, 5), div(20, 4))
+            ),
+            sub(
+                mul(add(1, 2), sub(3, 4)),
+                div(add(5, 6), mul(7, 8))
+            )
+        )
+    "#;
+
+        let large_list = r#"
+        list.store([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            "one", "two", "three", "four", "five",
+            true, false, true, false, true,
+            1.1, 2.2, 3.3, 4.4, 5.5,
+            "longer string with some words in it",
+            "another longer string with more words",
+            100, 200, 300, 400, 500
+        ])
+    "#;
+
+        let nested_map = r#"
+        data.store([
+            player: [
+                name: "hero",
+                stats: [
+                    health: 100,
+                    mana: 50,
+                    strength: 25,
+                    defense: 15
+                ],
+                inventory: ["sword", "shield", "potion", "arrow"]
+            ],
+            world: [
+                level: 5,
+                enemies: ["goblin", "orc", "dragon"],
+                weather: "rain"
+            ]
+        ])
+    "#;
+
+        let string_ops = r#"
+        concat(
+            "hello".uppercase(),
+            " ",
+            "world".capitalize(),
+            " ",
+            "  trimmed  ".trim_whitespace()
+        )
+    "#;
+
+        let complex_conditionals = r#"
+        if(and(x.gt(10), or(x.lt(100), x.eq(42))),
+            then(
+                if(x.mod(2).eq(0),
+                    then(result.store("even"))
+                    else(result.store("odd"))
+                )
+            )
+            else(
+                result.store("out of range")
+            )
+        )
+    "#;
+
+        let sources = [
+            ("complex expressions", complex_expressions),
+            ("large list", large_list),
+            ("nested map", nested_map),
+            ("string ops", string_ops),
+            ("complex conditionals", complex_conditionals),
+        ];
+
+        for (name, source) in sources {
+            let start = std::time::Instant::now();
+            for _ in 0..10000 {
+                Parser::new(source).parse().unwrap();
+            }
+            let elapsed = start.elapsed().as_secs_f64();
+            println!("10000x {} parse: {}s", name, elapsed);
+        }
+    }
 }
