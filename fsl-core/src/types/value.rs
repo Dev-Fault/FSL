@@ -18,7 +18,6 @@ use crate::{
 };
 pub type FslMap = HashMap<SourceStr, Value>;
 pub type ValueResult<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
-pub type ArgResult<'c, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'c>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum List {
