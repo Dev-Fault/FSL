@@ -505,12 +505,21 @@ impl FslInterpreter {
 
 #[cfg(test)]
 mod interpreter {
+    use std::borrow::Cow;
+
+    use bytes::Bytes;
+
     use crate::FslInterpreter;
     use crate::data::{InterpreterData, InterpreterLimits};
     use crate::error::RuntimeError;
     use crate::libraries::standard::tests::{
         test_interpreter, test_interpreter_embedded, test_interpreter_err_type,
     };
+    use crate::source_str::SourceStr;
+    use crate::types::command::Command;
+    use crate::types::list::List;
+    use crate::types::map::Map;
+    use crate::types::value::Value;
 
     #[macro_export]
     macro_rules! assert_runtime_err {
@@ -2472,5 +2481,21 @@ mod interpreter {
         )
         .await;
         assert_runtime_err!(err, RuntimeError::NonExistantCommand { .. })
+    }
+
+    #[tokio::test]
+    async fn sizes() {
+        dbg!(size_of::<i64>());
+        dbg!(size_of::<f64>());
+        dbg!(size_of::<bool>());
+        dbg!(size_of::<SourceStr>());
+        dbg!(size_of::<&'static str>());
+        dbg!(size_of::<Cow<'_, str>>());
+        dbg!(size_of::<Bytes>());
+        dbg!(size_of::<String>());
+        dbg!(size_of::<List>());
+        dbg!(size_of::<Map>());
+        dbg!(size_of::<Box<Command>>());
+        dbg!(size_of::<Value>());
     }
 }
