@@ -73,3 +73,9 @@ impl From<String> for SourceStr {
         Self::Owned(value)
     }
 }
+
+impl From<&'static str> for SourceStr {
+    fn from(value: &'static str) -> Self {
+        Self::Static(value)
+    }
+}

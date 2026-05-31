@@ -14,134 +14,16 @@ use crate::{
     source_str::SourceStr,
     span::Span,
     types::{
-        FslType,
+        ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, MAYBE_BOOL, MAYBE_COLLECTION,
+        MAYBE_INDEXABLE, MAYBE_INT, MAYBE_KEY, MAYBE_LIST, MAYBE_LIST_KEY, MAYBE_MAP,
+        MAYBE_MAP_KEY, MAYBE_NUMBER, MAYBE_TEXT, NO_ARGS, NOT_NONE, NUMBER, STORABLE,
         command::{ArgPos, ArgRule, Argument, Command, Handler},
-        value::{FslMap, FslValue, List, Value},
+        list::List,
+        map::FslMap,
+        value::{FslValue, Value},
     },
     vars::Var,
 };
-
-use futures::FutureExt;
-
-pub const ANY: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
-    FslType::Var,
-    FslType::Command,
-    FslType::None,
-];
-
-pub const NOT_NONE: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
-    FslType::Var,
-    FslType::Command,
-];
-
-pub const STORABLE: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
-    FslType::Var,
-    FslType::Command,
-];
-
-pub const LITERAL: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
-];
-
-pub const MAYBE_NUMBER: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
-];
-
-pub const NUMBER: &[FslType] = &[FslType::Int, FslType::Float, FslType::Text];
-
-pub const MAYBE_INT: &[FslType] = &[FslType::Int, FslType::Command, FslType::Var, FslType::Text];
-
-pub const MAYBE_KEY: &[FslType] = &[
-    FslType::List,
-    FslType::Int,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
-];
-
-pub const KEY: &[FslType] = &[FslType::List, FslType::Int, FslType::Text];
-
-pub const MAYBE_LIST_KEY: &[FslType] = &[
-    FslType::List,
-    FslType::Int,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
-];
-
-pub const LIST_KEY: &[FslType] = &[FslType::List, FslType::Int, FslType::Text];
-
-pub const MAYBE_MAP_KEY: &[FslType] =
-    &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
-
-pub const MAP_KEY: &[FslType] = &[FslType::List, FslType::Text];
-
-pub const MAYBE_INDEXABLE: &[FslType] =
-    &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
-
-pub const INDEXABLE: &[FslType] = &[FslType::List, FslType::Text];
-
-pub const MAYBE_LIST: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
-
-pub const MAYBE_MAP: &[FslType] = &[FslType::Map, FslType::Command, FslType::Var];
-
-pub const MAYBE_COLLECTION: &[FslType] = &[
-    FslType::Map,
-    FslType::List,
-    FslType::Text,
-    FslType::Command,
-    FslType::Var,
-];
-
-pub const COLLECTION: &[FslType] = &[FslType::Map, FslType::List, FslType::Text];
-
-pub const MAYBE_TEXT: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
-
-pub const MAYBE_BOOL: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
-
-pub const NO_ARGS: &[ArgRule] = &[ArgRule::none()];
-
-pub const MATH_RULES: &[ArgRule] = &[
-    ArgRule {
-        position: ArgPos::AnyFrom(0),
-        valid_types: MAYBE_NUMBER,
-    },
-    ArgRule {
-        position: ArgPos::Index(0),
-        valid_types: MAYBE_NUMBER,
-    },
-    ArgRule {
-        position: ArgPos::Index(1),
-        valid_types: MAYBE_NUMBER,
-    },
-];
 
 pub async fn register_std(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, ADD, MATH_RULES, add);
@@ -794,6 +676,31 @@ pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, E
         .await?;
 
     Ok(Value::Bool(a.equal(&b, data.clone())?))
+}
+
+pub const SOFT_EQ_RULES: &'static [ArgRule] = &[
+    ArgRule::new(ArgPos::Index(0), NOT_NONE),
+    ArgRule::new(ArgPos::Index(1), NOT_NONE),
+];
+pub const SOFT_EQ: &str = "soft_eq";
+pub async fn soft_eq(
+    command: Command,
+    data: Arc<InterpreterData>,
+) -> Result<Value, ExecutionError> {
+    let mut command = command;
+    let mut args = command.take_args();
+    let a = args
+        .pop_front()
+        .unwrap()
+        .as_raw_checked(data.clone(), ANY)
+        .await?;
+    let b = args
+        .pop_front()
+        .unwrap()
+        .as_raw_checked(data.clone(), ANY)
+        .await?;
+
+    Ok(Value::Bool(a.soft_equal(&b, data.clone())?))
 }
 
 pub const GT_RULES: &[ArgRule; 2] = &[

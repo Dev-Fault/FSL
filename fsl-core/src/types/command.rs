@@ -16,7 +16,9 @@ use crate::{
     span::Span,
     types::{
         FslType,
-        value::{FslValue, List, Map, Value, ValueResult},
+        list::List,
+        map::Map,
+        value::{FslValue, Value, ValueResult},
     },
 };
 
@@ -141,6 +143,16 @@ impl FslValue<Argument, ExecutionError> for Argument {
     fn equal(&self, other: &Argument, data: Arc<InterpreterData>) -> Result<bool, ExecutionError> {
         self.value
             .equal(&other.value, data.clone())
+            .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
+    }
+
+    fn soft_equal(
+        &self,
+        other: &Argument,
+        data: Arc<InterpreterData>,
+    ) -> Result<bool, ExecutionError> {
+        self.value
+            .soft_equal(&other.value, data.clone())
             .map_err(|e| e.to_exec(self.span.clone(), data.source.clone()))
     }
 

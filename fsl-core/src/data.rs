@@ -142,7 +142,7 @@ pub struct InterpreterData {
 
     pub vars: Arc<RwLock<VarStore>>,
 
-    pub ctx: Mutex<ExecutionContext>,
+    pub ctx: RwLock<ExecutionContext>,
 }
 
 impl InterpreterData {
@@ -183,7 +183,7 @@ impl InterpreterData {
             total_loops: self.total_loops.clone(),
             output: self.output.clone(),
             vars: Arc::new(RwLock::new(self.vars.read().await.clone())),
-            ctx: Mutex::new(self.ctx.lock().await.clone()),
+            ctx: RwLock::new(self.ctx.read().await.clone()),
         }
         .into()
     }
@@ -218,27 +218,27 @@ impl InterpreterData {
     }
 
     pub async fn push_call(&self, command_label: SourceStr) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.call_stack.push(command_label);
     }
 
     pub async fn pop_call(&self) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.call_stack.pop();
     }
 
     pub async fn push_def(&self, def: SourceStr) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.def_stack.push(def);
     }
 
     pub async fn pop_def(&self) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.def_stack.pop();
     }
 
     pub async fn call_stack_to_string(&self) -> String {
-        let ctx = self.ctx.lock().await;
+        let ctx = self.ctx.read().await;
         let mut output = String::new();
         for (i, call) in ctx.call_stack.iter().enumerate() {
             let call = if call.is_empty() { "scope" } else { call };
@@ -253,57 +253,57 @@ impl InterpreterData {
     }
 
     pub async fn inc_loop_depth(&self) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.loop_depth += 1;
     }
 
     pub async fn dec_loop_depth(&self) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.loop_depth -= 1;
     }
 
     pub async fn loop_depth(&self) -> usize {
-        let ctx = self.ctx.lock().await;
+        let ctx = self.ctx.read().await;
         ctx.loop_depth
     }
 
     pub async fn get_return_flag(&self) -> bool {
-        let ctx = self.ctx.lock().await;
+        let ctx = self.ctx.read().await;
         ctx.flags.return_flag
     }
 
     pub async fn set_return_flag(&self, value: bool) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.flags.return_flag = value;
     }
 
     pub async fn get_continue_flag(&self) -> bool {
-        let ctx = self.ctx.lock().await;
+        let ctx = self.ctx.read().await;
         ctx.flags.continue_flag
     }
 
     pub async fn set_continue_flag(&self, value: bool) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.flags.continue_flag = value;
     }
 
     pub async fn get_break_flag(&self) -> bool {
-        let ctx = self.ctx.lock().await;
+        let ctx = self.ctx.read().await;
         ctx.flags.break_flag
     }
 
     pub async fn set_break_flag(&self, value: bool) {
-        let mut ctx = self.ctx.lock().await;
+        let mut ctx = self.ctx.write().await;
         ctx.flags.break_flag = value;
     }
 
     pub async fn should_execute(&self) -> bool {
-        let ctx = self.ctx.lock().await;
+        let ctx = self.ctx.read().await;
         ctx.flags.return_flag || ctx.flags.continue_flag || ctx.flags.break_flag
     }
 
     pub async fn find_user_def(&self, label: &SourceStr) -> Option<Arc<UserDef>> {
-        let ctx = self.ctx.lock().await;
+        let ctx = self.ctx.read().await;
         let root = self.user_defs.clone();
 
         let mut levels = vec![root.clone()];

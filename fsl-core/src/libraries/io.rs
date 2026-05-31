@@ -5,14 +5,12 @@ use crate::{
     data::InterpreterData,
     error::{ExecutionError, RuntimeError, ToExecutionError},
     register_command,
-    standard::NOT_NONE,
     types::{
+        NOT_NONE,
         command::{ArgPos, ArgRule, Command, Handler},
         value::{FslValue, Value},
     },
 };
-
-use futures::FutureExt;
 
 pub async fn register_io(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, SAY, SAY_RULES, say);

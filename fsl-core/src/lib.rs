@@ -53,11 +53,46 @@ macro_rules! register_commands {
         $( ($label:expr, $rules:expr, $executor:path) ),* $(,)?
     ]) => {
         $(
-            $self.register($label, $rules, Handler::new(|command, data| $executor(command, data).boxed())).await;
+        $self
+            .register(
+                $label,
+                $rules,
+                Handler::new(|command, data| futures::FutureExt::boxed($executor(command, data))),
+            )
+            .await;
         )*
     };
 }
 
+/// # Examples
+/// Registers command to the interpreter
+/// Command can either be a path to fn with the correct signature
+/// or an async closure
+///
+/// Greet command:
+/// ```
+/// # use fsl_core::*;
+/// # use fsl_core::data::*;
+/// # use fsl_core::types::*;
+/// # use fsl_core::types::value::*;
+/// # use fsl_core::types::command::*;
+/// # use std::sync::Arc;
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// rt.block_on(async {
+///     let mut interpreter = FslInterpreter::new().await;
+///     register_command!(interpreter, "greet", NO_ARGS, |cmd, data| {
+///         async move {
+///             data.output.lock().await.push_str("Hello!");
+///             Ok(Value::None)
+///         }
+///     });
+///     let result = interpreter.interpret(
+///         "greet()".to_string(),
+///         InterpreterData::default()
+///     ).await.unwrap();
+///     assert_eq!(result, "Hello!");
+/// });
+/// ```
 #[macro_export]
 macro_rules! register_command {
     ($self:expr, $label:expr, $rules:expr, $executor:path) => {
@@ -65,12 +100,20 @@ macro_rules! register_command {
             .register(
                 $label,
                 $rules,
-                Handler::new(|command, data| $executor(command, data).boxed()),
+                Handler::new(|command, data| futures::FutureExt::boxed($executor(command, data))),
+            )
+            .await;
+    };
+    ($self:expr, $label:expr, $rules:expr, |$cmd:ident, $dat:ident| $body:block) => {
+        $self
+            .register(
+                $label,
+                $rules,
+                Handler::new(move |$cmd, $dat| futures::FutureExt::boxed($body)),
             )
             .await;
     };
 }
-
 impl FslInterpreter {
     pub async fn new() -> Self {
         let mut interpreter = Self {
@@ -248,7 +291,7 @@ impl FslInterpreter {
                         .into());
                     }
                 };
-                let mut ctx = data.ctx.lock().await;
+                let mut ctx = data.ctx.write().await;
                 ctx.def_stack.push(def_label);
             }
         }
@@ -278,7 +321,7 @@ impl FslInterpreter {
 
         for expression in expressions.all() {
             Self::execute_def(data.clone(), defs.clone(), &expression).await?;
-            let mut ctx = data.ctx.lock().await;
+            let mut ctx = data.ctx.write().await;
             ctx.def_stack.clear();
         }
 

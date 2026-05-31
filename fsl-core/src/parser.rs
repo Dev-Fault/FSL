@@ -20,13 +20,13 @@ impl<'c> Path<'c> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct List<'c> {
+pub struct ParsedList<'c> {
     pub start: Token<'c>,
     pub data: Vec<Arg<'c>>,
     pub end: Token<'c>,
 }
 
-impl<'c> List<'c> {
+impl<'c> ParsedList<'c> {
     pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
         Self {
             start,
@@ -36,7 +36,7 @@ impl<'c> List<'c> {
     }
 }
 
-impl<'c> From<Path<'c>> for List<'c> {
+impl<'c> From<Path<'c>> for ParsedList<'c> {
     fn from(value: Path<'c>) -> Self {
         Self {
             start: value.start,
@@ -47,13 +47,13 @@ impl<'c> From<Path<'c>> for List<'c> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Map<'c> {
+pub struct ParsedMap<'c> {
     pub start: Token<'c>,
     pub data: Vec<(Token<'c>, Arg<'c>)>,
     pub end: Token<'c>,
 }
 
-impl<'c> Map<'c> {
+impl<'c> ParsedMap<'c> {
     pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
         Self {
             start,
@@ -88,8 +88,8 @@ pub enum ArgKind<'c> {
     String(Cow<'c, str>),
     Keyword(&'c str),
     Identifier(&'c str),
-    List(List<'c>),
-    Map(Map<'c>),
+    List(ParsedList<'c>),
+    Map(ParsedMap<'c>),
     Expression(Expression<'c>),
 }
 
@@ -105,14 +105,14 @@ impl<'c> Arg<'c> {
     }
 }
 
-impl<'c> From<List<'c>> for ArgKind<'c> {
-    fn from(value: List<'c>) -> Self {
+impl<'c> From<ParsedList<'c>> for ArgKind<'c> {
+    fn from(value: ParsedList<'c>) -> Self {
         Self::List(value)
     }
 }
 
-impl<'c> From<Map<'c>> for ArgKind<'c> {
-    fn from(value: Map<'c>) -> Self {
+impl<'c> From<ParsedMap<'c>> for ArgKind<'c> {
+    fn from(value: ParsedMap<'c>) -> Self {
         Self::Map(value)
     }
 }
@@ -129,8 +129,8 @@ pub enum PendingArg<'c> {
     PathArg(Path<'c>),
     Key(Token<'c>),
     Expression(Expression<'c>),
-    List(List<'c>),
-    Map(Map<'c>),
+    List(ParsedList<'c>),
+    Map(ParsedMap<'c>),
     UnitializedCollection(Token<'c>),
     Done(Arg<'c>),
 }
@@ -156,8 +156,8 @@ pub enum ParseError<'c> {
     OutOfPlaceSymbol(Token<'c>),
     OutOfPlaceValue(Token<'c>),
     UnfinishedExpression(Expression<'c>),
-    UnfinishedMap(Map<'c>),
-    UnfinishedList(List<'c>),
+    UnfinishedMap(ParsedMap<'c>),
+    UnfinishedList(ParsedList<'c>),
     ValueOutsideOfExpression(ParserSpan<'c>),
 }
 
@@ -268,11 +268,11 @@ impl<'c> Parser<'c> {
         }
     }
 
-    fn pend_map(&mut self, map: Map<'c>) {
+    fn pend_map(&mut self, map: ParsedMap<'c>) {
         self.pending.push(PendingArg::Map(map));
     }
 
-    fn pend_map_with_value(&mut self, map: Map<'c>, key: Token<'c>, value: Option<Arg<'c>>) {
+    fn pend_map_with_value(&mut self, map: ParsedMap<'c>, key: Token<'c>, value: Option<Arg<'c>>) {
         let mut map = map;
         if let Some(value) = value {
             map.end = value.token;
@@ -291,7 +291,7 @@ impl<'c> Parser<'c> {
             Some(maybe_map) => match maybe_map {
                 PendingArg::Map(map) => Ok(self.pend_map_with_value(map, key, value)),
                 PendingArg::UnitializedCollection(start) => {
-                    Ok(self.pend_map_with_value(Map::new(start, start), key, value))
+                    Ok(self.pend_map_with_value(ParsedMap::new(start, start), key, value))
                 }
                 _ => Err(ParseError::OutOfPlaceValue(maybe_map.start())),
             },
@@ -299,7 +299,7 @@ impl<'c> Parser<'c> {
         }
     }
 
-    fn pend_list_with_value(&mut self, list: List<'c>, value: Option<Arg<'c>>) {
+    fn pend_list_with_value(&mut self, list: ParsedList<'c>, value: Option<Arg<'c>>) {
         let mut list = list;
         if let Some(value) = value {
             list.end = value.token;
@@ -323,7 +323,7 @@ impl<'c> Parser<'c> {
         self.pending.push(PendingArg::Expression(expr));
     }
 
-    fn pend_list(&mut self, list: List<'c>) {
+    fn pend_list(&mut self, list: ParsedList<'c>) {
         self.pending.push(PendingArg::List(list));
     }
 
@@ -466,7 +466,7 @@ impl<'c> Parser<'c> {
                             )?),
                             PendingArg::UnitializedCollection(start) => Ok(self
                                 .pend_list_with_value(
-                                    List::new(start, start),
+                                    ParsedList::new(start, start),
                                     Some(Arg::new(expr.into(), token)),
                                 )),
                             PendingArg::Done(done) => {
@@ -511,7 +511,7 @@ impl<'c> Parser<'c> {
                     self.pending.push(collection);
                 }
                 PendingArg::UnitializedCollection(start) => {
-                    self.pend_list_with_value(List::new(start, token), last_arg)
+                    self.pend_list_with_value(ParsedList::new(start, token), last_arg)
                 }
                 _ => {
                     return Err(ParseError::OutOfPlaceSymbol(token));
@@ -617,10 +617,10 @@ impl<'c> Parser<'c> {
                         PendingArg::Expression(expression) => {
                             Ok(self.pend_expr_with_value(expression, value.into()))
                         }
-                        PendingArg::UnitializedCollection(start) => {
-                            Ok(self
-                                .pend_list_with_value(List::new(start, value.token), value.into()))
-                        }
+                        PendingArg::UnitializedCollection(start) => Ok(self.pend_list_with_value(
+                            ParsedList::new(start, value.token),
+                            value.into(),
+                        )),
                         PendingArg::List(list) => Ok(self.pend_list_with_value(list, value.into())),
                         PendingArg::Key(key) => {
                             Ok(self.try_pend_map_with_value(token, key, value.into())?)

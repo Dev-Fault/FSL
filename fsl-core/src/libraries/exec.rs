@@ -8,14 +8,12 @@ use crate::{
     error::{ExecutionError, RuntimeError, ToExecutionError},
     register_command,
     source_str::SourceStr,
-    standard::MAYBE_TEXT,
     types::{
+        MAYBE_TEXT,
         command::{ArgPos, ArgRule, Command, Handler},
         value::{FslValue, Value},
     },
 };
-
-use futures::FutureExt;
 
 pub async fn register_exec(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, EXEC, EXEC_RULES, exec);

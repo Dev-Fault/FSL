@@ -2,7 +2,7 @@ use std::ops::{Range, RangeBounds};
 
 use crate::{
     lexer::Token,
-    parser::{Arg, Expression, List, Map},
+    parser::{Arg, Expression, ParsedList, ParsedMap},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -103,8 +103,8 @@ impl<'c> From<&Token<'c>> for Span {
     }
 }
 
-impl<'c> From<&List<'c>> for Span {
-    fn from(list: &List<'c>) -> Self {
+impl<'c> From<&ParsedList<'c>> for Span {
+    fn from(list: &ParsedList<'c>) -> Self {
         Self {
             start: list.start.location,
             end: list.end.location + list.end.len(),
@@ -112,8 +112,8 @@ impl<'c> From<&List<'c>> for Span {
     }
 }
 
-impl<'c> From<&Map<'c>> for Span {
-    fn from(map: &Map<'c>) -> Self {
+impl<'c> From<&ParsedMap<'c>> for Span {
+    fn from(map: &ParsedMap<'c>) -> Self {
         Self {
             start: map.start.location,
             end: map.end.location + map.end.len(),
