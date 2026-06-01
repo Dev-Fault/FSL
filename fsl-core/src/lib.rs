@@ -25,7 +25,7 @@ use crate::{
     types::{
         FslType,
         command::{ArgRule, Argument, Command, CommandDef, Handler, UserDef},
-        value::Value,
+        value::{FslValue, Value},
     },
 };
 
@@ -114,6 +114,21 @@ macro_rules! register_command {
             .await;
     };
 }
+
+#[macro_export]
+macro_rules! fsl {
+    ($code:literal) => {{
+        // 1. Stringify the Rust tokens into a raw string slice at compile time
+        let code = $code;
+
+        let mut interpreter = FslInterpreter::new().await;
+        interpreter.register_all_libraries().await;
+        interpreter
+            .interpret(code.to_string(), InterpreterData::default())
+            .await
+    }};
+}
+
 impl FslInterpreter {
     pub async fn new() -> Self {
         let mut interpreter = Self {
@@ -537,6 +552,33 @@ mod interpreter {
                 ))
             )
         };
+    }
+    #[macro_export]
+    macro_rules! assert_fsl {
+        ($code:literal, $expected:literal) => {{
+            // 1. Stringify the Rust tokens into a raw string slice at compile time
+            let code = $code;
+
+            let mut interpreter = FslInterpreter::new().await;
+            interpreter.register_all_libraries().await;
+            let result = interpreter
+                .interpret(code.to_string(), InterpreterData::default())
+                .await;
+            println!("=====EXPECTED=====");
+            println!($expected);
+            println!("");
+            println!("=====GOT==========");
+            match &result {
+                Ok(result) => {
+                    println!("{}", result);
+                }
+                Err(e) => {
+                    println!("{}", e.to_string())
+                }
+            }
+            println!("");
+            assert!($expected == result.unwrap());
+        }};
     }
 
     async fn test_interpreter_err(code: &str) {
@@ -2481,6 +2523,21 @@ mod interpreter {
         )
         .await;
         assert_runtime_err!(err, RuntimeError::NonExistantCommand { .. })
+    }
+
+    #[tokio::test]
+    async fn fsl_macro() {
+        assert_fsl!(
+            "
+            i.store(1)
+            if(i.eq(1)
+                then(
+                    print(true)
+                )
+            )
+            ",
+            "true"
+        );
     }
 
     #[tokio::test]

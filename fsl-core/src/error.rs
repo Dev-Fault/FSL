@@ -160,6 +160,7 @@ pub enum RuntimeError {
     NonExistantCommand {
         label: String,
     },
+    ValueDef,
     // Control Flow
     BreakOutsideLoop,
     ContinueOutsideLoop,
@@ -349,6 +350,9 @@ impl std::fmt::Display for RuntimeError {
                 &format!("process `{}` failed to run", process)
             }
             RuntimeError::OutputFailure(failure) => failure,
+            RuntimeError::ValueDef => {
+                &format!("Defs need to be at top level or inside another def.")
+            }
         };
 
         write!(f, "{}", output)

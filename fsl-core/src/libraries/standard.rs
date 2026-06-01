@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use futures::FutureExt;
 use rand::seq::SliceRandom;
 use tokio_stream::StreamExt;
 
@@ -2222,7 +2223,9 @@ pub const DEF: &str = "def";
 pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
-    let label = args.pop_front().unwrap().get_var_label(data.clone())?;
+    let label = args.pop_front().unwrap();
+    let label_span = label.span;
+    let label = label.get_var_label(data.clone())?;
     let mut parameters: VecDeque<SourceStr> = VecDeque::new();
     let mut commands: Vec<Command> = Vec::new();
 
@@ -2254,14 +2257,14 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         }
     }
 
-    let def = data
-        .find_user_def(&label)
-        .await
-        .expect("definitions should be pre declared");
+    match data.find_user_def(&label).await {
+        Some(def) => {
+            def.define(parameters, commands).await;
 
-    def.define(parameters, commands).await;
-
-    Ok(Value::None)
+            Ok(Value::None)
+        }
+        None => Err(RuntimeError::ValueDef.to_exec(label_span, data)),
+    }
 }
 
 fn alias_parameter(parameter: &mut Value, aliases: &HashMap<SourceStr, SourceStr>) {
