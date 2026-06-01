@@ -249,6 +249,8 @@ impl VarStore {
                 }
             }
         }
-        panic!("cannot call take on non existant var")
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
     }
 }
