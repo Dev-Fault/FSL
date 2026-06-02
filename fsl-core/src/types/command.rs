@@ -15,42 +15,10 @@ use crate::{
     source_str::SourceStr,
     span::Span,
     types::{
-        FslType,
-        list::List,
-        map::Map,
-        value::{FslValue, Value, ValueResult},
+        argument::{ArgPos, ArgRule, Argument},
+        value::Value,
     },
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArgPos {
-    Index(usize),
-    OptionalIndex(usize),
-    Range(Range<usize>),
-    AnyFrom(usize),
-    None,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ArgRule {
-    pub position: ArgPos,
-    pub valid_types: &'static [FslType],
-}
-
-impl ArgRule {
-    pub const fn new(position: ArgPos, valid_types: &'static [FslType]) -> Self {
-        Self {
-            position,
-            valid_types,
-        }
-    }
-    pub const fn none() -> Self {
-        Self {
-            position: ArgPos::None,
-            valid_types: &[],
-        }
-    }
-}
 
 pub type InterpreterFut = BoxFuture<'static, Result<Value, ExecutionError>>;
 
@@ -92,212 +60,8 @@ impl CommandDef {
         Self {
             label,
             arg_rules,
-            handler: handler,
+            handler,
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Argument {
-    pub value: Value,
-    pub span: Span,
-}
-
-impl Argument {
-    pub async fn mut_with<F, R>(
-        &mut self,
-        data: Arc<InterpreterData>,
-        f: F,
-    ) -> Result<R, ExecutionError>
-    where
-        F: FnOnce(&mut Value) -> Result<R, ExecutionError>,
-    {
-        if let Value::Var(label) = &self.value {
-            let vars = data.vars.read().await;
-            vars.with_mut(&label, f)
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))?
-        } else {
-            f(&mut self.value)
-        }
-    }
-}
-
-impl FslValue<Argument, ExecutionError> for Argument {
-    fn as_type(&self) -> FslType {
-        self.value.as_type()
-    }
-
-    async fn as_literal_type(&self, data: Arc<InterpreterData>) -> Result<FslType, RuntimeError> {
-        self.value.as_literal_type(data).await
-    }
-
-    fn is_type(&self, fsl_type: FslType) -> bool {
-        self.value.is_type(fsl_type)
-    }
-
-    fn mem_size(&self) -> Result<usize, RuntimeError> {
-        self.value.mem_size()
-    }
-
-    fn equal(&self, other: &Argument, data: Arc<InterpreterData>) -> Result<bool, ExecutionError> {
-        self.value
-            .equal(&other.value, data.clone())
-            .map_err(|e| e.to_exec(self.span, data.clone()))
-    }
-
-    fn soft_equal(
-        &self,
-        other: &Argument,
-        data: Arc<InterpreterData>,
-    ) -> Result<bool, ExecutionError> {
-        self.value
-            .soft_equal(&other.value, data.clone())
-            .map_err(|e| e.to_exec(self.span, data.clone()))
-    }
-
-    fn as_int(self, data: Arc<InterpreterData>) -> ValueResult<i64, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_int(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_usize(self, data: Arc<InterpreterData>) -> ValueResult<usize, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_usize(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_float(self, data: Arc<InterpreterData>) -> ValueResult<f64, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_float(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_bool(self, data: Arc<InterpreterData>) -> ValueResult<bool, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_bool(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_var_label(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_var_label(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_text(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_text(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_list(self, data: Arc<InterpreterData>) -> ValueResult<List, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_list(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_map(self, data: Arc<InterpreterData>) -> ValueResult<Map, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_map(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_number(self, data: Arc<InterpreterData>) -> ValueResult<Argument, ExecutionError> {
-        Box::pin(async move {
-            let number = self.value.as_number(data.clone()).await;
-            // dbg!(self.span);
-            let number = number.map(|v| Self::new(v, self.span));
-            let number = number.map_err(|e| e.to_exec(self.span, data.clone()));
-            number
-        })
-    }
-
-    fn as_raw_checked(
-        self,
-        data: Arc<InterpreterData>,
-        valid_types: &'static [FslType],
-    ) -> ValueResult<Argument, ExecutionError> {
-        Box::pin(async move {
-            let raw = self.value.as_raw_checked(data.clone(), valid_types).await;
-            let raw = raw.map(|v| Self::new(v, self.span));
-            let raw = raw.map_err(|e| e.to_exec(self.span, data.clone()));
-            raw
-        })
-    }
-
-    fn as_raw(self, data: Arc<InterpreterData>) -> ValueResult<Argument, ExecutionError> {
-        Box::pin(async move {
-            let raw = self.value.as_raw(data.clone()).await;
-            let raw = raw.map(|v| Self::new(v, self.span));
-            let raw = raw.map_err(|e| e.to_exec(self.span, data.clone()));
-            raw
-        })
-    }
-
-    fn as_list_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<usize>, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_list_key(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_map_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<SourceStr>, ExecutionError> {
-        Box::pin(async move {
-            self.value
-                .as_map_key(data.clone())
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))
-        })
-    }
-
-    fn as_command(self, data: Arc<InterpreterData>) -> Result<Command, ExecutionError> {
-        self.value
-            .as_command(data.clone())
-            .map_err(|e| e.to_exec(self.span, data.clone()))
-    }
-
-    fn get_var_label(&self, data: Arc<InterpreterData>) -> Result<SourceStr, ExecutionError> {
-        self.value
-            .get_var_label(data.clone())
-            .map_err(|e| e.to_exec(self.span, data.clone()))
-    }
-
-    fn get_command_label(&self) -> Option<&str> {
-        self.value.get_command_label()
-    }
-}
-
-impl Argument {
-    pub fn new(value: Value, span: Span) -> Self {
-        Self { value, span }
     }
 }
 
@@ -310,11 +74,11 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn mem_size(&self) -> Result<usize, RuntimeError> {
+    pub async fn mem_size(&self) -> Result<usize, RuntimeError> {
         let mut size = size_of::<Command>();
         for arg in &self.args {
             size = size
-                .checked_add(arg.value.mem_size()?)
+                .checked_add(arg.mem_size().await?)
                 .ok_or(RuntimeError::Overflow)?;
         }
         Ok(size)
@@ -328,7 +92,7 @@ impl Command {
     ) -> Self {
         Self {
             args: VecDeque::new(),
-            handler: handler,
+            handler,
             label,
             arg_rules,
             span,
@@ -373,7 +137,7 @@ impl Command {
         &mut self.args
     }
 
-    fn validate_arg_range(
+    async fn validate_arg_range(
         &self,
         arg_rule: &ArgRule,
         range: &Range<usize>,
@@ -381,7 +145,7 @@ impl Command {
     ) -> Result<(), ExecutionError> {
         for i in range.start..range.end {
             let arg = &self.args[i];
-            let fsl_type = arg.value.as_type();
+            let fsl_type = arg.value(data.clone()).await.as_type();
             if !arg_rule.valid_types.contains(&fsl_type) {
                 return Err(RuntimeError::WrongArgType {
                     command_label: self.get_label().to_string(),
@@ -395,7 +159,7 @@ impl Command {
         Ok(())
     }
 
-    fn validate_args(&self, data: Arc<InterpreterData>) -> Result<(), ExecutionError> {
+    async fn validate_args(&self, data: Arc<InterpreterData>) -> Result<(), ExecutionError> {
         let mut max_args = 0;
         for arg_rule in self.arg_rules {
             match &arg_rule.position {
@@ -408,7 +172,8 @@ impl Command {
                     let range = *i..*i + 1;
                     match self.args.get(*i) {
                         Some(_) => {
-                            self.validate_arg_range(arg_rule, &range, data.clone())?;
+                            self.validate_arg_range(arg_rule, &range, data.clone())
+                                .await?;
                         }
                         None => {
                             return Err(RuntimeError::MissingArg {
@@ -440,11 +205,12 @@ impl Command {
                         }
                         .to_exec(self.span, data.clone()));
                     } else {
-                        self.validate_arg_range(arg_rule, range, data.clone())?;
+                        self.validate_arg_range(arg_rule, range, data.clone())
+                            .await?;
                     }
                 }
                 ArgPos::None => {
-                    if self.args.len() > 0 {
+                    if !self.args.is_empty() {
                         return Err(RuntimeError::WrongArgCount {
                             command_label: self.get_label().to_string(),
                             expected: ExpectedArgs::None,
@@ -455,8 +221,9 @@ impl Command {
                 }
                 ArgPos::AnyFrom(i) => {
                     max_args = usize::MAX;
-                    let range = Range::from(*i..self.args.len());
-                    self.validate_arg_range(arg_rule, &range, data.clone())?;
+                    let range = *i..self.args.len();
+                    self.validate_arg_range(arg_rule, &range, data.clone())
+                        .await?;
                 }
                 ArgPos::OptionalIndex(i) => {
                     max_args = if max_args < (*i + 1) {
@@ -465,8 +232,9 @@ impl Command {
                         max_args
                     };
                     let range = *i..*i + 1;
-                    if let Some(_) = self.args.get(*i) {
-                        self.validate_arg_range(arg_rule, &range, data.clone())?;
+                    if self.args.get(*i).is_some() {
+                        self.validate_arg_range(arg_rule, &range, data.clone())
+                            .await?;
                     }
                 }
             }
@@ -484,7 +252,7 @@ impl Command {
     }
 
     pub async fn execute(self, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
-        self.validate_args(data.clone())?;
+        self.validate_args(data.clone()).await?;
 
         if data.should_execute().await {
             return Ok(Value::None);

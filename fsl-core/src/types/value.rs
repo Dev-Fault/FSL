@@ -1,5 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
+use async_recursion::async_recursion;
+
 use crate::{
     InterpreterData,
     error::{ExecutionError, RuntimeError, ToExecutionError},
@@ -54,67 +56,14 @@ impl From<ExecutionError> for ValueError {
     }
 }
 
-#[allow(async_fn_in_trait)]
-pub trait FslValue<T, E> {
-    fn as_type(&self) -> FslType;
-
-    async fn as_literal_type(&self, data: Arc<InterpreterData>) -> Result<FslType, RuntimeError>;
-
-    fn is_type(&self, fsl_type: FslType) -> bool;
-
-    fn mem_size(&self) -> Result<usize, RuntimeError>;
-
-    fn equal(&self, other: &T, data: Arc<InterpreterData>) -> Result<bool, E>;
-
-    fn soft_equal(&self, other: &T, data: Arc<InterpreterData>) -> Result<bool, E>;
-
-    fn as_int(self, data: Arc<InterpreterData>) -> ValueResult<i64, E>;
-
-    fn as_usize(self, data: Arc<InterpreterData>) -> ValueResult<usize, E>;
-
-    fn as_float(self, data: Arc<InterpreterData>) -> ValueResult<f64, E>;
-
-    fn as_bool(self, data: Arc<InterpreterData>) -> ValueResult<bool, E>;
-
-    fn as_var_label(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, E>;
-
-    fn as_text(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, E>;
-
-    fn as_list(self, data: Arc<InterpreterData>) -> ValueResult<List, E>;
-
-    fn as_map(self, data: Arc<InterpreterData>) -> ValueResult<Map, E>;
-
-    fn as_number(self, data: Arc<InterpreterData>) -> ValueResult<T, E>;
-
-    /// Converts value into it's most raw state ensuring result is of valid type
-    fn as_raw_checked(
-        self,
-        data: Arc<InterpreterData>,
-        valid_types: &'static [FslType],
-    ) -> ValueResult<T, E>;
-
-    /// Converts value into it's most raw state without checking what the result type it is
-    fn as_raw(self, data: Arc<InterpreterData>) -> ValueResult<T, E>;
-
-    fn as_list_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<usize>, E>;
-
-    fn as_map_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<SourceStr>, E>;
-
-    fn as_command(self, data: Arc<InterpreterData>) -> Result<Command, E>;
-
-    fn get_var_label(&self, data: Arc<InterpreterData>) -> Result<SourceStr, E>;
-
-    fn get_command_label(&self) -> Option<&str>;
-}
-
 impl Default for Value {
     fn default() -> Self {
         Self::None
     }
 }
 
-impl FslValue<Value, ValueError> for Value {
-    fn as_type(&self) -> FslType {
+impl Value {
+    pub fn as_type(&self) -> FslType {
         match self {
             Value::Int(_) => FslType::Int,
             Value::Float(_) => FslType::Float,
@@ -128,7 +77,10 @@ impl FslValue<Value, ValueError> for Value {
         }
     }
 
-    async fn as_literal_type(&self, data: Arc<InterpreterData>) -> Result<FslType, RuntimeError> {
+    pub async fn as_literal_type(
+        &self,
+        data: Arc<InterpreterData>,
+    ) -> Result<FslType, RuntimeError> {
         Ok(match self {
             Value::Int(_) => FslType::Int,
             Value::Float(_) => FslType::Float,
@@ -142,11 +94,12 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn is_type(&self, fsl_type: FslType) -> bool {
-        return self.as_type() == fsl_type;
+    pub fn is_type(&self, fsl_type: FslType) -> bool {
+        self.as_type() == fsl_type
     }
 
-    fn mem_size(&self) -> Result<usize, RuntimeError> {
+    #[async_recursion]
+    pub async fn mem_size(&self) -> Result<usize, RuntimeError> {
         match &self {
             Value::Int(_) => Ok(size_of::<Value>()),
             Value::Float(_) => Ok(size_of::<Value>()),
@@ -158,7 +111,7 @@ impl FslValue<Value, ValueError> for Value {
                 let mut size: usize = size_of::<Value>();
                 for element in list.iter() {
                     size = size
-                        .checked_add(element.mem_size()?)
+                        .checked_add(element.mem_size().await?)
                         .ok_or(RuntimeError::Overflow)?;
                 }
                 Ok(size)
@@ -170,7 +123,7 @@ impl FslValue<Value, ValueError> for Value {
                     let value = key_value_pair.1;
                     size = size.checked_add(key.len()).ok_or(RuntimeError::Overflow)?;
                     size = size
-                        .checked_add(value.mem_size()?)
+                        .checked_add(value.mem_size().await?)
                         .ok_or(RuntimeError::Overflow)?;
                 }
                 Ok(size)
@@ -179,13 +132,13 @@ impl FslValue<Value, ValueError> for Value {
                 .checked_add(var.len())
                 .ok_or(RuntimeError::Overflow),
             Value::Command(command) => size_of::<Value>()
-                .checked_add(command.mem_size()?)
+                .checked_add(command.mem_size().await?)
                 .ok_or(RuntimeError::Overflow),
             Value::None => Ok(size_of::<Value>()),
         }
     }
 
-    fn equal(&self, other: &Value, _: Arc<InterpreterData>) -> Result<bool, ValueError> {
+    pub fn equal(&self, other: &Value, _: Arc<InterpreterData>) -> Result<bool, ValueError> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
             (Value::Float(a), Value::Int(b)) => Ok(*a == *b as f64),
@@ -221,7 +174,11 @@ impl FslValue<Value, ValueError> for Value {
     // Identical to equal except that it coerces list elements to the same type
     // ["1", "2", "3"].eq([1, 2, 3]) would be true
     // Much slower than equal
-    fn soft_equal(&self, other: &Value, data: Arc<InterpreterData>) -> Result<bool, ValueError> {
+    pub fn soft_equal(
+        &self,
+        other: &Value,
+        data: Arc<InterpreterData>,
+    ) -> Result<bool, ValueError> {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => Ok(*a == *b),
             (Value::Float(a), Value::Int(b)) => Ok(*a == *b as f64),
@@ -267,7 +224,7 @@ impl FslValue<Value, ValueError> for Value {
         }
     }
 
-    fn as_int(self, data: Arc<InterpreterData>) -> ValueResult<i64, ValueError> {
+    pub fn as_int(self, data: Arc<InterpreterData>) -> ValueResult<i64, ValueError> {
         Box::pin(async move {
             let to_type = FslType::Int;
             match self {
@@ -296,7 +253,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_usize(self, data: Arc<InterpreterData>) -> ValueResult<usize, ValueError> {
+    pub fn as_usize(self, data: Arc<InterpreterData>) -> ValueResult<usize, ValueError> {
         Box::pin(async move {
             let integer = self.as_int(data).await?;
             if integer < 0 {
@@ -307,7 +264,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_float(self, data: Arc<InterpreterData>) -> ValueResult<f64, ValueError> {
+    pub fn as_float(self, data: Arc<InterpreterData>) -> ValueResult<f64, ValueError> {
         Box::pin(async move {
             let to_type = FslType::Float;
             match self {
@@ -336,7 +293,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_bool(self, data: Arc<InterpreterData>) -> ValueResult<bool, ValueError> {
+    pub fn as_bool(self, data: Arc<InterpreterData>) -> ValueResult<bool, ValueError> {
         Box::pin(async move {
             let to_type = FslType::Bool;
             match self {
@@ -365,7 +322,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_var_label(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, ValueError> {
+    pub fn as_var_label(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, ValueError> {
         Box::pin(async move {
             let to_type = FslType::Var;
             match self {
@@ -388,7 +345,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_text(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, ValueError> {
+    pub fn as_text(self, data: Arc<InterpreterData>) -> ValueResult<SourceStr, ValueError> {
         Box::pin(async move {
             match self {
                 Value::Int(value) => Ok(value.to_string().into()),
@@ -445,7 +402,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_list(self, data: Arc<InterpreterData>) -> ValueResult<List, ValueError> {
+    pub fn as_list(self, data: Arc<InterpreterData>) -> ValueResult<List, ValueError> {
         Box::pin(async move {
             let to_type = FslType::List;
             match self {
@@ -471,7 +428,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_map(self, data: Arc<InterpreterData>) -> ValueResult<Map, ValueError> {
+    pub fn as_map(self, data: Arc<InterpreterData>) -> ValueResult<Map, ValueError> {
         Box::pin(async move {
             let to_type = FslType::Map;
             match self {
@@ -497,7 +454,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_number(self, data: Arc<InterpreterData>) -> ValueResult<Value, ValueError> {
+    pub fn as_number(self, data: Arc<InterpreterData>) -> ValueResult<Value, ValueError> {
         Box::pin(async move {
             match self {
                 Value::Int(n) => Ok(Value::Int(n)),
@@ -530,10 +487,10 @@ impl FslValue<Value, ValueError> for Value {
     /// Reduces value to base type and checks the resulting type
     /// Recursively reduces inner values of lists and maps to their most base type
     /// Expensive, use as_base if list/map inner values do not need to be reduced
-    fn as_raw_checked(
+    pub fn as_raw_checked(
         self,
-        data: Arc<InterpreterData>,
         valid_types: &'static [FslType],
+        data: Arc<InterpreterData>,
     ) -> ValueResult<Value, ValueError> {
         Box::pin(async move {
             let value = match self {
@@ -565,7 +522,7 @@ impl FslValue<Value, ValueError> for Value {
     /// Reduces value to base type
     /// Recursively reduces inner values of lists and maps to their most base type
     /// Expensive, use as_base if list/map inner values do not need to be reduced
-    fn as_raw(self, data: Arc<InterpreterData>) -> ValueResult<Value, ValueError> {
+    pub fn as_raw(self, data: Arc<InterpreterData>) -> ValueResult<Value, ValueError> {
         Box::pin(async move {
             Ok(match self {
                 Value::Int(_) => self,
@@ -588,9 +545,9 @@ impl FslValue<Value, ValueError> for Value {
     }
 
     // Attempts to convert value to a value that can be used to access indices in a map or list
-    fn as_list_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<usize>, ValueError> {
+    pub fn as_list_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<usize>, ValueError> {
         Box::pin(async move {
-            let accesor = self.as_raw_checked(data.clone(), LIST_KEY).await?;
+            let accesor = self.as_raw_checked(LIST_KEY, data.clone()).await?;
 
             match accesor {
                 Value::List(values) => {
@@ -606,9 +563,9 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_map_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<SourceStr>, ValueError> {
+    pub fn as_map_key(self, data: Arc<InterpreterData>) -> ValueResult<Vec<SourceStr>, ValueError> {
         Box::pin(async move {
-            let accesor = self.as_raw_checked(data.clone(), MAP_KEY).await?;
+            let accesor = self.as_raw_checked(MAP_KEY, data.clone()).await?;
 
             match accesor {
                 Value::List(values) => {
@@ -624,7 +581,7 @@ impl FslValue<Value, ValueError> for Value {
         })
     }
 
-    fn as_command(self, _: Arc<InterpreterData>) -> Result<Command, ValueError> {
+    pub fn as_command(self, _: Arc<InterpreterData>) -> Result<Command, ValueError> {
         if let Value::Command(command) = self {
             Ok(*command)
         } else {
@@ -636,7 +593,7 @@ impl FslValue<Value, ValueError> for Value {
         }
     }
 
-    fn get_var_label(&self, _: Arc<InterpreterData>) -> Result<SourceStr, ValueError> {
+    pub fn get_var_label(&self, _: Arc<InterpreterData>) -> Result<SourceStr, ValueError> {
         if let Value::Var(label) = self {
             Ok(label.clone())
         } else {
@@ -647,11 +604,10 @@ impl FslValue<Value, ValueError> for Value {
         }
     }
 
-    fn get_command_label(&self) -> Option<&str> {
-        if let Value::Command(command) = self {
-            Some(command.get_label())
-        } else {
-            None
+    pub fn as_command_label(&self) -> Result<&str, ValueError> {
+        match self {
+            Value::Command(command) => Ok(command.get_label()),
+            _ => Err(self.conversion_err_to_type(FslType::Command).into()),
         }
     }
 }

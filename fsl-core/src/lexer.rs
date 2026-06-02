@@ -50,7 +50,7 @@ impl IsSymbol for char {
                 return true;
             }
         }
-        return false;
+        false
     }
 }
 
@@ -232,8 +232,8 @@ impl<'c> Token<'c> {
 
     pub fn line_number(&self) -> usize {
         let slice = &self.source[..self.location];
-        let line = slice.lines().count().max(1);
-        line
+        
+        slice.lines().count().max(1)
     }
 
     pub fn len(&self) -> usize {
@@ -505,7 +505,7 @@ impl<'c> Iterator for Lexer<'c> {
                 DOT if self.no_context() => {
                     let token = Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                     self.pending = Some(token);
-                    if self.partial.len() > 0 {
+                    if !self.partial.is_empty() {
                         let token = Token::parse(self.source, self.partial, self.location);
                         if matches!(token.token_type, TokenType::Number(_))
                             && self.rest.peek().is_some_and(|(_, c)| c.is_ascii_digit())
@@ -522,7 +522,7 @@ impl<'c> Iterator for Lexer<'c> {
                     }
                 }
                 CLOSED_PAREN | CLOSED_BRACKET | COMMA if self.no_context() => {
-                    if self.partial.len() > 0 {
+                    if !self.partial.is_empty() {
                         let token = Token::parse(self.source, self.partial, self.location);
                         self.flush_partial();
                         let symbol =
@@ -567,8 +567,8 @@ impl<'c> Iterator for Lexer<'c> {
                                 &self.source[self.location..(i + ch.len_utf8()) + QUOTE.len_utf8()];
                             continue;
                         }
-                    } else if matches!(self.context, Context::Float(_)) {
-                        if ch.is_whitespace() {
+                    } else if matches!(self.context, Context::Float(_))
+                        && ch.is_whitespace() {
                             self.context = Context::None;
                             let token =
                                 match Token::number(self.source, self.partial, self.location) {
@@ -581,7 +581,6 @@ impl<'c> Iterator for Lexer<'c> {
                             self.location += ch.len_utf8();
                             return Some(Ok(token));
                         }
-                    }
                     self.partial = &self.source[self.location..i + ch.len_utf8()];
                     continue;
                 }

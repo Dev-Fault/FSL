@@ -21,7 +21,7 @@ impl Library {
             "io" => Ok(Library::Io),
             "std" => Ok(Library::Std),
             "async" => Ok(Library::Async),
-            _ => Err(InterpreterError::Import(format!("cannot unknown library {str}")).into()),
+            _ => Err(InterpreterError::Import(format!("cannot unknown library {str}"))),
         }
     }
 }

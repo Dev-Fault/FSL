@@ -16,10 +16,7 @@ use crate::{
     error::RuntimeError,
     source_str::SourceStr,
     span::Span,
-    types::{
-        command::UserDef,
-        value::{FslValue, Value},
-    },
+    types::{command::UserDef, value::Value},
     vars::{DEFAULT_MEMORY_LIMIT, VarStore},
 };
 
@@ -44,12 +41,12 @@ impl Default for Limiter {
 }
 
 impl Limiter {
-    pub fn allocate(&self, value: &Value) -> Result<(), RuntimeError> {
+    pub async fn allocate(&self, value: &Value) -> Result<(), RuntimeError> {
         match self {
             Limiter::NoLimit => Ok(()),
             Limiter::Limit(memory_limit) => {
                 let mem = memory_limit.allocated.load(Ordering::Relaxed);
-                let size = value.mem_size()?;
+                let size = value.mem_size().await?;
                 if let Some(new_mem) = mem.checked_add(size)
                     && new_mem < memory_limit.limit
                 {
@@ -62,13 +59,13 @@ impl Limiter {
         }
     }
 
-    pub fn deallocate(&self, value: &Value) {
+    pub async fn deallocate(&self, value: &Value) {
         match self {
             Limiter::NoLimit => {}
             Limiter::Limit(memory_limit) => {
                 let mem = memory_limit.allocated.load(Ordering::Relaxed);
                 memory_limit.allocated.store(
-                    mem.saturating_sub(value.mem_size().unwrap_or(0)),
+                    mem.saturating_sub(value.mem_size().await.unwrap_or(0)),
                     Ordering::Relaxed,
                 );
             }
@@ -252,7 +249,7 @@ impl InterpreterData {
             if i < ctx.call_stack.len() - 1 {
                 output.push_str(&format!("{} > ", call));
             } else {
-                output.push_str(&format!("{}", call));
+                output.push_str(call);
             }
         }
         output

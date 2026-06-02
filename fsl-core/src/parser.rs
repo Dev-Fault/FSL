@@ -13,7 +13,7 @@ impl<'c> Path<'c> {
     pub fn new(start: Token<'c>, end: Token<'c>) -> Self {
         Self {
             start,
-            end: end,
+            end,
             data: VecDeque::new(),
         }
     }
@@ -31,7 +31,7 @@ impl<'c> ParsedList<'c> {
         Self {
             start,
             data: Vec::new(),
-            end: end,
+            end,
         }
     }
 }
@@ -58,7 +58,7 @@ impl<'c> ParsedMap<'c> {
         Self {
             start,
             data: Vec::new(),
-            end: end,
+            end,
         }
     }
 }
@@ -77,7 +77,7 @@ impl<'c> Expression<'c> {
             name,
             start: name,
             args: Vec::new(),
-            end: end,
+            end,
         }
     }
 }
@@ -289,9 +289,13 @@ impl<'c> Parser<'c> {
     ) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(maybe_map) => match maybe_map {
-                PendingArg::Map(map) => Ok(self.pend_map_with_value(map, key, value)),
+                PendingArg::Map(map) => {
+                    self.pend_map_with_value(map, key, value);
+                    Ok(())
+                },
                 PendingArg::UnitializedCollection(start) => {
-                    Ok(self.pend_map_with_value(ParsedMap::new(start, start), key, value))
+                    self.pend_map_with_value(ParsedMap::new(start, start), key, value);
+                    Ok(())
                 }
                 _ => Err(ParseError::OutOfPlaceValue(maybe_map.start())),
             },
@@ -346,14 +350,19 @@ impl<'c> Parser<'c> {
     fn pend_last_as_done(&mut self, token: Token<'c>) -> Result<(), ParseError<'c>> {
         match self.pending.pop() {
             Some(last) => match last {
-                PendingArg::Expression(expr) => Ok(self.pend_done(Arg::new(expr.into(), token))),
+                PendingArg::Expression(expr) => {
+                    self.pend_done(Arg::new(expr.into(), token));
+                    Ok(())
+                },
                 PendingArg::List(mut list) => {
                     list.end = token;
-                    Ok(self.pend_done(Arg::new(list.into(), token)))
+                    self.pend_done(Arg::new(list.into(), token));
+                    Ok(())
                 }
                 PendingArg::Map(mut map) => {
                     map.end = token;
-                    Ok(self.pend_done(Arg::new(map.into(), token)))
+                    self.pend_done(Arg::new(map.into(), token));
+                    Ok(())
                 }
                 _ => Err(ParseError::OutOfPlaceValue(last.start())),
             },
@@ -395,7 +404,7 @@ impl<'c> Parser<'c> {
                     if let Some(pending_arg) = pending_dot {
                         match pending_arg {
                             PendingArg::DotArg(dot_arg) => {
-                                if expr.args.len() > 0 {
+                                if !expr.args.is_empty() {
                                     unreachable!(
                                         "should not have put args in expression before dot arg"
                                     );
@@ -404,7 +413,7 @@ impl<'c> Parser<'c> {
                                 }
                             }
                             PendingArg::PathArg(mut path) => {
-                                if expr.args.len() > 0 {
+                                if !expr.args.is_empty() {
                                     unreachable!(
                                         "should not have put args in expression before path"
                                     );
@@ -453,24 +462,31 @@ impl<'c> Parser<'c> {
                     }
                     match self.pending.pop() {
                         Some(parent) => match parent {
-                            PendingArg::Expression(parent_expr) => Ok(self
-                                .pend_expr_with_value(parent_expr, Arg::new(expr.into(), token))),
+                            PendingArg::Expression(parent_expr) => {
+                                self
+                                .pend_expr_with_value(parent_expr, Arg::new(expr.into(), token));
+                                Ok(())
+                            },
                             PendingArg::List(list) => {
-                                Ok(self
-                                    .pend_list_with_value(list, Some(Arg::new(expr.into(), token))))
+                                self
+                                .pend_list_with_value(list, Some(Arg::new(expr.into(), token)));
+                                Ok(())
                             }
                             PendingArg::Key(key) => Ok(self.try_pend_map_with_value(
                                 token,
                                 key,
                                 Some(Arg::new(expr.into(), token)),
                             )?),
-                            PendingArg::UnitializedCollection(start) => Ok(self
+                            PendingArg::UnitializedCollection(start) => {
+                                self
                                 .pend_list_with_value(
                                     ParsedList::new(start, start),
                                     Some(Arg::new(expr.into(), token)),
-                                )),
+                                );
+                                Ok(())
+                            },
                             PendingArg::Done(done) => {
-                                self.pend_done(done.into());
+                                self.pend_done(done);
                                 self.pend_done(Arg::new(expr.into(), token));
                                 Ok(())
                             }
@@ -532,7 +548,10 @@ impl<'c> Parser<'c> {
                 PendingArg::Done(Arg {
                     kind: ArgKind::Identifier(_),
                     token,
-                }) => Ok(self.pend_key(token)),
+                }) => {
+                    self.pend_key(token);
+                    Ok(())
+                },
                 _ => Err(ParseError::OutOfPlaceSymbol(token)),
             },
             None => Err(ParseError::OutOfPlaceSymbol(token)),
@@ -548,7 +567,8 @@ impl<'c> Parser<'c> {
             PendingArg::Expression(mut expr) => match expr.args.pop() {
                 Some(last_arg) => {
                     self.pend_expr(expr);
-                    Ok(self.pend_dot_arg(last_arg))
+                    self.pend_dot_arg(last_arg);
+                    Ok(())
                 }
                 None => Err(ParseError::OutOfPlaceSymbol(token)),
             },
@@ -556,7 +576,8 @@ impl<'c> Parser<'c> {
                 Some(last_arg) => match last_arg.kind {
                     ArgKind::Expression(_) => {
                         self.pend_list(list);
-                        Ok(self.pend_dot_arg(last_arg))
+                        self.pend_dot_arg(last_arg);
+                        Ok(())
                     }
                     _ => Err(ParseError::OutOfPlaceSymbol(token)),
                 },
@@ -598,10 +619,14 @@ impl<'c> Parser<'c> {
                         }
                         _ => {
                             self.pending.push(pending);
-                            Ok(self.pend_dot_arg(arg))
+                            self.pend_dot_arg(arg);
+                            Ok(())
                         }
                     },
-                    None => Ok(self.pend_dot_arg(arg)),
+                    None => {
+                        self.pend_dot_arg(arg);
+                        Ok(())
+                    },
                 },
                 _ => self.try_find_last_expression(token, pending),
             },
@@ -615,13 +640,20 @@ impl<'c> Parser<'c> {
                 PendingArg::Done(value) => match self.pending.pop() {
                     Some(parent) => match parent {
                         PendingArg::Expression(expression) => {
-                            Ok(self.pend_expr_with_value(expression, value.into()))
+                            self.pend_expr_with_value(expression, value);
+                            Ok(())
                         }
-                        PendingArg::UnitializedCollection(start) => Ok(self.pend_list_with_value(
-                            ParsedList::new(start, value.token),
-                            value.into(),
-                        )),
-                        PendingArg::List(list) => Ok(self.pend_list_with_value(list, value.into())),
+                        PendingArg::UnitializedCollection(start) => {
+                            self.pend_list_with_value(
+                                ParsedList::new(start, value.token),
+                                value.into(),
+                            );
+                            Ok(())
+                        },
+                        PendingArg::List(list) => {
+                            self.pend_list_with_value(list, value.into());
+                            Ok(())
+                        },
                         PendingArg::Key(key) => {
                             Ok(self.try_pend_map_with_value(token, key, value.into())?)
                         }
@@ -654,7 +686,10 @@ impl<'c> Parser<'c> {
         match symbol {
             Symbol::OpenParen => self.parse_open_paren(token),
             Symbol::ClosedParen => self.parse_closed_paren(token),
-            Symbol::OpenBracket => Ok(self.parse_open_bracket(token)),
+            Symbol::OpenBracket => {
+                self.parse_open_bracket(token);
+                Ok(())
+            },
             Symbol::ClosedBracket => self.parse_closed_bracket(token),
             Symbol::Colon => self.parse_colon(token),
             Symbol::Dot => self.parse_dot(token),
@@ -671,9 +706,9 @@ impl<'c> Parser<'c> {
             .take()
             .expect("parser should be called once after new");
         let tokens = lexer.collect::<Result<Vec<Token<'c>>, LexError<'c>>>()?;
-        let mut tokens = tokens.into_iter().peekable();
+        let tokens = tokens.into_iter().peekable();
 
-        while let Some(token) = tokens.next() {
+        for token in tokens {
             // dbg!(token.token_type);
             match token.token_type {
                 TokenType::Symbol(symbol) => {
@@ -1788,6 +1823,7 @@ mod tests {
     }
 
     // #[test]
+    #[allow(dead_code)]
     fn parser_stress_test() {
         let complex_expressions = r#"
         add(

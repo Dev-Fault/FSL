@@ -7,8 +7,9 @@ use crate::{
     register_command,
     types::{
         FslType,
-        command::{ArgPos, ArgRule, Command, Handler},
-        value::{FslValue, Value},
+        argument::{ArgPos, ArgRule},
+        command::{Command, Handler},
+        value::Value,
     },
 };
 
@@ -25,14 +26,15 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut command = command;
     let args = command.take_args();
     let args = args.into_iter();
-    let args: Result<Vec<Command>, ExecutionError> =
-        args.map(|arg| arg.as_command(data.clone()))
-            .collect::<Result<Vec<Command>, ExecutionError>>();
-    let commands = args?;
+    let mut commands: Vec<_> = Vec::new();
+    for arg in args {
+        commands.push(arg.as_command(data.clone()).await?);
+    }
+
     let mut executors = Vec::new();
     for command in commands {
         let data = data.fork().await;
-        let future = tokio::spawn(command.execute(data));
+        let future = tokio::spawn(command.execute(data.clone()));
         executors.push(future);
     }
 
@@ -45,7 +47,7 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             Err(e) => {
                 return Err(RuntimeError::Custom(format!(
                     "Failed to join threads:\n {}",
-                    e.to_string()
+                    e
                 ))
                 .to_exec(command.span, data.clone()));
             }
@@ -63,7 +65,7 @@ pub async fn r#yield(
 ) -> Result<Value, ExecutionError> {
     let mut command = command;
     let mut args = command.take_args();
-    let command = args.pop_front().unwrap().as_command(data.clone())?;
+    let command = args.pop_front().unwrap().as_command(data.clone()).await?;
     tokio::task::yield_now().await;
     let result = command.execute(data).await?;
 
@@ -93,9 +95,9 @@ mod tests {
     async fn join_def_stack() {
         test_interpreter(
             r#"
-                progress.def(
+                progress.def(msg,
                     repeat(10,
-                        say("working...")
+                        say(msg)
                     )
                     return(true)
                 )
@@ -116,7 +118,7 @@ mod tests {
                     zero_out(100)
                     zero_out(50)
                     zero_out(25)
-                    progress()
+                    progress("working...")
                 ).print()
             "#,
             "[[100, 0], [50, 0], [25, 0], true]",

@@ -24,8 +24,9 @@ use crate::{
     span::Span,
     types::{
         FslType,
-        command::{ArgRule, Argument, Command, CommandDef, Handler, UserDef},
-        value::{FslValue, Value},
+        argument::{ArgRule, Argument},
+        command::{Command, CommandDef, Handler, UserDef},
+        value::Value,
     },
 };
 
@@ -206,36 +207,31 @@ impl FslInterpreter {
                 code_depth -= 1;
                 if code_depth < 0 {
                     return Err(InterpreterError::UnmatchedCurlyBraces);
-                } else {
-                    match code_stack.pop() {
-                        Some(code) => {
-                            let mut inner_data = InterpreterData::from(&data);
-                            inner_data.set_source(code);
-                            let inner_data = Arc::new(inner_data);
-                            let result = Self::execute_expressions(
-                                inner_data.clone(),
-                                self.command_definitions.clone(),
-                                inner_data.source_str(),
-                            )
-                            .await;
-                            data.inc_loops_by(&inner_data.total_loops)?;
-                            match result {
-                                Ok(result) => match code_stack.last_mut() {
-                                    Some(code) => code.push_str(&result),
-                                    None => {
-                                        if let Some(max_output_len) = data.limits.max_output_len
-                                            && output.len() + result.len() > max_output_len
-                                        {
-                                            return Err(RuntimeError::OutputLimitExceeded.into());
-                                        }
-                                        output.push_str(&result)
-                                    }
-                                },
-                                Err(e) => return Err(e),
-                            };
-                        }
-                        None => {}
-                    }
+                } else if let Some(code) = code_stack.pop() {
+                    let mut inner_data = InterpreterData::from(&data);
+                    inner_data.set_source(code);
+                    let inner_data = Arc::new(inner_data);
+                    let result = Self::execute_expressions(
+                        inner_data.clone(),
+                        self.command_definitions.clone(),
+                        inner_data.source_str(),
+                    )
+                    .await;
+                    data.inc_loops_by(&inner_data.total_loops)?;
+                    match result {
+                        Ok(result) => match code_stack.last_mut() {
+                            Some(code) => code.push_str(&result),
+                            None => {
+                                if let Some(max_output_len) = data.limits.max_output_len
+                                    && output.len() + result.len() > max_output_len
+                                {
+                                    return Err(RuntimeError::OutputLimitExceeded.into());
+                                }
+                                output.push_str(&result)
+                            }
+                        },
+                        Err(e) => return Err(e),
+                    };
                 }
             } else if code_depth == 0 {
                 if let Some(max_output_len) = data.limits.max_output_len
@@ -244,11 +240,8 @@ impl FslInterpreter {
                     return Err(InterpreterError::Runtime(RuntimeError::OutputLimitExceeded));
                 }
                 output.push(c);
-            } else {
-                match code_stack.last_mut() {
-                    Some(s) => s.push(c),
-                    None => {}
-                }
+            } else if let Some(s) = code_stack.last_mut() {
+                s.push(c)
             }
         }
 
@@ -266,7 +259,7 @@ impl FslInterpreter {
         data: Arc<InterpreterData>,
     ) {
         if expression.name.as_str() == DEF {
-            if let Some(label) = expression.args.get(0) {
+            if let Some(label) = expression.args.first() {
                 let label = SourceStr::Borrowed(data.source.slice(Span::from(&label.token)));
                 let def = Arc::new(UserDef::declaration(label.clone()));
                 for arg in &expression.args {
@@ -294,7 +287,7 @@ impl FslInterpreter {
     ) -> Result<(), InterpreterError> {
         if expression.name.as_str() == DEF {
             {
-                let def_label = match expression.args.get(0) {
+                let def_label = match expression.args.first() {
                     Some(label) => SourceStr::Borrowed(data.source.slice(Span::from(&label.token))),
                     None => {
                         return Err((RuntimeError::MissingArg {
@@ -311,7 +304,7 @@ impl FslInterpreter {
         }
         for arg in &expression.args {
             if let ArgKind::Expression(inner) = &arg.kind {
-                Self::execute_def(data.clone(), defs.clone(), &inner).await?;
+                Self::execute_def(data.clone(), defs.clone(), inner).await?;
             }
         }
         if expression.name.as_str() == DEF {
@@ -330,11 +323,11 @@ impl FslInterpreter {
 
         for expression in expressions.all() {
             let mut user_commands = data.user_defs.lock().await;
-            Self::forward_declare_defs(&expression, &mut user_commands, data.clone()).await;
+            Self::forward_declare_defs(expression, &mut user_commands, data.clone()).await;
         }
 
         for expression in expressions.all() {
-            Self::execute_def(data.clone(), defs.clone(), &expression).await?;
+            Self::execute_def(data.clone(), defs.clone(), expression).await?;
             let mut ctx = data.ctx.write().await;
             ctx.def_stack.clear();
         }
@@ -421,11 +414,11 @@ impl FslInterpreter {
 
                 Ok(Value::Command(Box::new(command)))
             } else {
-                return Err(RuntimeError::NonExistantCommand {
+                Err(RuntimeError::NonExistantCommand {
                     label: expression.name.to_string(),
                 }
                 .to_exec(Span::from(&expression), data.clone())
-                .into());
+                .into())
             }
         }
     }
@@ -449,21 +442,17 @@ impl FslInterpreter {
                             .to_exec(Span::from(&arg), data.clone())
                             .into()),
                         }
+                    } else if let Ok(value) = number.parse::<i64>() {
+                        Ok(Argument::new(Value::Int(value), span))
+                    } else if let Ok(value) = number.parse::<f64>() {
+                        Ok(Argument::new(Value::Float(value), span))
                     } else {
-                        if let Ok(value) = number.parse::<i64>() {
-                            Ok(Argument::new(Value::Int(value), span))
-                        } else {
-                            if let Ok(value) = number.parse::<f64>() {
-                                Ok(Argument::new(Value::Float(value), span))
-                            } else {
-                                Err(RuntimeError::FailedParse {
-                                    value: number.to_string(),
-                                    valid_types: vec![FslType::Int, FslType::Int],
-                                }
-                                .to_exec(span, data.clone())
-                                .into())
-                            }
+                        Err(RuntimeError::FailedParse {
+                            value: number.to_string(),
+                            valid_types: vec![FslType::Int, FslType::Int],
                         }
+                        .to_exec(span, data.clone())
+                        .into())
                     }
                 }
                 ArgKind::String(cow) => match cow {
@@ -489,7 +478,7 @@ impl FslInterpreter {
                     let mut list: Vec<Value> = Vec::with_capacity(list_arg.data.len());
                     for arg in list_arg.data {
                         let parsed_arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
-                        list.push(parsed_arg.value);
+                        list.push(parsed_arg.into_value(data.clone()).await);
                     }
                     Ok(Argument::new(Value::from(list), span))
                 }
@@ -502,7 +491,8 @@ impl FslInterpreter {
                             SourceStr::Borrowed(data.source.slice(Span::from(&key))),
                             Self::process_arg(data.clone(), defs.clone(), value)
                                 .await?
-                                .value,
+                                .into_value(data.clone())
+                                .await,
                         );
                     }
 

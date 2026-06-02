@@ -1,8 +1,9 @@
 use crate::{
     error::RuntimeError,
-    types::command::{ArgPos, ArgRule},
+    types::argument::{ArgPos, ArgRule},
 };
 
+pub mod argument;
 pub mod command;
 pub mod list;
 pub mod map;

@@ -6,10 +6,7 @@ use crate::{
     data::Limiter,
     error::RuntimeError,
     source_str::SourceStr,
-    types::{
-        FslType,
-        value::{FslValue, Value},
-    },
+    types::{FslType, value::Value},
 };
 
 const MEGABYTE: usize = 1024 * 1024;
@@ -102,7 +99,7 @@ impl VarStore {
     pub async fn pop(&mut self) {
         if matches!(*self.limiter, Limiter::Limit(_)) {
             for var in self.data.last().unwrap().read().await.values() {
-                self.limiter.deallocate(var);
+                self.limiter.deallocate(var).await;
             }
         }
         self.data.pop();
@@ -154,14 +151,14 @@ impl VarStore {
                         label: label.to_string(),
                     });
                 } else {
-                    self.limiter.deallocate(var);
-                    self.limiter.allocate(&new_var)?;
+                    self.limiter.deallocate(var).await;
+                    self.limiter.allocate(&new_var).await?;
                     *var = new_var;
                     return Ok(());
                 }
             }
         }
-        self.limiter.allocate(&new_var)?;
+        self.limiter.allocate(&new_var).await?;
         self.data
             .last_mut()
             .unwrap()
@@ -179,9 +176,9 @@ impl VarStore {
             })
         } else {
             if let Some(old_var) = map.get(label) {
-                self.limiter.deallocate(old_var);
+                self.limiter.deallocate(old_var).await;
             }
-            self.limiter.allocate(&var)?;
+            self.limiter.allocate(&var).await?;
             map.insert(label.clone(), var);
             Ok(())
         }
@@ -202,8 +199,8 @@ impl VarStore {
                         });
                     }
                     Var::Mut(value) => {
-                        self.limiter.deallocate(value);
-                        self.limiter.allocate(&replacement)?;
+                        self.limiter.deallocate(value).await;
+                        self.limiter.allocate(&replacement).await?;
                         *value = replacement;
                         return Ok(());
                     }
@@ -222,11 +219,9 @@ impl VarStore {
                 return Err(RuntimeError::AttemptToOverwriteConst {
                     label: label.to_string(),
                 });
-            } else {
-                if let Some(var) = map.remove(label) {
-                    self.limiter.deallocate(&var);
-                    return Ok(Some(var.take()));
-                }
+            } else if let Some(var) = map.remove(label) {
+                self.limiter.deallocate(&var).await;
+                return Ok(Some(var.take()));
             }
         }
         Ok(None)
@@ -240,12 +235,9 @@ impl VarStore {
                     label: label.to_string(),
                 });
             } else {
-                match map.get_mut(label) {
-                    Some(var) => {
-                        self.limiter.deallocate(&var);
-                        return Ok(std::mem::take(var.inner_mut(label)?));
-                    }
-                    None => {}
+                if let Some(var) = map.get_mut(label) {
+                    self.limiter.deallocate(var).await;
+                    return Ok(std::mem::take(var.inner_mut(label)?));
                 }
             }
         }

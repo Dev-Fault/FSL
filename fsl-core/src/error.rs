@@ -119,7 +119,7 @@ impl std::fmt::Display for ExecutionError {
         write!(
             f,
             "{}\n{}{}\n{}^",
-            self.command_error.to_string(),
+            self.command_error,
             line_header,
             line,
             " ".repeat(padding),
@@ -165,6 +165,7 @@ pub enum RuntimeError {
     BreakOutsideLoop,
     ContinueOutsideLoop,
     SwitchMustHaveSingleFallbackCommand,
+    InvalidCommandInSwitch,
     MultipleThenCommandsInIf,
     MultipleElseCommandsInIf,
     InvalidCommandInIf,
@@ -243,7 +244,7 @@ impl std::fmt::Display for RuntimeError {
                 &format!(
                     "argument {} of command `{}` has invalid type `{}`\nExpected: {}",
                     arg_number + 1,
-                    command_label.to_string(),
+                    command_label,
                     fsl_type.as_str(),
                     expected
                 )
@@ -254,7 +255,7 @@ impl std::fmt::Display for RuntimeError {
             } => &format!(
                 "missing argument {} in command `{}`",
                 arg_number + 1,
-                command_label.to_string(),
+                command_label,
             ),
             RuntimeError::WrongArgCount {
                 command_label,
@@ -263,24 +264,24 @@ impl std::fmt::Display for RuntimeError {
             } => match expected {
                 ExpectedArgs::None => &format!(
                     "command `{}` expected no arguments and got {}",
-                    command_label.to_string(),
+                    command_label,
                     got,
                 ),
                 ExpectedArgs::Exactly(n) => &format!(
                     "command `{}` expected exactly {} arguments and got {}",
-                    command_label.to_string(),
+                    command_label,
                     n,
                     got,
                 ),
                 ExpectedArgs::AtLeast(n) => &format!(
                     "command `{}` expected at least {} arguments and got {}",
-                    command_label.to_string(),
+                    command_label,
                     n,
                     got,
                 ),
                 ExpectedArgs::AtMost(n) => &format!(
                     "command `{}` expected at most {} arguments and got {}",
-                    command_label.to_string(),
+                    command_label,
                     n,
                     got,
                 ),
@@ -351,7 +352,10 @@ impl std::fmt::Display for RuntimeError {
             }
             RuntimeError::OutputFailure(failure) => failure,
             RuntimeError::ValueDef => {
-                &format!("Defs need to be at top level or inside another def.")
+                "defs need to be at top level or inside another def."
+            }
+            RuntimeError::InvalidCommandInSwitch => {
+                "switch can only contain case() and fallback()"
             }
         };
 

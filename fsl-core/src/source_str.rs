@@ -34,9 +34,9 @@ impl Deref for SourceStr {
         match self {
             SourceStr::Borrowed(bytes) => {
                 // SAFETY: source is always valid UTF-8 because it is created from a String
-                unsafe { std::str::from_utf8_unchecked(&bytes) }
+                unsafe { std::str::from_utf8_unchecked(bytes) }
             }
-            SourceStr::Owned(owned) => &owned,
+            SourceStr::Owned(owned) => owned,
             SourceStr::Static(str) => str,
         }
     }

@@ -30,11 +30,11 @@ impl RangeBounds<usize> for Span {
     }
 }
 
-impl Into<Range<usize>> for Span {
-    fn into(self) -> Range<usize> {
+impl From<Span> for Range<usize> {
+    fn from(val: Span) -> Self {
         Range {
-            start: self.start,
-            end: self.end,
+            start: val.start,
+            end: val.end,
         }
     }
 }
@@ -71,8 +71,8 @@ impl Span {
 
     pub fn line_number(&self, source: &str) -> usize {
         let slice = &source[..self.start];
-        let line = slice.lines().count().max(1);
-        line
+        
+        slice.lines().count().max(1)
     }
 }
 

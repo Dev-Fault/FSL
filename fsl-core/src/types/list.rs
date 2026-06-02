@@ -7,7 +7,7 @@ use crate::{
     data::InterpreterData,
     error::{ExecutionError, RuntimeError, ToExecutionError},
     span::Span,
-    types::value::{FslValue, Value, ValueError},
+    types::value::{Value, ValueError},
 };
 
 #[derive(Debug, Clone)]

@@ -9,7 +9,7 @@ use crate::{
     error::{ExecutionError, RuntimeError, ToExecutionError},
     source_str::SourceStr,
     span::Span,
-    types::value::{FslValue, Value, ValueError},
+    types::value::{Value, ValueError},
 };
 
 pub type FslMap = HashMap<SourceStr, Value>;
@@ -63,7 +63,7 @@ impl Map {
     ) -> Result<Value, ExecutionError> {
         match keys {
             [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
-            [key] => match self.get(&*key) {
+            [key] => match self.get(key) {
                 Some(_) => {
                     let return_value = self.insert(key.clone(), value);
                     Ok(return_value.unwrap_or(Value::None))
@@ -73,7 +73,7 @@ impl Map {
                 }
                 .to_exec(span, data.clone())),
             },
-            [key, rest @ ..] => match self.get_mut(&*key) {
+            [key, rest @ ..] => match self.get_mut(key) {
                 Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
@@ -96,10 +96,10 @@ impl Map {
         match keys {
             [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
             [key] => {
-                let return_value = self.remove(&*key);
+                let return_value = self.remove(key);
                 Ok(return_value.unwrap_or(Value::None))
             }
-            [key, rest @ ..] => match self.get_mut(&*key) {
+            [key, rest @ ..] => match self.get_mut(key) {
                 Some(Value::Map(inner_map)) => inner_map.remove_nested(rest, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
@@ -126,7 +126,7 @@ impl Map {
                 let return_value = self.insert(key.clone(), value);
                 Ok(return_value.unwrap_or(Value::None))
             }
-            [key, rest @ ..] => match self.get_mut(&*key) {
+            [key, rest @ ..] => match self.get_mut(key) {
                 Some(Value::Map(inner_map)) => inner_map.insert_nested(rest, value, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
@@ -148,15 +148,44 @@ impl Map {
     ) -> Result<Value, ExecutionError> {
         match keys {
             [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
-            [key] => match self.get(&*key).cloned() {
+            [key] => match self.get(key).cloned() {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
                 .to_exec(span, data.clone())),
             },
-            [key, rest @ ..] => match self.get(&*key) {
+            [key, rest @ ..] => match self.get(key) {
                 Some(Value::Map(inner_map)) => inner_map.get_nested(rest, data, span),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span, data.clone())),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span, data.clone())),
+            },
+        }
+    }
+
+    pub fn get_nested_mut(
+        &mut self,
+        keys: &[SourceStr],
+        data: Arc<InterpreterData>,
+        span: Span,
+    ) -> Result<&mut Value, ExecutionError> {
+        match keys {
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
+            [key] => match self.get_mut(key) {
+                Some(value) => Ok(value),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span, data.clone())),
+            },
+            [key, rest @ ..] => match self.get_mut(key) {
+                Some(Value::Map(inner_map)) => inner_map.get_nested_mut(rest, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
