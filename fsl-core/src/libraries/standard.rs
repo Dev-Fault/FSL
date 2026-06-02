@@ -1276,7 +1276,7 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let key = key.as_map_key(data.clone()).await?;
     let map = map.as_map(data.clone()).await?;
 
-    map.get_nested(&key, data, key_span)
+    map.get_nested_clone(&key, data, key_span)
 }
 
 pub const SET_RULES: &[ArgRule] = &[
@@ -2293,7 +2293,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut encountered_command = false;
     for (i, arg) in args.into_iter().enumerate() {
         let span = arg.span;
-        let kind = arg.as_type(data.clone()).await;
+        let kind = arg.type_of(data.clone()).await;
         match arg.into_value(data.clone()).await {
             Value::Var(label) => {
                 if encountered_command {
@@ -2348,7 +2348,9 @@ async fn alias_parameter(
         }
         Value::Command(command) => {
             for arg in command.get_args_mut() {
-                alias_parameter(arg.value_mut(data.clone()).await, aliases, data.clone()).await;
+                let mut value = arg.take_value(data.clone()).await;
+                alias_parameter(&mut value, &aliases, data.clone()).await;
+                arg.replace_value(value);
             }
         }
         Value::Var(var) => {
@@ -2425,7 +2427,9 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for mut command in commands {
         let args = command.get_args_mut();
         for arg in args {
-            alias_parameter(arg.value_mut(data.clone()).await, &aliases, data.clone()).await;
+            let mut value = arg.take_value(data.clone()).await;
+            alias_parameter(&mut value, &aliases, data.clone()).await;
+            arg.replace_value(value);
         }
         final_value = command.execute(data.clone()).await?;
         if data.get_return_flag().await {

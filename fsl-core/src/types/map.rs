@@ -140,7 +140,7 @@ impl Map {
         }
     }
 
-    pub fn get_nested(
+    pub fn get_nested_clone(
         &self,
         keys: &[SourceStr],
         data: Arc<InterpreterData>,
@@ -149,6 +149,35 @@ impl Map {
         match keys {
             [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
             [key] => match self.get(key).cloned() {
+                Some(value) => Ok(value),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span, data.clone())),
+            },
+            [key, rest @ ..] => match self.get(key) {
+                Some(Value::Map(inner_map)) => inner_map.get_nested_clone(rest, data, span),
+                Some(_) => Err(RuntimeError::NotAMap {
+                    key: key.to_string(),
+                }
+                .to_exec(span, data.clone())),
+                None => Err(RuntimeError::NonExistantKey {
+                    key: key.to_string(),
+                }
+                .to_exec(span, data.clone())),
+            },
+        }
+    }
+
+    pub fn get_nested(
+        &self,
+        keys: &[SourceStr],
+        data: Arc<InterpreterData>,
+        span: Span,
+    ) -> Result<&Value, ExecutionError> {
+        match keys {
+            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
+            [key] => match self.get(key) {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
