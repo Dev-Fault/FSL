@@ -604,7 +604,7 @@ impl Value {
         }
     }
 
-    pub fn as_command_label(&self) -> Result<&str, ValueError> {
+    pub fn as_command_label(&self) -> Result<SourceStr, ValueError> {
         match self {
             Value::Command(command) => Ok(command.get_label()),
             _ => Err(self.conversion_err_to_type(FslType::Command).into()),

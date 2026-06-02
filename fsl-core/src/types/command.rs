@@ -109,8 +109,8 @@ impl Command {
         }
     }
 
-    pub fn get_label(&self) -> &str {
-        &self.label
+    pub fn get_label(&self) -> SourceStr {
+        self.label.clone()
     }
 
     pub fn get_rules(&self) -> &'static [ArgRule] {

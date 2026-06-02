@@ -148,9 +148,11 @@ pub async fn take_if_var(
                 .await
                 .map_err(|e| e.to_exec(span, data.clone()))?
         };
-        arg.modify(data, |value| {
-            *value = var;
-            Ok(())
+        arg.modify(data, {
+            async |value| {
+                *value = var;
+                Ok(())
+            }
         })
         .await?;
         Ok(Some(label))
@@ -866,7 +868,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let command_count = args.len();
     for command in args {
         let label = command.as_command_label(data.clone()).await.unwrap();
-        match label {
+        match &*label {
             THEN => {
                 if then_command.is_some() {
                     return Err(
@@ -958,7 +960,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut fallback: VecDeque<Argument> = VecDeque::new();
     for command in commands.into_iter() {
         let label = command.as_command_label(data.clone()).await?;
-        match label {
+        match &*label {
             CASE => cases.push_back(command),
             FALLBACK => fallback.push_back(command),
             _ => {
@@ -1242,20 +1244,22 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
 
-    match array.value(data.clone()).await {
-        Value::Text(text) => {
-            let i = key.as_usize(data.clone()).await?;
-            match text.chars().nth(i) {
-                Some(char) => Ok(char.into()),
-                None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span, data.clone())),
+    array
+        .with(data.clone(), async |value| match value {
+            Value::Text(text) => {
+                let i = key.as_usize(data.clone()).await?;
+                match text.chars().nth(i) {
+                    Some(char) => Ok(char.into()),
+                    None => Err(RuntimeError::IndexOutOfBounds.to_exec(key_span, data.clone())),
+                }
             }
-        }
-        Value::List(list) => {
-            let key = key.as_list_key(data.clone()).await?;
-            list.get_nested(&key, data, key_span)
-        }
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
+            Value::List(list) => {
+                let key = key.as_list_key(data.clone()).await?;
+                list.get_nested(&key, data, key_span)
+            }
+            _ => unreachable!("as_raw should enforce array is List or Text"),
+        })
+        .await
 }
 
 pub const GET_RULES: &[ArgRule] = &[
@@ -1285,6 +1289,7 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut command = command;
     let mut args = command.take_args();
     let mut map = args.pop_front().unwrap();
+    let map_span = map.span;
     let key = args.pop_front().unwrap();
     let arg = args.pop_front().unwrap();
 
@@ -1294,12 +1299,14 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let value = arg.into_value(data.clone()).await;
     let return_value = map
-        .modify(data.clone(), |map| match map {
+        .modify(data.clone(), async |map| match map {
             Value::Map(map) => {
-                let value = map.set_nested(&key, value, data)?;
+                let value = map.set_nested(&key, value, data, map_span)?;
                 Ok(value)
             }
-            _ => Err(map.conversion_err_to_types(&[FslType::Map])),
+            _ => Err(map
+                .conversion_err_to_types(&[FslType::Map])
+                .to_exec(map_span, data)),
         })
         .await?;
     Ok(return_value)
@@ -1317,7 +1324,7 @@ pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         .await?;
 
     array
-        .with(data.clone(), |value| match value {
+        .with(data.clone(), async |value| match value {
             Value::Text(text) => Ok(Value::from(text.len())),
             Value::List(list) => Ok(Value::from(list.len())),
             _ => unreachable!("as_raw should enforce array is List or Text"),
@@ -1811,17 +1818,21 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let vars = data.vars.write().await;
 
-    vars.modify(&label, |value| match value {
-        Value::Int(value) => {
-            *value += amount;
-            Ok(Value::Var(label.clone()))
-        }
-        _ => Err(value
-            .conversion_err_to_types(&[FslType::Int])
-            .to_exec(label_span, data.clone())),
-    })
+    vars.modify(
+        &label,
+        label_span,
+        data.clone(),
+        async |value| match value {
+            Value::Int(value) => {
+                *value += amount;
+                Ok(Value::Var(label.clone()))
+            }
+            _ => Err(value
+                .conversion_err_to_types(&[FslType::Int])
+                .to_exec(label_span, data.clone())),
+        },
+    )
     .await
-    .map_err(|e| e.to_exec(label_span, data.clone()))?
 }
 
 pub const DEC_RULES: &[ArgRule] = &[
@@ -1844,17 +1855,21 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let vars = data.vars.write().await;
 
-    vars.modify(&label, |value| match value {
-        Value::Int(value) => {
-            *value -= amount;
-            Ok(Value::Var(label.clone()))
-        }
-        _ => Err(value
-            .conversion_err_to_types(&[FslType::Int])
-            .to_exec(label_span, data.clone())),
-    })
+    vars.modify(
+        &label,
+        label_span,
+        data.clone(),
+        async |value| match value {
+            Value::Int(value) => {
+                *value -= amount;
+                Ok(Value::Var(label.clone()))
+            }
+            _ => Err(value
+                .conversion_err_to_types(&[FslType::Int])
+                .to_exec(label_span, data.clone())),
+        },
+    )
     .await
-    .map_err(|e| e.to_exec(label_span, data.clone()))?
 }
 
 pub const CONTAINS_RULES: &[ArgRule] = &[
@@ -1891,7 +1906,10 @@ pub async fn contains(
                 .collect::<Result<Vec<_>, _>>()
                 .await
                 .map_err(|e| e.to_exec(command.span, data.clone()))?;
-            Ok(Value::Bool(list.contains(item.value(data.clone()).await)))
+            Ok(Value::Bool(
+                item.with(data, async |value| Ok(list.contains(value)))
+                    .await?,
+            ))
         }
         Value::Map(map) => {
             let key = item.as_text(data).await?;
@@ -2272,30 +2290,31 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut parameters: VecDeque<SourceStr> = VecDeque::new();
     let mut commands: Vec<Command> = Vec::new();
 
-    let values_len = args.len();
     let mut encountered_command = false;
-    for i in 0..values_len {
-        match args[i].value(data.clone()).await {
+    for (i, arg) in args.into_iter().enumerate() {
+        let span = arg.span;
+        let kind = arg.as_type(data.clone()).await;
+        match arg.into_value(data.clone()).await {
             Value::Var(label) => {
                 if encountered_command {
                     return Err(
                         RuntimeError::ParametersOutOfOrder.to_exec(command.span, data.clone())
                     );
                 }
-                parameters.push_back(label.clone());
+                parameters.push_back(label);
             }
             Value::Command(command) => {
                 encountered_command = true;
-                commands.push(*command.clone());
+                commands.push(*command);
             }
             _ => {
                 return Err(RuntimeError::WrongArgType {
                     command_label: command.get_label().to_string(),
                     arg_number: i,
-                    fsl_type: args[i].value(data.clone()).await.as_type(),
+                    fsl_type: kind,
                     expected: &[FslType::Var, FslType::Command],
                 }
-                .to_exec(args[i].span, data.clone()));
+                .to_exec(span, data.clone()));
             }
         }
     }
@@ -2380,17 +2399,25 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let parameters = parameter_labels.len();
     for _ in 0..parameters {
         let arg = args.pop_front().unwrap();
+        let arg_span = arg.span;
         let parameter = parameter_labels.pop_front().unwrap();
-        if let Value::Var(var) = arg.value(data.clone()).await {
-            aliases.insert(parameter, var.clone());
-        } else {
-            let arg = arg.as_raw(data.clone()).await?;
-            data.vars
-                .write()
-                .await
-                .insert(&parameter, Var::Mut(arg.into_value(data.clone()).await))
-                .await
-                .map_err(|e| e.to_exec(command.span, data.clone()))?;
+        let value = arg.into_value(data.clone()).await;
+        match value {
+            Value::Var(var) => {
+                aliases.insert(parameter, var);
+            }
+            _ => {
+                let value = value
+                    .as_raw(data.clone())
+                    .await
+                    .map_err(|e| e.to_exec(arg_span, data.clone()))?;
+                data.vars
+                    .write()
+                    .await
+                    .insert(&parameter, Var::Mut(value))
+                    .await
+                    .map_err(|e| e.to_exec(command.span, data.clone()))?;
+            }
         }
     }
 

@@ -59,9 +59,10 @@ impl Map {
         keys: &[SourceStr],
         value: Value,
         data: Arc<InterpreterData>,
-    ) -> Result<Value, RuntimeError> {
+        span: Span,
+    ) -> Result<Value, ExecutionError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey),
+            [] => Err(RuntimeError::MissingKey.to_exec(span, data)),
             [key] => match self.get(key) {
                 Some(_) => {
                     let return_value = self.insert(key.clone(), value);
@@ -69,16 +70,19 @@ impl Map {
                 }
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
-                }),
+                }
+                .to_exec(span, data)),
             },
             [key, rest @ ..] => match self.get_mut(key) {
-                Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, data),
+                Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
-                }),
+                }
+                .to_exec(span, data)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
-                }),
+                }
+                .to_exec(span, data)),
             },
         }
     }

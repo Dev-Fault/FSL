@@ -264,26 +264,19 @@ impl std::fmt::Display for RuntimeError {
             } => match expected {
                 ExpectedArgs::None => &format!(
                     "command `{}` expected no arguments and got {}",
-                    command_label,
-                    got,
+                    command_label, got,
                 ),
                 ExpectedArgs::Exactly(n) => &format!(
                     "command `{}` expected exactly {} arguments and got {}",
-                    command_label,
-                    n,
-                    got,
+                    command_label, n, got,
                 ),
                 ExpectedArgs::AtLeast(n) => &format!(
                     "command `{}` expected at least {} arguments and got {}",
-                    command_label,
-                    n,
-                    got,
+                    command_label, n, got,
                 ),
                 ExpectedArgs::AtMost(n) => &format!(
                     "command `{}` expected at most {} arguments and got {}",
-                    command_label,
-                    n,
-                    got,
+                    command_label, n, got,
                 ),
             },
             RuntimeError::ParametersOutOfOrder => {
@@ -351,12 +344,8 @@ impl std::fmt::Display for RuntimeError {
                 &format!("process `{}` failed to run", process)
             }
             RuntimeError::OutputFailure(failure) => failure,
-            RuntimeError::ValueDef => {
-                "defs need to be at top level or inside another def."
-            }
-            RuntimeError::InvalidCommandInSwitch => {
-                "switch can only contain case() and fallback()"
-            }
+            RuntimeError::ValueDef => "defs need to be at top level or inside another def.",
+            RuntimeError::InvalidCommandInSwitch => "switch can only contain case() and fallback()",
         };
 
         write!(f, "{}", output)

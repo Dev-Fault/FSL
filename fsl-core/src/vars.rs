@@ -3,9 +3,10 @@ use std::{collections::HashMap, ops::Deref, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
-    data::Limiter,
-    error::RuntimeError,
+    data::{InterpreterData, Limiter},
+    error::{ExecutionError, RuntimeError, ToExecutionError},
     source_str::SourceStr,
+    span::Span,
     types::{FslType, value::Value},
 };
 
@@ -112,36 +113,53 @@ impl VarStore {
         self.data.pop();
     }
 
-    pub async fn modify<F, R>(&self, label: &SourceStr, f: F) -> Result<R, RuntimeError>
+    pub async fn modify<F, R>(
+        &self,
+        label: &SourceStr,
+        span: Span,
+        data: Arc<InterpreterData>,
+        f: F,
+    ) -> Result<R, ExecutionError>
     where
-        F: FnOnce(&mut Value) -> R,
+        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, ExecutionError>,
     {
         for map in self.data.iter().rev() {
             let mut map = map.write().await;
             if let Some(var) = map.get_mut(label) {
-                return Ok(f(var.inner_mut(label)?));
+                return f(var
+                    .inner_mut(label)
+                    .map_err(|e| e.to_exec(span, data.clone()))?)
+                .await;
             }
         }
 
         Err(RuntimeError::NonExistantVar {
             label: label.to_string(),
-        })
+        }
+        .to_exec(span, data))
     }
 
-    pub async fn with<F, R>(&self, label: &SourceStr, f: F) -> Result<R, RuntimeError>
+    pub async fn with<F, R>(
+        &self,
+        label: &SourceStr,
+        span: Span,
+        data: Arc<InterpreterData>,
+        f: F,
+    ) -> Result<R, ExecutionError>
     where
-        F: FnOnce(&Value) -> R,
+        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, ExecutionError>,
     {
         for map in self.data.iter().rev() {
             let mut map = map.write().await;
             if let Some(var) = map.get_mut(label) {
-                return Ok(f(var.inner()));
+                return f(var.inner()).await;
             }
         }
 
         Err(RuntimeError::NonExistantVar {
             label: label.to_string(),
-        })
+        }
+        .to_exec(span, data))
     }
 
     pub async fn get_clone(&self, label: &SourceStr) -> Result<Value, RuntimeError> {

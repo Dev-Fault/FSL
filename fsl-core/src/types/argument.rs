@@ -74,36 +74,42 @@ impl ArgumentKind {
 
     pub async fn modify<F, R>(
         &mut self,
+        span: Span,
         data: Arc<InterpreterData>,
         f: F,
-    ) -> Result<R, RuntimeError>
+    ) -> Result<R, ExecutionError>
     where
-        F: FnOnce(&mut Value) -> Result<R, RuntimeError>,
+        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, ExecutionError>,
     {
         match self {
             ArgumentKind::Value(value) => {
                 if let Value::Var(label) = value {
                     let vars = data.vars.read().await;
-                    vars.modify(label, f).await?
+                    vars.modify(label, span, data.clone(), f).await
                 } else {
-                    f(value)
+                    f(value).await
                 }
             }
             ArgumentKind::Path(source_strs) => todo!(),
         }
     }
 
-    pub async fn with<F, R>(&self, data: Arc<InterpreterData>, f: F) -> Result<R, RuntimeError>
+    pub async fn with<F, R>(
+        &self,
+        span: Span,
+        data: Arc<InterpreterData>,
+        f: F,
+    ) -> Result<R, ExecutionError>
     where
-        F: FnOnce(&Value) -> Result<R, RuntimeError>,
+        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, ExecutionError>,
     {
         match self {
             ArgumentKind::Value(value) => {
                 if let Value::Var(label) = value {
                     let vars = data.vars.read().await;
-                    vars.with(label, f).await?
+                    vars.with(label, span, data.clone(), f).await
                 } else {
-                    f(value)
+                    f(value).await
                 }
             }
             ArgumentKind::Path(source_strs) => todo!(),
@@ -131,14 +137,15 @@ impl Argument {
         }
     }
 
+    pub async fn value(&self, fsl_type: FslType, data: Arc<InterpreterData>) -> bool {
+        self.value.as_value(data.clone()).await.is_type(fsl_type)
+    }
+
     pub async fn with<F, R>(&self, data: Arc<InterpreterData>, f: F) -> Result<R, ExecutionError>
     where
-        F: FnOnce(&Value) -> Result<R, RuntimeError>,
+        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, ExecutionError>,
     {
-        self.value
-            .with(data.clone(), f)
-            .await
-            .map_err(|e| e.to_exec(self.span, data))
+        self.value.with(self.span, data.clone(), f).await
     }
 
     pub async fn modify<F, R>(
@@ -147,16 +154,9 @@ impl Argument {
         f: F,
     ) -> Result<R, ExecutionError>
     where
-        F: FnOnce(&mut Value) -> Result<R, RuntimeError>,
+        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, ExecutionError>,
     {
-        self.value
-            .modify(data.clone(), f)
-            .await
-            .map_err(|e| e.to_exec(self.span, data))
-    }
-
-    pub async fn value(&self, data: Arc<InterpreterData>) -> &Value {
-        self.value.as_value(data).await
+        self.value.modify(self.span, data.clone(), f).await
     }
 
     pub async fn value_mut(&mut self, data: Arc<InterpreterData>) -> &mut Value {
@@ -380,7 +380,7 @@ impl Argument {
     pub async fn as_command_label(
         &self,
         data: Arc<InterpreterData>,
-    ) -> Result<&str, ExecutionError> {
+    ) -> Result<SourceStr, ExecutionError> {
         self.value
             .as_value(data.clone())
             .await
