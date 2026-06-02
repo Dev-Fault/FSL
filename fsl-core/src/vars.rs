@@ -35,6 +35,13 @@ impl Var {
         }
     }
 
+    pub fn inner(&self) -> &Value {
+        match self {
+            Var::Const(value) => value,
+            Var::Mut(value) => value,
+        }
+    }
+
     pub fn is_const(&self) -> bool {
         match self {
             Var::Const(_) => true,
@@ -105,7 +112,7 @@ impl VarStore {
         self.data.pop();
     }
 
-    pub async fn with_mut<F, R>(&self, label: &SourceStr, f: F) -> Result<R, RuntimeError>
+    pub async fn modify<F, R>(&self, label: &SourceStr, f: F) -> Result<R, RuntimeError>
     where
         F: FnOnce(&mut Value) -> R,
     {
@@ -113,6 +120,22 @@ impl VarStore {
             let mut map = map.write().await;
             if let Some(var) = map.get_mut(label) {
                 return Ok(f(var.inner_mut(label)?));
+            }
+        }
+
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
+    }
+
+    pub async fn with<F, R>(&self, label: &SourceStr, f: F) -> Result<R, RuntimeError>
+    where
+        F: FnOnce(&Value) -> R,
+    {
+        for map in self.data.iter().rev() {
+            let mut map = map.write().await;
+            if let Some(var) = map.get_mut(label) {
+                return Ok(f(var.inner()));
             }
         }
 

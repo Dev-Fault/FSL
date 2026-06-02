@@ -135,17 +135,24 @@ pub async fn register_std(interpreter: &mut FslInterpreter) {
 }
 
 pub async fn take_if_var(
-    value: &mut Value,
+    arg: &mut Argument,
     data: Arc<InterpreterData>,
     span: Span,
 ) -> Result<Option<SourceStr>, ExecutionError> {
-    if let Value::Var(label) = value {
-        let label = label.clone();
-        let mut vars = data.vars.write().await;
-        *value = vars
-            .take(&label)
-            .await
-            .map_err(|e| e.to_exec(span, data.clone()))?;
+    if arg.is_type(FslType::Var, data.clone()).await {
+        let label = arg.get_var_label(data.clone()).await?;
+        let data_clone = data.clone();
+        let var = {
+            let mut vars = data_clone.vars.write().await;
+            vars.take(&label)
+                .await
+                .map_err(|e| e.to_exec(span, data.clone()))?
+        };
+        arg.modify(data, |value| {
+            *value = var;
+            Ok(())
+        })
+        .await?;
         Ok(Some(label))
     } else {
         Ok(None)
@@ -970,7 +977,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             let arg = case.pop_front_arg().unwrap();
             let arg = arg.as_raw(data.clone()).await?;
 
-            if arg.value(data.clone()).await == expression.value(data.clone()).await {
+            if arg.equal(&expression, data.clone()).await? {
                 return case.execute(data.clone()).await;
             } else {
                 continue;
@@ -1099,12 +1106,7 @@ pub async fn for_each(
 
     let mut array = args.pop_front().unwrap();
     let array_span = array.span;
-    let var = take_if_var(
-        array.value_mut(data.clone()).await,
-        data.clone(),
-        array_span,
-    )
-    .await?;
+    let var = take_if_var(&mut array, data.clone(), array_span).await?;
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
@@ -1283,7 +1285,6 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut command = command;
     let mut args = command.take_args();
     let mut map = args.pop_front().unwrap();
-    let map_span = map.span;
     let key = args.pop_front().unwrap();
     let arg = args.pop_front().unwrap();
 
@@ -1291,18 +1292,14 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let arg = arg.as_raw_checked(data.clone(), NOT_NONE).await?;
 
-    let value_loc = map.span;
-
     let value = arg.into_value(data.clone()).await;
     let return_value = map
         .modify(data.clone(), |map| match map {
             Value::Map(map) => {
-                let value = map.set_nested(&key, value, data, value_loc)?;
+                let value = map.set_nested(&key, value, data)?;
                 Ok(value)
             }
-            _ => Err(map
-                .conversion_err_to_types(&[FslType::Map])
-                .to_exec(map_span, data.clone())),
+            _ => Err(map.conversion_err_to_types(&[FslType::Map])),
         })
         .await?;
     Ok(return_value)
@@ -1319,11 +1316,13 @@ pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         .as_raw_checked(data.clone(), INDEXABLE)
         .await?;
 
-    match array.value(data.clone()).await {
-        Value::Text(text) => Ok(Value::from(text.len())),
-        Value::List(list) => Ok(Value::from(list.len())),
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
+    array
+        .with(data.clone(), |value| match value {
+            Value::Text(text) => Ok(Value::from(text.len())),
+            Value::List(list) => Ok(Value::from(list.len())),
+            _ => unreachable!("as_raw should enforce array is List or Text"),
+        })
+        .await
 }
 
 pub const REMOVE_RULES: &[ArgRule] = &[
@@ -1340,7 +1339,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let key = key.as_raw(data.clone()).await?;
 
     let value_loc = array.span;
-    let var = take_if_var(array.value_mut(data.clone()).await, data.clone(), value_loc).await?;
+    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
 
     let array = array.as_raw_checked(data.clone(), COLLECTION).await?;
 
@@ -1401,7 +1400,7 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let b_key_span = b_key.span;
 
     let value_loc = array.span;
-    let var = take_if_var(array.value_mut(data.clone()).await, data.clone(), value_loc).await?;
+    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1467,7 +1466,7 @@ pub async fn replace(
     let key = key.as_list_key(data.clone()).await?;
 
     let value_loc = array.span;
-    let var = take_if_var(array.value_mut(data.clone()).await, data.clone(), value_loc).await?;
+    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1545,7 +1544,7 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let arg = arg.as_raw_checked(data.clone(), ANY).await?;
 
     let value_loc = array.span;
-    let var = take_if_var(array.value_mut(data.clone()).await, data.clone(), value_loc).await?;
+    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
 
     let array = array.as_raw_checked(data.clone(), COLLECTION).await?;
 
@@ -1618,7 +1617,7 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         .await?;
 
     let value_loc = array.span;
-    let var = take_if_var(array.value_mut(data.clone()).await, data.clone(), value_loc).await?;
+    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
 
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
@@ -1652,7 +1651,7 @@ pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut array = args.pop_front().unwrap();
 
     let value_loc = array.span;
-    let var = take_if_var(array.value_mut(data.clone()).await, data.clone(), value_loc).await?;
+    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
@@ -1696,12 +1695,7 @@ pub async fn search_replace(
     let with = args.pop_front().unwrap().as_text(data.clone()).await?;
 
     let value_loc = string.span;
-    let var = take_if_var(
-        string.value_mut(data.clone()).await,
-        data.clone(),
-        value_loc,
-    )
-    .await?;
+    let var = take_if_var(&mut string, data.clone(), value_loc).await?;
 
     let string = string.as_text(data.clone()).await?;
 
@@ -1729,12 +1723,7 @@ pub async fn slice_replace(
     let with = args.pop_front().unwrap().as_text(data.clone()).await?;
 
     let value_loc = string.span;
-    let var = take_if_var(
-        string.value_mut(data.clone()).await,
-        data.clone(),
-        value_loc,
-    )
-    .await?;
+    let var = take_if_var(&mut string, data.clone(), value_loc).await?;
 
     let string = string.as_text(data.clone()).await?;
 
@@ -1780,7 +1769,7 @@ pub async fn reverse(
 
     let mut array = args.pop_front().unwrap();
     let value_loc = array.span;
-    let var = take_if_var(array.value_mut(data.clone()).await, data.clone(), value_loc).await?;
+    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
     let array = array
         .as_raw_checked(data.clone(), &[FslType::List, FslType::Text])
         .await?;
@@ -1822,7 +1811,7 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let vars = data.vars.write().await;
 
-    vars.with_mut(&label, |value| match value {
+    vars.modify(&label, |value| match value {
         Value::Int(value) => {
             *value += amount;
             Ok(Value::Var(label.clone()))
@@ -1855,7 +1844,7 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let vars = data.vars.write().await;
 
-    vars.with_mut(&label, |value| match value {
+    vars.modify(&label, |value| match value {
         Value::Int(value) => {
             *value -= amount;
             Ok(Value::Var(label.clone()))

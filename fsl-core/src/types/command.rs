@@ -145,7 +145,7 @@ impl Command {
     ) -> Result<(), ExecutionError> {
         for i in range.start..range.end {
             let arg = &self.args[i];
-            let fsl_type = arg.value(data.clone()).await.as_type();
+            let fsl_type = arg.as_type(data.clone()).await;
             if !arg_rule.valid_types.contains(&fsl_type) {
                 return Err(RuntimeError::WrongArgType {
                     command_label: self.get_label().to_string(),

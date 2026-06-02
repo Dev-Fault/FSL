@@ -71,6 +71,44 @@ impl ArgumentKind {
             ArgumentKind::Path(source_strs) => todo!(),
         }
     }
+
+    pub async fn modify<F, R>(
+        &mut self,
+        data: Arc<InterpreterData>,
+        f: F,
+    ) -> Result<R, RuntimeError>
+    where
+        F: FnOnce(&mut Value) -> Result<R, RuntimeError>,
+    {
+        match self {
+            ArgumentKind::Value(value) => {
+                if let Value::Var(label) = value {
+                    let vars = data.vars.read().await;
+                    vars.modify(label, f).await?
+                } else {
+                    f(value)
+                }
+            }
+            ArgumentKind::Path(source_strs) => todo!(),
+        }
+    }
+
+    pub async fn with<F, R>(&self, data: Arc<InterpreterData>, f: F) -> Result<R, RuntimeError>
+    where
+        F: FnOnce(&Value) -> Result<R, RuntimeError>,
+    {
+        match self {
+            ArgumentKind::Value(value) => {
+                if let Value::Var(label) = value {
+                    let vars = data.vars.read().await;
+                    vars.with(label, f).await?
+                } else {
+                    f(value)
+                }
+            }
+            ArgumentKind::Path(source_strs) => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -93,22 +131,28 @@ impl Argument {
         }
     }
 
+    pub async fn with<F, R>(&self, data: Arc<InterpreterData>, f: F) -> Result<R, ExecutionError>
+    where
+        F: FnOnce(&Value) -> Result<R, RuntimeError>,
+    {
+        self.value
+            .with(data.clone(), f)
+            .await
+            .map_err(|e| e.to_exec(self.span, data))
+    }
+
     pub async fn modify<F, R>(
         &mut self,
         data: Arc<InterpreterData>,
         f: F,
     ) -> Result<R, ExecutionError>
     where
-        F: FnOnce(&mut Value) -> Result<R, ExecutionError>,
+        F: FnOnce(&mut Value) -> Result<R, RuntimeError>,
     {
-        if let Value::Var(label) = self.value.as_value(data.clone()).await {
-            let vars = data.vars.read().await;
-            vars.with_mut(label, f)
-                .await
-                .map_err(|e| e.to_exec(self.span, data.clone()))?
-        } else {
-            f(self.value.as_value_mut(data.clone()).await)
-        }
+        self.value
+            .modify(data.clone(), f)
+            .await
+            .map_err(|e| e.to_exec(self.span, data))
     }
 
     pub async fn value(&self, data: Arc<InterpreterData>) -> &Value {
