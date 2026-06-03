@@ -171,7 +171,7 @@ impl PathArgument {
                         .await
                     }
                     Err(_) => {
-                        let text = self.head.clone().to_text(data.clone()).await?;
+                        let text = self.take_head().to_text(data.clone()).await?;
                         match &mut self.head.kind {
                             ArgumentKind::Value(value) => {
                                 Self::modify_char(value, text, i, span, data, f).await
