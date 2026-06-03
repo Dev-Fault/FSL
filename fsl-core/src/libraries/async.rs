@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::{ExecutionError, RuntimeError, ToExecutionError},
+    error::{RuntimeError, SpannedError, ToSpannedError},
     register_command,
     types::{
         FslType,
@@ -22,13 +22,13 @@ pub async fn register_async(interpreter: &mut FslInterpreter) {
 
 pub const JOIN_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
 pub const JOIN: &str = "join";
-pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
+pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let args = command.take_args();
     let args = args.into_iter();
     let mut commands: Vec<_> = Vec::new();
     for arg in args {
-        commands.push(arg.as_command(data.clone()).await?);
+        commands.push(arg.to_command(data.clone()).await?);
     }
 
     let mut executors = Vec::new();
@@ -45,11 +45,10 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             Ok(Ok(value)) => list.push(value),
             Ok(Err(e)) => return Err(e),
             Err(e) => {
-                return Err(RuntimeError::Custom(format!(
-                    "Failed to join threads:\n {}",
-                    e
-                ))
-                .to_exec(command.span, data.clone()));
+                return Err(
+                    RuntimeError::Custom(format!("Failed to join threads:\n {}", e))
+                        .span(command.span, data.clone()),
+                );
             }
         }
     }
@@ -59,13 +58,10 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
 pub const YIELD_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Command])];
 pub const YIELD: &str = "yield";
-pub async fn r#yield(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, ExecutionError> {
+pub async fn r#yield(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let command = args.pop_front().unwrap().as_command(data.clone()).await?;
+    let command = args.pop_front().unwrap().to_command(data.clone()).await?;
     tokio::task::yield_now().await;
     let result = command.execute(data).await?;
 

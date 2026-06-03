@@ -8,9 +8,8 @@ use crate::{
     InterpreterData,
     data::UserDefinitions,
     error::{
-        ExecutionError,
         ExpectedArgs::{self},
-        RuntimeError, ToExecutionError,
+        RuntimeError, SpannedError, ToSpannedError,
     },
     source_str::SourceStr,
     span::Span,
@@ -20,7 +19,7 @@ use crate::{
     },
 };
 
-pub type InterpreterFut = BoxFuture<'static, Result<Value, ExecutionError>>;
+pub type InterpreterFut = BoxFuture<'static, Result<Value, SpannedError>>;
 
 pub type InterpreterFn = Arc<dyn Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync>;
 
@@ -142,10 +141,10 @@ impl Command {
         arg_rule: &ArgRule,
         range: &Range<usize>,
         data: Arc<InterpreterData>,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<(), SpannedError> {
         for i in range.start..range.end {
             let arg = &self.args[i];
-            let fsl_type = arg.type_of(data.clone()).await?;
+            let fsl_type = arg.to_type(data.clone()).await?;
             if !arg_rule.valid_types.contains(&fsl_type) {
                 return Err(RuntimeError::WrongArgType {
                     command_label: self.get_label().to_string(),
@@ -153,13 +152,13 @@ impl Command {
                     fsl_type,
                     expected: arg_rule.valid_types,
                 }
-                .to_exec(arg.span, data.clone()));
+                .span(arg.span, data.clone()));
             }
         }
         Ok(())
     }
 
-    async fn validate_args(&self, data: Arc<InterpreterData>) -> Result<(), ExecutionError> {
+    async fn validate_args(&self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
         let mut max_args = 0;
         for arg_rule in self.arg_rules {
             match &arg_rule.position {
@@ -180,7 +179,7 @@ impl Command {
                                 command_label: self.get_label().to_string(),
                                 arg_number: *i,
                             }
-                            .to_exec(self.span, data.clone()));
+                            .span(self.span, data.clone()));
                         }
                     }
                 }
@@ -196,14 +195,14 @@ impl Command {
                             expected: ExpectedArgs::AtLeast(range.start),
                             got: self.args.len(),
                         }
-                        .to_exec(self.span, data.clone()));
+                        .span(self.span, data.clone()));
                     } else if self.args.len() > range.end {
                         return Err(RuntimeError::WrongArgCount {
                             command_label: self.get_label().to_string(),
                             expected: ExpectedArgs::AtMost(range.end),
                             got: self.args.len(),
                         }
-                        .to_exec(self.span, data.clone()));
+                        .span(self.span, data.clone()));
                     } else {
                         self.validate_arg_range(arg_rule, range, data.clone())
                             .await?;
@@ -216,7 +215,7 @@ impl Command {
                             expected: ExpectedArgs::None,
                             got: self.args.len(),
                         }
-                        .to_exec(self.span, data.clone()));
+                        .span(self.span, data.clone()));
                     }
                 }
                 ArgPos::AnyFrom(i) => {
@@ -246,12 +245,12 @@ impl Command {
                 expected: ExpectedArgs::Exactly(max_args),
                 got: self.args.len(),
             }
-            .to_exec(self.span, data.clone()));
+            .span(self.span, data.clone()));
         }
         Ok(())
     }
 
-    pub async fn execute(self, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
+    pub async fn execute(self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
         self.validate_args(data.clone()).await?;
 
         if data.should_execute().await {

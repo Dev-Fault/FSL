@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     data::{InterpreterData, UserDefinitions},
-    error::{InterpreterError, RuntimeError, ToExecutionError},
+    error::{InterpreterError, RuntimeError, ToSpannedError},
     libraries::{
         Library,
         r#async::register_async,
@@ -294,7 +294,7 @@ impl FslInterpreter {
                             command_label: expression.name.to_string(),
                             arg_number: 0,
                         })
-                        .to_exec(Span::from(expression), data.clone())
+                        .span(Span::from(expression), data.clone())
                         .into());
                     }
                 };
@@ -417,7 +417,7 @@ impl FslInterpreter {
                 Err(RuntimeError::NonExistantCommand {
                     label: expression.name.to_string(),
                 }
-                .to_exec(Span::from(&expression), data.clone())
+                .span(Span::from(&expression), data.clone())
                 .into())
             }
         }
@@ -439,7 +439,7 @@ impl FslInterpreter {
                                 value: number.to_string(),
                                 valid_types: vec![FslType::Float],
                             }
-                            .to_exec(Span::from(&arg), data.clone())
+                            .span(Span::from(&arg), data.clone())
                             .into()),
                         }
                     } else if let Ok(value) = number.parse::<i64>() {
@@ -451,7 +451,7 @@ impl FslInterpreter {
                             value: number.to_string(),
                             valid_types: vec![FslType::Int, FslType::Int],
                         }
-                        .to_exec(span, data.clone())
+                        .span(span, data.clone())
                         .into())
                     }
                 }

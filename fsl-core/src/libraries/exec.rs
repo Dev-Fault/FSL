@@ -5,7 +5,7 @@ use tokio_stream::StreamExt;
 use crate::{
     FslInterpreter,
     data::InterpreterData,
-    error::{ExecutionError, RuntimeError, ToExecutionError},
+    error::{RuntimeError, SpannedError, ToSpannedError},
     register_command,
     source_str::SourceStr,
     types::{
@@ -23,15 +23,15 @@ pub async fn register_exec(interpreter: &mut FslInterpreter) {
 
 pub const EXEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_TEXT)];
 pub const EXEC: &str = "exec";
-pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
+pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let program = arg.as_text(data.clone()).await?;
+    let program = arg.to_text(data.clone()).await?;
     let args = tokio_stream::iter(args.into_iter());
     let args: Vec<SourceStr> = args
-        .then(|v| v.as_text(data.clone()))
+        .then(|v| v.to_text(data.clone()))
         .collect::<Result<Vec<SourceStr>, _>>()
         .await?;
     let args: Vec<&str> = args.iter().map(|cs| &**cs).collect();
@@ -43,14 +43,12 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             RuntimeError::FailedToRun {
                 process: program.to_string(),
             }
-            .to_exec(arg_span, data.clone())
+            .span(arg_span, data.clone())
         })?;
 
     if !output.status.success() {
         let output = String::from_utf8_lossy(&output.stderr);
-        return Err(
-            RuntimeError::OutputFailure(output.trim().into()).to_exec(arg_span, data.clone())
-        );
+        return Err(RuntimeError::OutputFailure(output.trim().into()).span(arg_span, data.clone()));
     }
 
     let output = output.stdout;
@@ -63,10 +61,10 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
 pub const SH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
 pub const SH: &str = "sh";
-pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, ExecutionError> {
+pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let script = args.pop_front().unwrap().as_text(data.clone()).await?;
+    let script = args.pop_front().unwrap().to_text(data.clone()).await?;
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&*script)
@@ -76,7 +74,7 @@ pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, E
             RuntimeError::FailedToRun {
                 process: "sh".into(),
             }
-            .to_exec(command.span, data.clone())
+            .span(command.span, data.clone())
         })?;
 
     if !output.status.success() {

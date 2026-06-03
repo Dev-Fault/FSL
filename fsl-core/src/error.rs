@@ -16,8 +16,8 @@ impl<T> ErrorContext<T> {
     }
 }
 
-impl From<ExecutionError> for ErrorContext<RuntimeError> {
-    fn from(value: ExecutionError) -> Self {
+impl From<SpannedError> for ErrorContext<RuntimeError> {
+    fn from(value: SpannedError) -> Self {
         let context = value.to_string();
         let kind = value.command_error;
         Self { kind, context }
@@ -47,8 +47,8 @@ impl<'c> From<ParseError<'c>> for InterpreterError {
     }
 }
 
-impl From<ExecutionError> for InterpreterError {
-    fn from(value: ExecutionError) -> Self {
+impl From<SpannedError> for InterpreterError {
+    fn from(value: SpannedError) -> Self {
         InterpreterError::Execution(ErrorContext::from(value))
     }
 }
@@ -70,19 +70,19 @@ impl std::fmt::Display for InterpreterError {
 impl std::error::Error for InterpreterError {}
 
 #[derive(Debug, Clone)]
-pub struct ExecutionError {
+pub struct SpannedError {
     pub command_error: RuntimeError,
     pub span: Span,
     pub data: Arc<InterpreterData>,
 }
 
-impl PartialEq for ExecutionError {
+impl PartialEq for SpannedError {
     fn eq(&self, other: &Self) -> bool {
         self.command_error == other.command_error && self.span == other.span
     }
 }
 
-impl ExecutionError {
+impl SpannedError {
     pub fn new(command_error: RuntimeError, span: Span, data: Arc<InterpreterData>) -> Self {
         Self {
             command_error,
@@ -104,7 +104,7 @@ fn normalize_tab(c: char) -> String {
     }
 }
 
-impl std::fmt::Display for ExecutionError {
+impl std::fmt::Display for SpannedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let source = &self.data.source_str();
         let line_header = format!("{}: ", self.span.line_number(source));
@@ -127,7 +127,7 @@ impl std::fmt::Display for ExecutionError {
     }
 }
 
-impl std::error::Error for ExecutionError {}
+impl std::error::Error for SpannedError {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpectedArgs {
@@ -352,17 +352,27 @@ impl std::fmt::Display for RuntimeError {
     }
 }
 
-pub trait ToExecutionError {
-    fn to_exec(self, span: Span, data: Arc<InterpreterData>) -> ExecutionError;
+pub trait ToSpannedError {
+    fn span(self, span: Span, data: Arc<InterpreterData>) -> SpannedError;
 }
 
-impl ToExecutionError for RuntimeError {
-    fn to_exec(self, span: Span, data: Arc<InterpreterData>) -> ExecutionError {
-        ExecutionError {
+impl ToSpannedError for RuntimeError {
+    fn span(self, span: Span, data: Arc<InterpreterData>) -> SpannedError {
+        SpannedError {
             command_error: self,
             span,
             data,
         }
+    }
+}
+
+pub trait SpanError<T> {
+    fn span_err(self, span: Span, data: Arc<InterpreterData>) -> Result<T, SpannedError>;
+}
+
+impl<T, E: ToSpannedError> SpanError<T> for Result<T, E> {
+    fn span_err(self, span: Span, data: Arc<InterpreterData>) -> Result<T, SpannedError> {
+        self.map_err(|e| e.span(span, data))
     }
 }
 

@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     data::InterpreterData,
-    error::{ExecutionError, RuntimeError, ToExecutionError},
+    error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     source_str::SourceStr,
     span::Span,
     types::value::{Value, ValueError},
@@ -78,9 +78,9 @@ impl Map {
         value: Value,
         data: Arc<InterpreterData>,
         span: Span,
-    ) -> Result<Value, ExecutionError> {
+    ) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey.to_exec(span, data)),
+            [] => Err(RuntimeError::MissingKey.span(span, data)),
             [key] => match self.get(key) {
                 Some(_) => {
                     let return_value = self.insert(key.clone(), value);
@@ -89,18 +89,18 @@ impl Map {
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data)),
+                .span(span, data)),
             },
             [key, rest @ ..] => match self.get_mut(key) {
                 Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data)),
+                .span(span, data)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data)),
+                .span(span, data)),
             },
         }
     }
@@ -110,9 +110,9 @@ impl Map {
         keys: &[SourceStr],
         data: Arc<InterpreterData>,
         span: Span,
-    ) -> Result<Value, ExecutionError> {
+    ) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
+            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
             [key] => {
                 let return_value = self.remove(key);
                 Ok(return_value.unwrap_or(Value::None))
@@ -122,11 +122,11 @@ impl Map {
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
         }
     }
@@ -137,9 +137,9 @@ impl Map {
         value: Value,
         data: Arc<InterpreterData>,
         span: Span,
-    ) -> Result<Value, ExecutionError> {
+    ) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
+            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
             [key] => {
                 let return_value = self.insert(key.clone(), value);
                 Ok(return_value.unwrap_or(Value::None))
@@ -149,11 +149,11 @@ impl Map {
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
         }
     }
@@ -163,26 +163,26 @@ impl Map {
         keys: &[SourceStr],
         data: Arc<InterpreterData>,
         span: Span,
-    ) -> Result<Value, ExecutionError> {
+    ) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
+            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
             [key] => match self.get(key).cloned() {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
             [key, rest @ ..] => match self.get(key) {
                 Some(Value::Map(inner_map)) => inner_map.get_nested_clone(rest, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
         }
     }
@@ -192,26 +192,26 @@ impl Map {
         keys: &[SourceStr],
         data: Arc<InterpreterData>,
         span: Span,
-    ) -> Result<&Value, ExecutionError> {
+    ) -> Result<&Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
+            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
             [key] => match self.get(key) {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
             [key, rest @ ..] => match self.get(key) {
                 Some(Value::Map(inner_map)) => inner_map.get_nested(rest, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
         }
     }
@@ -221,26 +221,26 @@ impl Map {
         keys: &[SourceStr],
         data: Arc<InterpreterData>,
         span: Span,
-    ) -> Result<&mut Value, ExecutionError> {
+    ) -> Result<&mut Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).map_err(|e| e.to_exec(span, data.clone())),
+            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
             [key] => match self.get_mut(key) {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
             [key, rest @ ..] => match self.get_mut(key) {
                 Some(Value::Map(inner_map)) => inner_map.get_nested_mut(rest, data, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .to_exec(span, data.clone())),
+                .span(span, data.clone())),
             },
         }
     }
