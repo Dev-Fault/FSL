@@ -12,8 +12,8 @@ pub struct Path<'c> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedPath<'c> {
     pub start: Token<'c>,
-    pub head: Box<Arg<'c>>,
-    pub body: Vec<Arg<'c>>,
+    pub root: Box<Arg<'c>>,
+    pub segments: Vec<Arg<'c>>,
     pub end: Token<'c>,
 }
 
@@ -22,8 +22,8 @@ impl<'c> From<Path<'c>> for ParsedPath<'c> {
         let mut value = value;
         Self {
             start: value.start,
-            head: Box::new(value.data.pop_front().unwrap()),
-            body: value.data.into_iter().collect(),
+            root: Box::new(value.data.pop_front().unwrap()),
+            segments: value.data.into_iter().collect(),
             end: value.end,
         }
     }
@@ -1040,9 +1040,9 @@ mod tests {
                     Tree::Expression((name, tree_args))
                 }
                 ArgKind::Path(path) => {
-                    let head = path.head.clone();
+                    let head = path.root.clone();
                     let mut path_body: Vec<&'c str> = Vec::new();
-                    for arg in &path.body {
+                    for arg in &path.segments {
                         path_body.push(arg.token.as_str());
                     }
                     Tree::Path((&head.token.as_str(), path_body))

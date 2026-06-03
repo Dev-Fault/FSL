@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use async_recursion::async_recursion;
 use rand::seq::SliceRandom;
 use tokio_stream::StreamExt;
 
@@ -27,23 +26,7 @@ use crate::{
     vars::Var,
 };
 
-const F_ADD_RULES: &'static [ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), ANY)];
 pub async fn register_std(interpreter: &mut FslInterpreter) {
-    register_command!(interpreter, "f_add", F_ADD_RULES, |cmd, data| {
-        async move {
-            let mut cmd: Command = cmd;
-            let mut args = cmd.take_args();
-            let l = args.pop_front().unwrap().into_value(data.clone()).await?;
-            let r = args.pop_front().unwrap().into_value(data).await?;
-            match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::from(a + b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::from(a as f64 + b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::from(a + b as f64)),
-                (Value::Float(a), Value::Float(b)) => Ok(Value::from(a + b)),
-                _ => todo!(),
-            }
-        }
-    });
     register_command!(interpreter, ADD, MATH_RULES, add);
     register_command!(interpreter, SUB, MATH_RULES, sub);
     register_command!(interpreter, MUL, MATH_RULES, mul);
@@ -1274,7 +1257,7 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut args = command.take_args();
     if args.len() == 1 {
         let arg = args.pop_front().unwrap();
-        Ok(arg.into_value(data).await?)
+        arg.with(data, async |value| Ok(value.clone())).await
     } else {
         let map = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
@@ -2336,40 +2319,35 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     }
 }
 
-#[async_recursion]
-async fn alias_parameter(
+fn alias_parameter(
     parameter: &mut Value,
     aliases: &HashMap<SourceStr, SourceStr>,
     data: Arc<InterpreterData>,
-) -> Result<(), SpannedError> {
+) {
     match parameter {
         Value::List(values) => {
             for value in values.iter_mut() {
-                alias_parameter(value, aliases, data.clone()).await?;
+                alias_parameter(value, aliases, data.clone());
             }
-            Ok(())
         }
         Value::Map(map) => {
             for value in map.values_mut() {
-                alias_parameter(value, aliases, data.clone()).await?;
+                alias_parameter(value, aliases, data.clone());
             }
-            Ok(())
         }
         Value::Command(command) => {
             for arg in command.get_args_mut() {
-                let mut value = arg.take_value(data.clone()).await?;
-                alias_parameter(&mut value, &aliases, data.clone()).await?;
+                let mut value = arg.take_value();
+                alias_parameter(&mut value, &aliases, data.clone());
                 arg.replace_value(value);
             }
-            Ok(())
         }
         Value::Var(var) => {
             if let Some(alias) = aliases.get(var) {
                 *parameter = Value::Var(alias.clone())
             }
-            Ok(())
         }
-        _ => Ok(()),
+        _ => {}
     }
 }
 
@@ -2434,8 +2412,8 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for mut command in commands {
         let args = command.get_args_mut();
         for arg in args {
-            let mut value = arg.take_value(data.clone()).await?;
-            alias_parameter(&mut value, &aliases, data.clone()).await?;
+            let mut value = arg.take_value();
+            alias_parameter(&mut value, &aliases, data.clone());
             arg.replace_value(value);
         }
         final_value = command.execute(data.clone()).await?;

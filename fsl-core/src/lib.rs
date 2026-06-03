@@ -24,7 +24,7 @@ use crate::{
     span::Span,
     types::{
         FslType,
-        argument::{ArgRule, Argument, PathArgument},
+        argument::{Accessor, AccessorRoot, ArgRule, Argument},
         command::{Command, CommandDef, Handler, UserDef},
         value::Value,
     },
@@ -504,15 +504,17 @@ impl FslInterpreter {
                     Ok(Argument::new(value, span))
                 }
                 ArgKind::Path(path) => {
-                    let head = Self::process_arg(data.clone(), defs.clone(), *path.head).await?;
-                    let mut body = Vec::with_capacity(path.body.len());
-                    for arg in path.body {
+                    let root = Self::process_arg(data.clone(), defs.clone(), *path.root).await?;
+                    let mut segments = Vec::with_capacity(path.segments.len());
+                    for arg in path.segments {
                         let arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
-                        body.push(arg);
+                        segments.push(arg);
                     }
 
-                    let path_arg = PathArgument::new(head, body);
-                    Ok(Argument::new_path(path_arg, span))
+                    let root_span = root.span;
+                    let root = AccessorRoot::new(root.into_value(data).await?, root_span);
+                    let accessor = Accessor::new(root, segments);
+                    Ok(Argument::new_path(accessor, span))
                 }
             }
         })

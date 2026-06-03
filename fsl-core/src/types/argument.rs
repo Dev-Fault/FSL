@@ -42,23 +42,32 @@ impl ArgRule {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PathArgument {
-    pub head: Box<Argument>,
-    pub body: Vec<Argument>,
+pub struct AccessorRoot {
+    pub value: Value,
+    pub span: Span,
 }
 
-enum PathIndexer {
+impl AccessorRoot {
+    pub fn new(value: Value, span: Span) -> Self {
+        Self { value, span }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Accessor {
+    pub root: AccessorRoot,
+    pub segments: Vec<Argument>,
+}
+
+enum Indexer {
     List(Vec<usize>),
     Text(Vec<usize>),
     Map(Vec<SourceStr>),
 }
 
-impl PathArgument {
-    pub fn new(head: Argument, body: Vec<Argument>) -> Self {
-        Self {
-            head: Box::new(head),
-            body,
-        }
+impl Accessor {
+    pub fn new(root: AccessorRoot, segments: Vec<Argument>) -> Self {
+        Self { root, segments }
     }
 
     pub fn into_value(
@@ -68,20 +77,35 @@ impl PathArgument {
     ) -> impl Future<Output = Result<Value, SpannedError>> {
         Box::pin(async move {
             match self.to_indexer(span, data.clone()).await? {
-                PathIndexer::Text(body) => {
-                    let head = self.head.to_text(data.clone()).await?;
-                    match &head.chars().nth(*body.get(0).unwrap()) {
+                Indexer::Text(indexer) => {
+                    let root = self
+                        .root
+                        .value
+                        .to_text(data.clone())
+                        .await
+                        .span_err(self.root.span, data.clone())?;
+                    match &root.chars().nth(*indexer.get(0).unwrap()) {
                         Some(char) => Ok(Value::from(*char)),
                         None => Err(RuntimeError::IndexOutOfBounds.span(span, data)),
                     }
                 }
-                PathIndexer::List(body) => {
-                    let head = self.head.to_list(data.clone()).await?;
-                    Ok(head.get_nested_clone(&body, data, span)?)
+                Indexer::List(indexer) => {
+                    let root = self
+                        .root
+                        .value
+                        .to_list(data.clone())
+                        .await
+                        .span_err(self.root.span, data.clone())?;
+                    Ok(root.get_nested_clone(&indexer, data, span)?)
                 }
-                PathIndexer::Map(body) => {
-                    let head = self.head.to_map(data.clone()).await?;
-                    Ok(head.get_nested_clone(&body, data.clone(), span)?)
+                Indexer::Map(indexer) => {
+                    let root = self
+                        .root
+                        .value
+                        .to_map(data.clone())
+                        .await
+                        .span_err(self.root.span, data.clone())?;
+                    Ok(root.get_nested_clone(&indexer, data.clone(), span)?)
                 }
             }
         })
@@ -153,9 +177,9 @@ impl PathArgument {
         F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, SpannedError>,
     {
         match self.to_indexer(span, data.clone()).await? {
-            PathIndexer::Text(body) => {
-                let i = *body.get(0).unwrap();
-                match self.head.as_var_label(data.clone()).await {
+            Indexer::Text(indexer) => {
+                let i = *indexer.get(0).unwrap();
+                match self.root.value.as_var_label(data.clone()) {
                     Ok(var) => {
                         let data_clone = data.clone();
                         let vars = data_clone.vars.read().await;
@@ -171,25 +195,24 @@ impl PathArgument {
                         .await
                     }
                     Err(_) => {
-                        let text = self.take_head().to_text(data.clone()).await?;
-                        match &mut self.head.kind {
-                            ArgumentKind::Value(value) => {
-                                Self::modify_char(value, text, i, span, data, f).await
-                            }
-                            ArgumentKind::Path(_) => {
-                                unreachable!("path inside a path should not be possible")
-                            }
-                        }
+                        let text = self
+                            .take_root()
+                            .value
+                            .to_text(data.clone())
+                            .await
+                            .span_err(self.root.span, data.clone())?;
+                        Self::modify_char(&mut self.root.value, text, i, self.root.span, data, f)
+                            .await
                     }
                 }
             }
-            PathIndexer::List(body) => match self.head.as_var_label(data.clone()).await {
+            Indexer::List(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
                     vars.modify(&var, span, data.clone(), async |value| match value {
                         Value::List(list) => {
-                            let value = list.get_nested_mut(&body, data, span)?;
+                            let value = list.get_nested_mut(&indexer, data, span)?;
                             f(value).await
                         }
                         _ => Err(value
@@ -199,18 +222,23 @@ impl PathArgument {
                     .await
                 }
                 Err(_) => {
-                    let mut head = self.take_head().to_list(data.clone()).await?;
-                    let value = head.get_nested_mut(&body, data, span)?;
+                    let mut root = self
+                        .take_root()
+                        .value
+                        .to_list(data.clone())
+                        .await
+                        .span_err(self.root.span, data.clone())?;
+                    let value = root.get_nested_mut(&indexer, data, span)?;
                     f(value).await
                 }
             },
-            PathIndexer::Map(body) => match self.head.as_var_label(data.clone()).await {
+            Indexer::Map(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
                     vars.modify(&var, span, data.clone(), async |value| match value {
                         Value::Map(map) => {
-                            let value = map.get_nested_mut(&body, data, span)?;
+                            let value = map.get_nested_mut(&indexer, data, span)?;
                             f(value).await
                         }
                         _ => Err(value
@@ -220,8 +248,13 @@ impl PathArgument {
                     .await
                 }
                 Err(_) => {
-                    let mut head = self.take_head().to_map(data.clone()).await?;
-                    let value = head.get_nested_mut(&body, data, span)?;
+                    let mut root = self
+                        .take_root()
+                        .value
+                        .to_map(data.clone())
+                        .await
+                        .span_err(self.root.span, data.clone())?;
+                    let value = root.get_nested_mut(&indexer, data, span)?;
                     f(value).await
                 }
             },
@@ -238,13 +271,13 @@ impl PathArgument {
         F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, SpannedError>,
     {
         match self.to_indexer(span, data.clone()).await? {
-            PathIndexer::Text(body) => {
-                let i = *body.get(0).unwrap();
-                match self.head.as_var_label(data.clone()).await {
+            Indexer::Text(indexer) => {
+                let i = *indexer.get(0).unwrap();
+                match self.root.value.as_var_label(data.clone()) {
                     Ok(var) => {
                         let data_clone = data.clone();
                         let vars = data_clone.vars.read().await;
-                        vars.modify(&var, span, data.clone(), async |value| match value {
+                        vars.with(&var, span, data.clone(), async |value| match value {
                             Value::Text(text) => {
                                 let text = text.clone();
                                 Self::with_char(text, i, span, data, f).await
@@ -256,23 +289,24 @@ impl PathArgument {
                         .await
                     }
                     Err(_) => {
-                        let text = self.head.clone().to_text(data.clone()).await?;
-                        match &self.head.kind {
-                            ArgumentKind::Value(_) => Self::with_char(text, i, span, data, f).await,
-                            ArgumentKind::Path(_) => {
-                                unreachable!("self inside a self should not be possible")
-                            }
-                        }
+                        let text = self
+                            .root
+                            .value
+                            .clone()
+                            .to_text(data.clone())
+                            .await
+                            .span_err(self.root.span, data.clone())?;
+                        Self::with_char(text, i, self.root.span, data, f).await
                     }
                 }
             }
-            PathIndexer::List(body) => match self.head.as_var_label(data.clone()).await {
+            Indexer::List(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.modify(&var, span, data.clone(), async |value| match value {
+                    vars.with(&var, span, data.clone(), async |value| match value {
                         Value::List(list) => {
-                            let value = list.get_nested(&body, data, span)?;
+                            let value = list.get_nested(&indexer, data, span)?;
                             f(value).await
                         }
                         _ => Err(value
@@ -282,18 +316,24 @@ impl PathArgument {
                     .await
                 }
                 Err(_) => {
-                    let head = self.head.clone().to_list(data.clone()).await?;
-                    let value = head.get_nested(&body, data, span)?;
+                    let root = self
+                        .root
+                        .value
+                        .clone()
+                        .to_list(data.clone())
+                        .await
+                        .span_err(self.root.span, data.clone())?;
+                    let value = root.get_nested(&indexer, data, span)?;
                     f(value).await
                 }
             },
-            PathIndexer::Map(body) => match self.head.as_var_label(data.clone()).await {
+            Indexer::Map(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.modify(&var, span, data.clone(), async |value| match value {
+                    vars.with(&var, span, data.clone(), async |value| match value {
                         Value::Map(map) => {
-                            let value = map.get_nested(&body, data, span)?;
+                            let value = map.get_nested(&indexer, data, span)?;
                             f(value).await
                         }
                         _ => Err(value
@@ -303,18 +343,24 @@ impl PathArgument {
                     .await
                 }
                 Err(_) => {
-                    let head = self.head.clone().to_map(data.clone()).await?;
-                    let value = head.get_nested(&body, data, span)?;
+                    let root = self
+                        .root
+                        .value
+                        .clone()
+                        .to_map(data.clone())
+                        .await
+                        .span_err(self.root.span, data.clone())?;
+                    let value = root.get_nested(&indexer, data, span)?;
                     f(value).await
                 }
             },
         }
     }
 
-    fn take_head(&mut self) -> Argument {
-        let replacement = Argument::new(Value::None, self.head.span);
-        let previous = std::mem::replace(&mut self.head, Box::new(replacement));
-        *previous
+    fn take_root(&mut self) -> AccessorRoot {
+        let replacement = AccessorRoot::new(Value::None, self.root.span);
+        let previous = std::mem::replace(&mut self.root, replacement);
+        previous
     }
 
     #[async_recursion]
@@ -322,37 +368,43 @@ impl PathArgument {
         &self,
         span: Span,
         data: Arc<InterpreterData>,
-    ) -> Result<PathIndexer, SpannedError> {
-        match self.head.to_inner_type(data.clone()).await? {
+    ) -> Result<Indexer, SpannedError> {
+        match self
+            .root
+            .value
+            .to_inner_type(data.clone())
+            .await
+            .span_err(self.root.span, data.clone())?
+        {
             FslType::Text => {
-                let mut body = Vec::with_capacity(self.body.len());
-                for arg in self.body.clone() {
+                let mut indexer = Vec::with_capacity(self.segments.len());
+                for arg in self.segments.clone() {
                     let arg_span = arg.span;
                     let value = arg.into_value(data.clone()).await?;
                     let key = value
                         .to_usize(data.clone())
                         .await
                         .span_err(arg_span, data.clone())?;
-                    body.push(key);
+                    indexer.push(key);
                 }
-                Ok(PathIndexer::Text(body))
+                Ok(Indexer::Text(indexer))
             }
             FslType::List => {
-                let mut body = Vec::with_capacity(self.body.len());
-                for arg in self.body.clone() {
+                let mut indexer = Vec::with_capacity(self.segments.len());
+                for arg in self.segments.clone() {
                     let arg_span = arg.span;
                     let value = arg.into_value(data.clone()).await?;
                     let key = value
                         .to_usize(data.clone())
                         .await
                         .span_err(arg_span, data.clone())?;
-                    body.push(key);
+                    indexer.push(key);
                 }
-                Ok(PathIndexer::List(body))
+                Ok(Indexer::List(indexer))
             }
             FslType::Map => {
-                let mut body = Vec::with_capacity(self.body.len());
-                for arg in self.body.clone() {
+                let mut indexer = Vec::with_capacity(self.segments.len());
+                for arg in self.segments.clone() {
                     let arg_span = arg.span;
                     let value = arg.into_value(data.clone()).await?;
                     let key = match value.to_type() {
@@ -365,20 +417,21 @@ impl PathArgument {
                             .await
                             .span_err(arg_span, data.clone())?,
                     };
-                    body.push(key);
+                    indexer.push(key);
                 }
-                Ok(PathIndexer::Map(body))
+                Ok(Indexer::Map(indexer))
             }
             FslType::Command => {
                 let value = self
-                    .head
+                    .root
+                    .value
                     .clone()
                     .to_command(data.clone())
-                    .await?
+                    .span_err(self.root.span, data.clone())?
                     .execute(data.clone())
                     .await?;
-                let arg = Argument::new(value, span);
-                let path = PathArgument::new(arg, self.body.clone());
+                let root = AccessorRoot::new(value, span);
+                let path = Accessor::new(root, self.segments.clone());
                 path.to_indexer(span, data).await
             }
             _ => Err(RuntimeError::NotIndexable.span(span, data)),
@@ -389,7 +442,7 @@ impl PathArgument {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArgumentKind {
     Value(Value),
-    Path(PathArgument),
+    Accessor(Accessor),
 }
 
 impl Default for ArgumentKind {
@@ -408,7 +461,7 @@ impl ArgumentKind {
             ArgumentKind::Value(value) => {
                 return Either::Left(ready(Ok(value)));
             }
-            ArgumentKind::Path(path) => {
+            ArgumentKind::Accessor(path) => {
                 return Either::Right(path.into_value(span, data));
             }
         }
@@ -432,7 +485,7 @@ impl ArgumentKind {
                     f(value).await
                 }
             }
-            ArgumentKind::Path(path) => path.modify(span, data, f).await,
+            ArgumentKind::Accessor(path) => path.modify(span, data, f).await,
         }
     }
 
@@ -454,7 +507,7 @@ impl ArgumentKind {
                     f(value).await
                 }
             }
-            ArgumentKind::Path(path) => path.with(span, data, f).await,
+            ArgumentKind::Accessor(path) => path.with(span, data, f).await,
         }
     }
 
@@ -469,7 +522,7 @@ impl ArgumentKind {
     {
         match self {
             ArgumentKind::Value(value) => f(value).await,
-            ArgumentKind::Path(path) => path.with(span, data, f).await,
+            ArgumentKind::Accessor(path) => path.with(span, data, f).await,
         }
     }
 }
@@ -494,9 +547,9 @@ impl Argument {
         }
     }
 
-    pub fn new_path(path: PathArgument, span: Span) -> Self {
+    pub fn new_path(path: Accessor, span: Span) -> Self {
         Self {
-            kind: ArgumentKind::Path(path),
+            kind: ArgumentKind::Accessor(path),
             span,
         }
     }
@@ -523,13 +576,22 @@ impl Argument {
         self.kind.into_value(self.span, data).await
     }
 
-    pub async fn take_value(&mut self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-        let kind = std::mem::take(&mut self.kind);
-        kind.into_value(self.span, data).await
+    pub fn take_value(&mut self) -> Value {
+        match &mut self.kind {
+            ArgumentKind::Value(value) => std::mem::take(value),
+            ArgumentKind::Accessor(acessor) => std::mem::take(&mut acessor.root.value),
+        }
     }
 
     pub fn replace_value(&mut self, value: Value) {
-        self.kind = ArgumentKind::Value(value);
+        match &mut self.kind {
+            ArgumentKind::Value(v) => {
+                *v = value;
+            }
+            ArgumentKind::Accessor(accessor) => {
+                accessor.root.value = value;
+            }
+        }
     }
 }
 
@@ -569,7 +631,7 @@ impl Argument {
     pub async fn mem_size(&self) -> Result<usize, RuntimeError> {
         match &self.kind {
             ArgumentKind::Value(value) => value.mem_size().await,
-            ArgumentKind::Path(_) => Ok(0),
+            ArgumentKind::Accessor(_) => Ok(0),
         }
     }
 
