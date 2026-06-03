@@ -20,6 +20,24 @@ pub enum Map {
     Unresolved(Arc<FslMap>),
 }
 
+impl std::fmt::Display for Map {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let map = match self {
+            Map::Resolved(map) => map,
+            Map::Unresolved(map) => map,
+        };
+        write!(f, "[")?;
+        for (i, (key, value)) in map.iter().enumerate() {
+            if i < map.len() - 1 {
+                write!(f, "{}: {}, ", &*key, value.to_string())?;
+            } else {
+                write!(f, "{}: {}", &*key, value.to_string())?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+
 impl PartialEq for Map {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(self.inner(), other.inner()) || **self == **other

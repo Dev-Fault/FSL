@@ -24,7 +24,7 @@ use crate::{
     span::Span,
     types::{
         FslType,
-        argument::{ArgRule, Argument},
+        argument::{ArgRule, Argument, PathArgument},
         command::{Command, CommandDef, Handler, UserDef},
         value::Value,
     },
@@ -478,7 +478,7 @@ impl FslInterpreter {
                     let mut list: Vec<Value> = Vec::with_capacity(list_arg.data.len());
                     for arg in list_arg.data {
                         let parsed_arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
-                        list.push(parsed_arg.into_value(data.clone()).await);
+                        list.push(parsed_arg.into_value(data.clone()).await?);
                     }
                     Ok(Argument::new(Value::from(list), span))
                 }
@@ -492,7 +492,7 @@ impl FslInterpreter {
                             Self::process_arg(data.clone(), defs.clone(), value)
                                 .await?
                                 .into_value(data.clone())
-                                .await,
+                                .await?,
                         );
                     }
 
@@ -502,6 +502,17 @@ impl FslInterpreter {
                     let span = Span::from(&expression);
                     let value = Self::process_expression(data, defs, expression).await?;
                     Ok(Argument::new(value, span))
+                }
+                ArgKind::Path(path) => {
+                    let head = Self::process_arg(data.clone(), defs.clone(), *path.head).await?;
+                    let mut body = Vec::with_capacity(path.body.len());
+                    for arg in path.body {
+                        let arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
+                        body.push(arg);
+                    }
+
+                    let path_arg = PathArgument::new(head, body);
+                    Ok(Argument::new_path(path_arg, span))
                 }
             }
         })
@@ -2526,6 +2537,29 @@ mod interpreter {
                 )
             )
             ",
+            "true"
+        );
+    }
+
+    #[tokio::test]
+    async fn compare_map_paths() {
+        assert_fsl!(
+            r#"
+            player_pos.store([x: 1, y: 2, z: 3])
+            opponent_pos.store([x: 1, y: 2, z: 3])
+            player_pos.x.eq(opponent_pos.x).print()
+            "#,
+            "true"
+        );
+    }
+
+    #[tokio::test]
+    async fn compare_same_map_path() {
+        assert_fsl!(
+            r#"
+            player_pos.store([x: 1, y: 2, z: 3])
+            player_pos.x.eq(player_pos.x).print()
+            "#,
             "true"
         );
     }

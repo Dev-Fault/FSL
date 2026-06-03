@@ -16,6 +16,24 @@ pub enum List {
     Unresolved(Arc<Vec<Value>>),
 }
 
+impl std::fmt::Display for List {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let values = match self {
+            List::Resolved(values) => values,
+            List::Unresolved(values) => values,
+        };
+        write!(f, "[")?;
+        for (i, value) in values.iter().enumerate() {
+            if i < values.len() - 1 {
+                write!(f, "{}, ", value.to_string())?;
+            } else {
+                write!(f, "{}", value.to_string())?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+
 impl PartialEq for List {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(self.inner(), other.inner()) || **self == **other
@@ -65,7 +83,7 @@ impl List {
         }
     }
 
-    pub fn get_nested(
+    pub fn get_nested_clone(
         &self,
         indices: &[usize],
         data: Arc<InterpreterData>,
@@ -75,6 +93,34 @@ impl List {
             [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.clone())),
             [i] => {
                 let result = self.get(*i).cloned();
+                match result {
+                    Some(value) => Ok(value),
+                    None => Err(RuntimeError::IndexOutOfBounds)
+                        .map_err(|e| e.to_exec(span, data.clone())),
+                }
+            }
+            [i, rest @ ..] => match self.get(*i) {
+                Some(Value::List(inner_list)) => inner_list.get_nested_clone(rest, data, span),
+                Some(_) => {
+                    Err(RuntimeError::NotIndexable).map_err(|e| e.to_exec(span, data.clone()))
+                }
+                None => {
+                    Err(RuntimeError::IndexOutOfBounds).map_err(|e| e.to_exec(span, data.clone()))
+                }
+            },
+        }
+    }
+
+    pub fn get_nested(
+        &self,
+        indices: &[usize],
+        data: Arc<InterpreterData>,
+        span: Span,
+    ) -> Result<&Value, ExecutionError> {
+        match indices {
+            [] => Err(RuntimeError::MissingIndex).map_err(|e| e.to_exec(span, data.clone())),
+            [i] => {
+                let result = self.get(*i);
                 match result {
                     Some(value) => Ok(value),
                     None => Err(RuntimeError::IndexOutOfBounds)

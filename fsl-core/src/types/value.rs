@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::{ffi::os_str::Display, pin::Pin, sync::Arc};
 
 use async_recursion::async_recursion;
 
@@ -77,10 +77,14 @@ impl Value {
         }
     }
 
-    pub async fn as_literal_type(
-        &self,
-        data: Arc<InterpreterData>,
-    ) -> Result<FslType, RuntimeError> {
+    pub fn is_var(&self) -> bool {
+        match self {
+            Value::Var(_) => true,
+            _ => false,
+        }
+    }
+
+    pub async fn type_of_inner(&self, data: Arc<InterpreterData>) -> Result<FslType, RuntimeError> {
         Ok(match self {
             Value::Int(_) => FslType::Int,
             Value::Float(_) => FslType::Float,
@@ -632,19 +636,20 @@ impl Value {
     }
 }
 
-impl ToString for Value {
-    fn to_string(&self) -> String {
-        match self {
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let out = match self {
             Value::Int(value) => value.to_string(),
             Value::Float(value) => value.to_string(),
             Value::Text(value) => value.to_string(),
             Value::Bool(value) => value.to_string(),
-            Value::List(values) => format!("{:?}", values),
-            Value::Map(map) => format!("{:?}", map),
+            Value::List(values) => format!("{}", values),
+            Value::Map(map) => format!("{}", map),
             Value::Var(value) => value.to_string(),
             Value::Command(command) => command.get_label().to_string(),
             Value::None => "".to_string(),
-        }
+        };
+        write!(f, "{}", out)
     }
 }
 
