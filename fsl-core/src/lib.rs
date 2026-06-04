@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     data::{InterpreterData, UserDefinitions},
-    error::{InterpreterError, RuntimeError, ToSpannedError},
+    error::{InterpreterError, RuntimeError, SpanError, ToSpannedError},
     libraries::{
         Library,
         r#async::register_async,
@@ -24,7 +24,7 @@ use crate::{
     span::Span,
     types::{
         FslType,
-        argument::{Accessor, AccessorRoot, ArgRule, Argument},
+        argument::{Accessor, AccessorSegment, ArgRule, Argument},
         command::{Command, CommandDef, Handler, UserDef},
         value::Value,
     },
@@ -423,6 +423,34 @@ impl FslInterpreter {
         }
     }
 
+    fn parse_number(number: &str) -> Result<Value, RuntimeError> {
+        if number.contains('.') {
+            match number.parse::<f64>() {
+                Ok(value) => Ok(Value::Float(value)),
+                Err(_) => Err(RuntimeError::FailedParse {
+                    value: number.to_string(),
+                    valid_types: vec![FslType::Float],
+                }),
+            }
+        } else if let Ok(value) = number.parse::<i64>() {
+            Ok(Value::Int(value))
+        } else if let Ok(value) = number.parse::<f64>() {
+            Ok(Value::Float(value))
+        } else {
+            Err(RuntimeError::FailedParse {
+                value: number.to_string(),
+                valid_types: vec![FslType::Int, FslType::Int],
+            })
+        }
+    }
+
+    fn parse_string(string: Cow<'_, str>, span: Span, data: Arc<InterpreterData>) -> Value {
+        match string {
+            Cow::Borrowed(_) => Value::Text(SourceStr::Borrowed(data.source.slice(span))),
+            Cow::Owned(owned) => Value::Text(SourceStr::Owned(owned)),
+        }
+    }
+
     fn process_arg<'c>(
         data: Arc<InterpreterData>,
         defs: Arc<RwLock<CommandDefinitions>>,
@@ -432,38 +460,13 @@ impl FslInterpreter {
             let span = Span::from(&arg);
             match arg.kind {
                 ArgKind::Number(number) => {
-                    if number.contains('.') {
-                        match number.parse::<f64>() {
-                            Ok(value) => Ok(Argument::new(Value::Float(value), span)),
-                            Err(_) => Err(RuntimeError::FailedParse {
-                                value: number.to_string(),
-                                valid_types: vec![FslType::Float],
-                            }
-                            .span(Span::from(&arg), data.clone())
-                            .into()),
-                        }
-                    } else if let Ok(value) = number.parse::<i64>() {
-                        Ok(Argument::new(Value::Int(value), span))
-                    } else if let Ok(value) = number.parse::<f64>() {
-                        Ok(Argument::new(Value::Float(value), span))
-                    } else {
-                        Err(RuntimeError::FailedParse {
-                            value: number.to_string(),
-                            valid_types: vec![FslType::Int, FslType::Int],
-                        }
-                        .span(span, data.clone())
-                        .into())
-                    }
+                    let number = Self::parse_number(number).span_err(span, data.clone())?;
+                    Ok(Argument::new(number, span))
                 }
-                ArgKind::String(cow) => match cow {
-                    Cow::Borrowed(_) => Ok(Argument::new(
-                        Value::Text(SourceStr::Borrowed(data.source.slice(span))),
-                        span,
-                    )),
-                    Cow::Owned(owned) => {
-                        Ok(Argument::new(Value::Text(SourceStr::Owned(owned)), span))
-                    }
-                },
+                ArgKind::String(cow) => {
+                    let value = Self::parse_string(cow, span, data);
+                    Ok(Argument::new(value, span))
+                }
                 ArgKind::Keyword(keyword) => match keyword {
                     lexer::TRUE => Ok(Argument::new(Value::Bool(true), span)),
                     lexer::FALSE => Ok(Argument::new(Value::Bool(false), span)),
@@ -507,12 +510,17 @@ impl FslInterpreter {
                     let root = Self::process_arg(data.clone(), defs.clone(), *path.root).await?;
                     let mut segments = Vec::with_capacity(path.segments.len());
                     for arg in path.segments {
-                        let arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
-                        segments.push(arg);
+                        let segment_span = Span::from(&arg.token);
+                        let key = Self::process_arg(data.clone(), defs.clone(), arg)
+                            .await?
+                            .into_value(data.clone())
+                            .await?;
+                        let segment = AccessorSegment::new(key, segment_span);
+                        segments.push(segment);
                     }
 
                     let root_span = root.span;
-                    let root = AccessorRoot::new(root.into_value(data).await?, root_span);
+                    let root = AccessorSegment::new(root.into_value(data).await?, root_span);
                     let accessor = Accessor::new(root, segments);
                     Ok(Argument::new_path(accessor, span))
                 }
