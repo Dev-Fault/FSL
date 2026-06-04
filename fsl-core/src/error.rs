@@ -2,7 +2,12 @@ use std::{fmt::Debug, sync::Arc};
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::{data::InterpreterData, parser::ParseError, span::Span, types::FslType};
+use crate::{
+    data::InterpreterData,
+    parser::ParseError,
+    span::Span,
+    types::{FslType, command::ExpectedArgs},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorContext<T> {
@@ -10,16 +15,16 @@ pub struct ErrorContext<T> {
     pub context: String,
 }
 
-impl<T> ErrorContext<T> {
-    pub fn new(kind: T, context: String) -> Self {
+impl ErrorContext<RuntimeError> {
+    fn from_span(value: SpannedError, data: Arc<InterpreterData>) -> Self {
+        let context = value.to_string(data);
+        let kind = value.command_error;
         Self { kind, context }
     }
 }
 
-impl From<SpannedError> for ErrorContext<RuntimeError> {
-    fn from(value: SpannedError) -> Self {
-        let context = value.to_string();
-        let kind = value.command_error;
+impl<T> ErrorContext<T> {
+    pub fn new(kind: T, context: String) -> Self {
         Self { kind, context }
     }
 }
@@ -47,12 +52,6 @@ impl<'c> From<ParseError<'c>> for InterpreterError {
     }
 }
 
-impl From<SpannedError> for InterpreterError {
-    fn from(value: SpannedError) -> Self {
-        InterpreterError::Execution(ErrorContext::from(value))
-    }
-}
-
 impl std::fmt::Display for InterpreterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let output = match self {
@@ -73,7 +72,22 @@ impl std::error::Error for InterpreterError {}
 pub struct SpannedError {
     pub command_error: RuntimeError,
     pub span: Span,
-    pub data: Arc<InterpreterData>,
+}
+
+pub trait SpanToInterpreterError<T> {
+    fn into_interpreter_error(self, data: Arc<InterpreterData>) -> Result<T, InterpreterError>;
+}
+
+impl<T> SpanToInterpreterError<T> for Result<T, SpannedError> {
+    fn into_interpreter_error(self, data: Arc<InterpreterData>) -> Result<T, InterpreterError> {
+        self.map_err(|e| e.into_interpreter_error(data))
+    }
+}
+
+impl SpannedError {
+    pub fn into_interpreter_error(self, data: Arc<InterpreterData>) -> InterpreterError {
+        InterpreterError::Execution(ErrorContext::from_span(self, data))
+    }
 }
 
 impl PartialEq for SpannedError {
@@ -83,15 +97,35 @@ impl PartialEq for SpannedError {
 }
 
 impl SpannedError {
-    pub fn new(command_error: RuntimeError, span: Span, data: Arc<InterpreterData>) -> Self {
+    pub fn new(command_error: RuntimeError, span: Span) -> Self {
         Self {
             command_error,
             span,
-            data,
         }
     }
+
     pub fn exited_program(&self) -> bool {
         self.command_error.exited_program()
+    }
+
+    pub fn to_string(&self, data: Arc<InterpreterData>) -> String {
+        let source = &data.source_str();
+        let line_header = format!("{}: ", self.span.line_number(source));
+
+        let upto_line_position = &self.span.line(source)[..self.span.line_location(source)];
+
+        let upto_line_position: String = upto_line_position.chars().map(normalize_tab).collect();
+
+        let line: String = self.span.line(source).chars().map(normalize_tab).collect();
+
+        let padding = upto_line_position.width() + line_header.width();
+        format!(
+            "{}\n{}{}\n{}^",
+            self.command_error,
+            line_header,
+            line,
+            " ".repeat(padding),
+        )
     }
 }
 
@@ -102,39 +136,6 @@ fn normalize_tab(c: char) -> String {
     } else {
         c.to_string()
     }
-}
-
-impl std::fmt::Display for SpannedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let source = &self.data.source_str();
-        let line_header = format!("{}: ", self.span.line_number(source));
-
-        let upto_line_position = &self.span.line(source)[..self.span.line_location(source)];
-
-        let upto_line_position: String = upto_line_position.chars().map(normalize_tab).collect();
-
-        let line: String = self.span.line(source).chars().map(normalize_tab).collect();
-
-        let padding = upto_line_position.width() + line_header.width();
-        write!(
-            f,
-            "{}\n{}{}\n{}^",
-            self.command_error,
-            line_header,
-            line,
-            " ".repeat(padding),
-        )
-    }
-}
-
-impl std::error::Error for SpannedError {}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExpectedArgs {
-    None,
-    Exactly(usize),
-    AtLeast(usize),
-    AtMost(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -213,6 +214,10 @@ pub enum RuntimeError {
     MissingKey,
     NonExistantKey {
         key: String,
+    },
+    InvalidIndex {
+        being_indexed: FslType,
+        should_be: FslType,
     },
     // Limits
     LoopLimitReached,
@@ -346,6 +351,13 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::OutputFailure(failure) => failure,
             RuntimeError::ValueDef => "defs need to be at top level or inside another def.",
             RuntimeError::InvalidCommandInSwitch => "switch can only contain case() and fallback()",
+            RuntimeError::InvalidIndex {
+                being_indexed,
+                should_be,
+            } => &format!(
+                "invalid index for `{}` should be `{}`",
+                being_indexed, should_be
+            ),
         };
 
         write!(f, "{}", output)
@@ -353,26 +365,25 @@ impl std::fmt::Display for RuntimeError {
 }
 
 pub trait ToSpannedError {
-    fn span(self, span: Span, data: Arc<InterpreterData>) -> SpannedError;
+    fn span(self, span: Span) -> SpannedError;
 }
 
 impl ToSpannedError for RuntimeError {
-    fn span(self, span: Span, data: Arc<InterpreterData>) -> SpannedError {
+    fn span(self, span: Span) -> SpannedError {
         SpannedError {
             command_error: self,
             span,
-            data,
         }
     }
 }
 
 pub trait SpanError<T> {
-    fn span_err(self, span: Span, data: Arc<InterpreterData>) -> Result<T, SpannedError>;
+    fn span_err(self, span: Span) -> Result<T, SpannedError>;
 }
 
 impl<T, E: ToSpannedError> SpanError<T> for Result<T, E> {
-    fn span_err(self, span: Span, data: Arc<InterpreterData>) -> Result<T, SpannedError> {
-        self.map_err(|e| e.span(span, data))
+    fn span_err(self, span: Span) -> Result<T, SpannedError> {
+        self.map_err(|e| e.span(span))
     }
 }
 

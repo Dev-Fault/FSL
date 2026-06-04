@@ -1,4 +1,4 @@
-use std::{future::ready, ops::Range, sync::Arc};
+use std::{future::ready, sync::Arc};
 
 use async_recursion::async_recursion;
 use futures::future::Either;
@@ -10,36 +10,6 @@ use crate::{
     span::Span,
     types::{FslType, command::Command, list::List, map::Map, value::Value},
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArgPos {
-    Index(usize),
-    OptionalIndex(usize),
-    Range(Range<usize>),
-    AnyFrom(usize),
-    None,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ArgRule {
-    pub position: ArgPos,
-    pub valid_types: &'static [FslType],
-}
-
-impl ArgRule {
-    pub const fn new(position: ArgPos, valid_types: &'static [FslType]) -> Self {
-        Self {
-            position,
-            valid_types,
-        }
-    }
-    pub const fn none() -> Self {
-        Self {
-            position: ArgPos::None,
-            valid_types: &[],
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccessorSegment {
@@ -59,10 +29,42 @@ pub struct Accessor {
     pub segments: Vec<AccessorSegment>,
 }
 
-enum Indexer {
+pub enum Indexer {
     List(Vec<usize>),
-    Text(Vec<usize>),
+    Text(usize),
     Map(Vec<SourceStr>),
+}
+
+impl Indexer {
+    pub fn to_list_indexer(self) -> Result<Vec<usize>, RuntimeError> {
+        match self {
+            Indexer::List(items) => Ok(items),
+            _ => Err(RuntimeError::InvalidIndex {
+                being_indexed: FslType::List,
+                should_be: FslType::Int,
+            }),
+        }
+    }
+
+    pub fn to_map_indexer(self) -> Result<Vec<SourceStr>, RuntimeError> {
+        match self {
+            Indexer::Map(items) => Ok(items),
+            _ => Err(RuntimeError::InvalidIndex {
+                being_indexed: FslType::Map,
+                should_be: FslType::Text,
+            }),
+        }
+    }
+
+    pub fn to_text_indexer(self) -> Result<usize, RuntimeError> {
+        match self {
+            Indexer::Text(i) => Ok(i),
+            _ => Err(RuntimeError::InvalidIndex {
+                being_indexed: FslType::Text,
+                should_be: FslType::Int,
+            }),
+        }
+    }
 }
 
 impl Accessor {
@@ -71,53 +73,44 @@ impl Accessor {
     }
 
     pub async fn into_value(
-        self,
+        mut self,
         span: Span,
         data: Arc<InterpreterData>,
     ) -> Result<Value, SpannedError> {
         match self.to_indexer(span, data.clone()).await? {
-            Indexer::Text(indexer) => {
-                let i = *indexer.get(0).unwrap();
-                match self.root.value.as_var_label(data.clone()) {
-                    Ok(var) => {
-                        let data_clone = data.clone();
-                        let vars = data_clone.vars.read().await;
-                        vars.with(&var, span, data.clone(), async |value| match value {
-                            Value::Text(text) => match text.chars().nth(i) {
-                                Some(ch) => Ok(Value::from(ch)),
-                                None => {
-                                    Err(RuntimeError::IndexOutOfBounds.span(self.root.span, data))
-                                }
-                            },
-                            _ => Err(value
-                                .conversion_err_to_types(&[FslType::Text])
-                                .span(span, data)),
-                        })
-                        .await
-                    }
-                    Err(_) => {
-                        let text = self
-                            .root
-                            .value
-                            .to_text(data.clone())
-                            .await
-                            .span_err(self.root.span, data.clone())?;
-                        match text.chars().nth(i) {
+            Indexer::Text(i) => match self.root.value.as_var_label(data.clone()) {
+                Ok(var) => {
+                    let data_clone = data.clone();
+                    let vars = data_clone.vars.read().await;
+                    vars.with(&var, span, async |value, span| match value {
+                        Value::Text(text) => match text.chars().nth(i) {
                             Some(ch) => Ok(Value::from(ch)),
-                            None => Err(RuntimeError::IndexOutOfBounds.span(self.root.span, data)),
-                        }
+                            None => Err(RuntimeError::IndexOutOfBounds.span(self.root.span)),
+                        },
+                        _ => Err(value.conversion_err_to_types(&[FslType::Text]).span(span)),
+                    })
+                    .await
+                }
+                Err(_) => {
+                    let text = self
+                        .root
+                        .value
+                        .to_text(data.clone())
+                        .await
+                        .span_err(self.root.span)?;
+                    match text.chars().nth(i) {
+                        Some(ch) => Ok(Value::from(ch)),
+                        None => Err(RuntimeError::IndexOutOfBounds.span(self.root.span)),
                     }
                 }
-            }
+            },
             Indexer::List(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.with(&var, span, data.clone(), async |value| match value {
-                        Value::List(list) => list.get_nested_clone(&indexer, data, span),
-                        _ => Err(value
-                            .conversion_err_to_types(&[FslType::List])
-                            .span(span, data)),
+                    vars.with(&var, span, async |value, span| match value {
+                        Value::List(list) => list.get_nested_clone(&indexer, span),
+                        _ => Err(value.conversion_err_to_types(&[FslType::List]).span(span)),
                     })
                     .await
                 }
@@ -128,19 +121,17 @@ impl Accessor {
                         .clone()
                         .to_list(data.clone())
                         .await
-                        .span_err(self.root.span, data.clone())?;
-                    root.get_nested_clone(&indexer, data, span)
+                        .span_err(self.root.span)?;
+                    root.get_nested_clone(&indexer, span)
                 }
             },
             Indexer::Map(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.with(&var, span, data.clone(), async |value| match value {
-                        Value::Map(map) => map.get_nested_clone(&indexer, data, span),
-                        _ => Err(value
-                            .conversion_err_to_types(&[FslType::Map])
-                            .span(span, data)),
+                    vars.with(&var, span, async |value, span| match value {
+                        Value::Map(map) => map.get_nested_clone(&indexer, span),
+                        _ => Err(value.conversion_err_to_types(&[FslType::Map]).span(span)),
                     })
                     .await
                 }
@@ -150,8 +141,8 @@ impl Accessor {
                         .value
                         .to_map(data.clone())
                         .await
-                        .span_err(self.root.span, data.clone())?;
-                    root.get_nested_clone(&indexer, data, span)
+                        .span_err(self.root.span)?;
+                    root.get_nested_clone(&indexer, span)
                 }
             },
         }
@@ -166,23 +157,19 @@ impl Accessor {
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
     {
         let mut string = text.to_string();
         match string.chars().nth(i) {
             Some(char) => {
                 let mut ch = Value::from(char);
-                let result = f(&mut ch).await?;
-                let replacement = ch
-                    .clone()
-                    .to_text(data.clone())
-                    .await
-                    .span_err(span, data.clone())?;
+                let result = f(&mut ch, span).await?;
+                let replacement = ch.clone().to_text(data.clone()).await.span_err(span)?;
                 string.replace_range(i..i + char.len_utf8(), &replacement);
                 *value = Value::Text(SourceStr::Owned(string));
                 Ok(result)
             }
-            None => Err(RuntimeError::IndexOutOfBounds.span(span, data)),
+            None => Err(RuntimeError::IndexOutOfBounds.span(span)),
         }
     }
 
@@ -194,22 +181,18 @@ impl Accessor {
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a Value, Span) -> Result<R, SpannedError>,
     {
         let mut string = text.to_string();
         match string.chars().nth(i) {
             Some(char) => {
                 let mut ch = Value::from(char);
-                let result = f(&mut ch).await?;
-                let replacement = ch
-                    .clone()
-                    .to_text(data.clone())
-                    .await
-                    .span_err(span, data.clone())?;
+                let result = f(&mut ch, span).await?;
+                let replacement = ch.clone().to_text(data.clone()).await.span_err(span)?;
                 string.replace_range(i..i + char.len_utf8(), &replacement);
                 Ok(result)
             }
-            None => Err(RuntimeError::IndexOutOfBounds.span(span, data)),
+            None => Err(RuntimeError::IndexOutOfBounds.span(span)),
         }
     }
 
@@ -220,50 +203,42 @@ impl Accessor {
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
     {
         match self.to_indexer(span, data.clone()).await? {
-            Indexer::Text(indexer) => {
-                let i = *indexer.get(0).unwrap();
-                match self.root.value.as_var_label(data.clone()) {
-                    Ok(var) => {
-                        let data_clone = data.clone();
-                        let vars = data_clone.vars.read().await;
-                        vars.modify(&var, span, data.clone(), async |value| match value {
-                            Value::Text(text) => {
-                                let text = text.clone();
-                                Self::modify_char(value, text, i, span, data, f).await
-                            }
-                            _ => Err(value
-                                .conversion_err_to_types(&[FslType::Text])
-                                .span(span, data)),
-                        })
-                        .await
-                    }
-                    Err(_) => {
-                        let text = self
-                            .take_root()
-                            .value
-                            .to_text(data.clone())
-                            .await
-                            .span_err(self.root.span, data.clone())?;
-                        Self::modify_char(&mut self.root.value, text, i, self.root.span, data, f)
-                            .await
-                    }
+            Indexer::Text(i) => match self.root.value.as_var_label(data.clone()) {
+                Ok(var) => {
+                    let data_clone = data.clone();
+                    let vars = data_clone.vars.read().await;
+                    vars.modify(&var, span, async |value, span| match value {
+                        Value::Text(text) => {
+                            let text = text.clone();
+                            Self::modify_char(value, text, i, span, data, f).await
+                        }
+                        _ => Err(value.conversion_err_to_types(&[FslType::Text]).span(span)),
+                    })
+                    .await
                 }
-            }
+                Err(_) => {
+                    let text = self
+                        .take_root()
+                        .value
+                        .to_text(data.clone())
+                        .await
+                        .span_err(self.root.span)?;
+                    Self::modify_char(&mut self.root.value, text, i, self.root.span, data, f).await
+                }
+            },
             Indexer::List(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.modify(&var, span, data.clone(), async |value| match value {
+                    vars.modify(&var, span, async |value, span| match value {
                         Value::List(list) => {
-                            let value = list.get_nested_mut(&indexer, data, span)?;
-                            f(value).await
+                            let value = list.get_nested_mut(&indexer, span)?;
+                            f(value, span).await
                         }
-                        _ => Err(value
-                            .conversion_err_to_types(&[FslType::List])
-                            .span(span, data)),
+                        _ => Err(value.conversion_err_to_types(&[FslType::List]).span(span)),
                     })
                     .await
                 }
@@ -273,23 +248,21 @@ impl Accessor {
                         .value
                         .to_list(data.clone())
                         .await
-                        .span_err(self.root.span, data.clone())?;
-                    let value = root.get_nested_mut(&indexer, data, span)?;
-                    f(value).await
+                        .span_err(self.root.span)?;
+                    let value = root.get_nested_mut(&indexer, span)?;
+                    f(value, span).await
                 }
             },
             Indexer::Map(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.modify(&var, span, data.clone(), async |value| match value {
+                    vars.modify(&var, span, async |value, span| match value {
                         Value::Map(map) => {
-                            let value = map.get_nested_mut(&indexer, data, span)?;
-                            f(value).await
+                            let value = map.get_nested_mut(&indexer, span)?;
+                            f(value, span).await
                         }
-                        _ => Err(value
-                            .conversion_err_to_types(&[FslType::Map])
-                            .span(span, data)),
+                        _ => Err(value.conversion_err_to_types(&[FslType::Map]).span(span)),
                     })
                     .await
                 }
@@ -299,65 +272,58 @@ impl Accessor {
                         .value
                         .to_map(data.clone())
                         .await
-                        .span_err(self.root.span, data.clone())?;
-                    let value = root.get_nested_mut(&indexer, data, span)?;
-                    f(value).await
+                        .span_err(self.root.span)?;
+                    let value = root.get_nested_mut(&indexer, span)?;
+                    f(value, span).await
                 }
             },
         }
     }
 
     async fn with<F, R>(
-        &self,
+        &mut self,
         span: Span,
         data: Arc<InterpreterData>,
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a Value, Span) -> Result<R, SpannedError>,
     {
         match self.to_indexer(span, data.clone()).await? {
-            Indexer::Text(indexer) => {
-                let i = *indexer.get(0).unwrap();
-                match self.root.value.as_var_label(data.clone()) {
-                    Ok(var) => {
-                        let data_clone = data.clone();
-                        let vars = data_clone.vars.read().await;
-                        vars.with(&var, span, data.clone(), async |value| match value {
-                            Value::Text(text) => {
-                                let text = text.clone();
-                                Self::with_char(text, i, span, data, f).await
-                            }
-                            _ => Err(value
-                                .conversion_err_to_types(&[FslType::Text])
-                                .span(span, data)),
-                        })
-                        .await
-                    }
-                    Err(_) => {
-                        let text = self
-                            .root
-                            .value
-                            .clone()
-                            .to_text(data.clone())
-                            .await
-                            .span_err(self.root.span, data.clone())?;
-                        Self::with_char(text, i, self.root.span, data, f).await
-                    }
+            Indexer::Text(i) => match self.root.value.as_var_label(data.clone()) {
+                Ok(var) => {
+                    let data_clone = data.clone();
+                    let vars = data_clone.vars.read().await;
+                    vars.with(&var, span, async |value, span| match value {
+                        Value::Text(text) => {
+                            let text = text.clone();
+                            Self::with_char(text, i, span, data, f).await
+                        }
+                        _ => Err(value.conversion_err_to_types(&[FslType::Text]).span(span)),
+                    })
+                    .await
                 }
-            }
+                Err(_) => {
+                    let text = self
+                        .root
+                        .value
+                        .clone()
+                        .to_text(data.clone())
+                        .await
+                        .span_err(self.root.span)?;
+                    Self::with_char(text, i, self.root.span, data, f).await
+                }
+            },
             Indexer::List(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.with(&var, span, data.clone(), async |value| match value {
+                    vars.with(&var, span, async |value, span| match value {
                         Value::List(list) => {
-                            let value = list.get_nested(&indexer, data, span)?;
-                            f(value).await
+                            let value = list.get_nested(&indexer, span)?;
+                            f(value, span).await
                         }
-                        _ => Err(value
-                            .conversion_err_to_types(&[FslType::List])
-                            .span(span, data)),
+                        _ => Err(value.conversion_err_to_types(&[FslType::List]).span(span)),
                     })
                     .await
                 }
@@ -368,23 +334,21 @@ impl Accessor {
                         .clone()
                         .to_list(data.clone())
                         .await
-                        .span_err(self.root.span, data.clone())?;
-                    let value = root.get_nested(&indexer, data, span)?;
-                    f(value).await
+                        .span_err(self.root.span)?;
+                    let value = root.get_nested(&indexer, span)?;
+                    f(value, span).await
                 }
             },
             Indexer::Map(indexer) => match self.root.value.as_var_label(data.clone()) {
                 Ok(var) => {
                     let data_clone = data.clone();
                     let vars = data_clone.vars.read().await;
-                    vars.with(&var, span, data.clone(), async |value| match value {
+                    vars.with(&var, span, async |value, span| match value {
                         Value::Map(map) => {
-                            let value = map.get_nested(&indexer, data, span)?;
-                            f(value).await
+                            let value = map.get_nested(&indexer, span)?;
+                            f(value, span).await
                         }
-                        _ => Err(value
-                            .conversion_err_to_types(&[FslType::Map])
-                            .span(span, data)),
+                        _ => Err(value.conversion_err_to_types(&[FslType::Map]).span(span)),
                     })
                     .await
                 }
@@ -395,9 +359,9 @@ impl Accessor {
                         .clone()
                         .to_map(data.clone())
                         .await
-                        .span_err(self.root.span, data.clone())?;
-                    let value = root.get_nested(&indexer, data, span)?;
-                    f(value).await
+                        .span_err(self.root.span)?;
+                    let value = root.get_nested(&indexer, span)?;
+                    f(value, span).await
                 }
             },
         }
@@ -409,59 +373,12 @@ impl Accessor {
         previous
     }
 
-    #[async_recursion]
-    async fn to_indexer(
-        &self,
-        span: Span,
+    async fn resolve_segments(
+        &mut self,
+        inner_type: FslType,
         data: Arc<InterpreterData>,
     ) -> Result<Indexer, SpannedError> {
-        match self
-            .root
-            .value
-            .to_inner_type(data.clone())
-            .await
-            .span_err(self.root.span, data.clone())?
-        {
-            FslType::Text => {
-                let mut indexer = Vec::with_capacity(self.segments.len());
-                for segment in &self.segments {
-                    let key = match segment.value {
-                        Value::Int(i) => Ok(i as usize),
-                        Value::Var(_) => segment
-                            .value
-                            .clone()
-                            .to_usize(data.clone())
-                            .await
-                            .span_err(segment.span, data.clone()),
-                        _ => Err(segment
-                            .value
-                            .conversion_err_to_types(&[FslType::Int])
-                            .span(segment.span, data.clone())),
-                    }?;
-                    indexer.push(key);
-                }
-                Ok(Indexer::Text(indexer))
-            }
-            FslType::List => {
-                let mut indexer = Vec::with_capacity(self.segments.len());
-                for segment in &self.segments {
-                    let key = match segment.value {
-                        Value::Int(i) => Ok(i as usize),
-                        Value::Var(_) => segment
-                            .value
-                            .clone()
-                            .to_usize(data.clone())
-                            .await
-                            .span_err(segment.span, data.clone()),
-                        _ => Err(segment
-                            .value
-                            .conversion_err_to_types(&[FslType::Int])
-                            .span(segment.span, data.clone())),
-                    }?;
-                    indexer.push(key);
-                }
-                Ok(Indexer::List(indexer))
-            }
+        match inner_type {
             FslType::Map => {
                 let mut indexer = Vec::with_capacity(self.segments.len());
                 for segment in &self.segments {
@@ -473,26 +390,93 @@ impl Accessor {
                             .clone()
                             .to_text(data.clone())
                             .await
-                            .span_err(segment.span, data.clone()),
+                            .span_err(segment.span),
                     }?;
                     indexer.push(key);
                 }
                 Ok(Indexer::Map(indexer))
             }
+            FslType::List => {
+                let mut indexer = Vec::with_capacity(self.segments.len());
+                for segment in &self.segments {
+                    let key = match segment.value {
+                        Value::Int(i) => Ok(i as usize),
+                        Value::Var(_) => segment
+                            .value
+                            .clone()
+                            .to_usize(data.clone())
+                            .await
+                            .span_err(segment.span),
+                        _ => Err(segment
+                            .value
+                            .conversion_err_to_types(&[FslType::Int])
+                            .span(segment.span)),
+                    }?;
+                    indexer.push(key);
+                }
+                Ok(Indexer::List(indexer))
+            }
+            FslType::Text => {
+                let segment = match self.segments.as_slice() {
+                    [segment] => Ok(segment),
+                    _ => Err(RuntimeError::IndexOutOfBounds.span(self.root.span)),
+                }?;
+                let i = match segment.value {
+                    Value::Int(i) => Ok(i as usize),
+                    Value::Var(_) => segment
+                        .value
+                        .clone()
+                        .to_usize(data.clone())
+                        .await
+                        .span_err(segment.span),
+                    _ => Err(segment
+                        .value
+                        .conversion_err_to_types(&[FslType::Int])
+                        .span(segment.span)),
+                }?;
+                Ok(Indexer::Text(i))
+            }
             FslType::Command => {
-                let value = self
-                    .root
-                    .value
-                    .clone()
+                let value = std::mem::take(&mut self.root.value);
+                let value = value
                     .to_command(data.clone())
-                    .span_err(self.root.span, data.clone())?
+                    .span_err(self.root.span)?
                     .execute(data.clone())
                     .await?;
-                let root = AccessorSegment::new(value, span);
-                let path = Accessor::new(root, self.segments.clone());
-                path.to_indexer(span, data).await
+                self.root.value = value;
+                self.to_indexer(self.root.span, data).await
             }
-            _ => Err(RuntimeError::NotIndexable.span(span, data)),
+            _ => Err(RuntimeError::NotIndexable.span(self.root.span)),
+        }
+    }
+
+    #[async_recursion]
+    async fn to_indexer(
+        &mut self,
+        span: Span,
+        data: Arc<InterpreterData>,
+    ) -> Result<Indexer, SpannedError> {
+        match self
+            .root
+            .value
+            .to_inner_type(data.clone())
+            .await
+            .span_err(self.root.span)?
+        {
+            FslType::Text => Ok(Self::resolve_segments(self, FslType::Text, data).await?),
+            FslType::List => Ok(Self::resolve_segments(self, FslType::List, data).await?),
+            FslType::Map => Ok(Self::resolve_segments(self, FslType::Map, data).await?),
+            FslType::Command => {
+                let value = std::mem::take(&mut self.root.value);
+                let value = value
+                    .to_command(data.clone())
+                    .span_err(self.root.span)?
+                    .execute(data.clone())
+                    .await?;
+                self.root.value = value;
+                self.to_indexer(span, data).await
+            }
+            _ => Err(RuntimeError::NotIndexable.span(span)),
         }
     }
 }
@@ -525,6 +509,17 @@ impl ArgumentKind {
         }
     }
 
+    pub async fn into_indexer(
+        &mut self,
+        span: Span,
+        data: Arc<InterpreterData>,
+    ) -> Result<Indexer, SpannedError> {
+        match self {
+            ArgumentKind::Value(_) => Err(RuntimeError::NotIndexable.span(span)),
+            ArgumentKind::Accessor(accessor) => Ok(accessor.to_indexer(span, data).await?),
+        }
+    }
+
     pub async fn modify<F, R>(
         &mut self,
         span: Span,
@@ -532,54 +527,52 @@ impl ArgumentKind {
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
     {
         match self {
-            ArgumentKind::Value(value) => {
-                if let Value::Var(label) = value {
+            ArgumentKind::Value(value) => match value {
+                Value::Var(label) => {
                     let vars = data.vars.read().await;
-                    vars.modify(label, span, data.clone(), f).await
-                } else {
-                    f(value).await
+                    vars.modify(label, span, f).await
                 }
-            }
+                _ => f(value, span).await,
+            },
             ArgumentKind::Accessor(path) => path.modify(span, data, f).await,
         }
     }
 
     pub async fn with_inner<F, R>(
-        &self,
+        &mut self,
         span: Span,
         data: Arc<InterpreterData>,
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a Value, Span) -> Result<R, SpannedError>,
     {
         match self {
-            ArgumentKind::Value(value) => {
-                if let Value::Var(label) = value {
+            ArgumentKind::Value(value) => match value {
+                Value::Var(label) => {
                     let vars = data.vars.read().await;
-                    vars.with(label, span, data.clone(), f).await
-                } else {
-                    f(value).await
+                    vars.with(label, span, f).await
                 }
-            }
+                _ => f(value, span).await,
+            },
             ArgumentKind::Accessor(path) => path.with(span, data, f).await,
         }
     }
 
     pub async fn with<F, R>(
-        &self,
+        &mut self,
         span: Span,
         data: Arc<InterpreterData>,
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a Value, Span) -> Result<R, SpannedError>,
     {
         match self {
-            ArgumentKind::Value(value) => f(value).await,
+            ArgumentKind::Value(value) => f(value, span).await,
             ArgumentKind::Accessor(path) => path.with(span, data, f).await,
         }
     }
@@ -612,10 +605,19 @@ impl Argument {
         }
     }
 
-    pub async fn with<F, R>(&self, data: Arc<InterpreterData>, f: F) -> Result<R, SpannedError>
+    pub async fn with<F, R>(&mut self, data: Arc<InterpreterData>, f: F) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a Value, Span) -> Result<R, SpannedError>,
     {
+        if let ArgumentKind::Value(Value::Command(_)) = &mut self.kind {
+            let value = self.take_value();
+            let value = value
+                .to_command(data.clone())
+                .span_err(self.span)?
+                .execute(data.clone())
+                .await?;
+            self.kind = ArgumentKind::Value(value);
+        }
         self.kind.with_inner(self.span, data.clone(), f).await
     }
 
@@ -625,13 +627,33 @@ impl Argument {
         f: F,
     ) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
     {
+        let mut kind = std::mem::take(&mut self.kind);
+        if let ArgumentKind::Value(Value::Command(command)) = kind {
+            let value = command.execute(data.clone()).await?;
+            kind = ArgumentKind::Value(value);
+        }
+        self.kind = kind;
         self.kind.modify(self.span, data.clone(), f).await
     }
 
     pub async fn into_value(self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
         self.kind.into_value(self.span, data).await
+    }
+
+    pub async fn into_indexer(
+        self,
+        data: Arc<InterpreterData>,
+    ) -> Result<(Argument, Indexer), SpannedError> {
+        match self.kind {
+            ArgumentKind::Value(_) => Err(RuntimeError::NotIndexable.span(self.span)),
+            ArgumentKind::Accessor(mut accessor) => {
+                let indexer = accessor.to_indexer(self.span, data).await?;
+                let root = Argument::new(accessor.root.value, accessor.root.span);
+                Ok((root, indexer))
+            }
+        }
     }
 
     pub fn take_value(&mut self) -> Value {
@@ -654,35 +676,39 @@ impl Argument {
 }
 
 impl Argument {
-    pub async fn to_type(&self, data: Arc<InterpreterData>) -> Result<FslType, SpannedError> {
+    pub async fn to_type(&mut self, data: Arc<InterpreterData>) -> Result<FslType, SpannedError> {
         self.kind
-            .with(self.span, data, async |value| Ok(value.to_type()))
+            .with(self.span, data, async |value, _| Ok(value.to_type()))
             .await
     }
 
-    pub async fn to_inner_type(&self, data: Arc<InterpreterData>) -> Result<FslType, SpannedError> {
-        self.with(data.clone(), async |value| {
-            value
-                .to_inner_type(data.clone())
-                .await
-                .span_err(self.span, data)
+    pub async fn to_inner_type(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> Result<FslType, SpannedError> {
+        self.with(data.clone(), async |value, span| {
+            value.to_inner_type(data).await.span_err(span)
         })
         .await
     }
 
     pub async fn is_type(
-        &self,
+        &mut self,
         fsl_type: FslType,
         data: Arc<InterpreterData>,
     ) -> Result<bool, SpannedError> {
         self.kind
-            .with(self.span, data, async |value| Ok(value.is_type(fsl_type)))
+            .with(
+                self.span,
+                data,
+                async |value, _| Ok(value.is_type(fsl_type)),
+            )
             .await
     }
 
-    pub async fn is_var(&self, data: Arc<InterpreterData>) -> Result<bool, SpannedError> {
+    pub async fn is_var(&mut self, data: Arc<InterpreterData>) -> Result<bool, SpannedError> {
         self.kind
-            .with(self.span, data, async |value| Ok(value.is_var()))
+            .with(self.span, data, async |value, _| Ok(value.is_var()))
             .await
     }
 
@@ -694,18 +720,16 @@ impl Argument {
     }
 
     pub async fn equal(
-        &self,
-        other: &Argument,
+        &mut self,
+        other: &mut Argument,
         data: Arc<InterpreterData>,
     ) -> Result<bool, SpannedError> {
         self.kind
-            .with(self.span, data.clone(), async |l_value| {
+            .with(self.span, data.clone(), async |l_value, _| {
                 other
                     .kind
-                    .with(other.span, data.clone(), async |r_value| {
-                        l_value
-                            .equal(r_value, data.clone())
-                            .span_err(self.span, data)
+                    .with(other.span, data.clone(), async |r_value, span| {
+                        l_value.equal(r_value, data).span_err(span)
                     })
                     .await
             })
@@ -713,18 +737,16 @@ impl Argument {
     }
 
     pub async fn soft_equal(
-        &self,
-        other: &Argument,
+        &mut self,
+        other: &mut Argument,
         data: Arc<InterpreterData>,
     ) -> Result<bool, SpannedError> {
         self.kind
-            .with(self.span, data.clone(), async |l_value| {
+            .with(self.span, data.clone(), async |l_value, _| {
                 other
                     .kind
-                    .with(other.span, data.clone(), async |r_value| {
-                        l_value
-                            .soft_equal(r_value, data.clone())
-                            .span_err(self.span, data)
+                    .with(other.span, data.clone(), async |r_value, span| {
+                        l_value.soft_equal(r_value, data.clone()).span_err(span)
                     })
                     .await
             })
@@ -737,7 +759,7 @@ impl Argument {
             .await?
             .to_int(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_usize(self, data: Arc<InterpreterData>) -> Result<usize, SpannedError> {
@@ -746,7 +768,7 @@ impl Argument {
             .await?
             .to_usize(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_float(self, data: Arc<InterpreterData>) -> Result<f64, SpannedError> {
@@ -755,7 +777,7 @@ impl Argument {
             .await?
             .to_float(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_bool(self, data: Arc<InterpreterData>) -> Result<bool, SpannedError> {
@@ -764,7 +786,7 @@ impl Argument {
             .await?
             .to_bool(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_var(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
@@ -773,7 +795,7 @@ impl Argument {
             .await?
             .to_var(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_text(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
@@ -782,7 +804,7 @@ impl Argument {
             .await?
             .to_text(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_list(self, data: Arc<InterpreterData>) -> Result<List, SpannedError> {
@@ -791,7 +813,7 @@ impl Argument {
             .await?
             .to_list(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_map(self, data: Arc<InterpreterData>) -> Result<Map, SpannedError> {
@@ -800,7 +822,7 @@ impl Argument {
             .await?
             .to_map(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_number(self, data: Arc<InterpreterData>) -> Result<Argument, SpannedError> {
@@ -812,35 +834,29 @@ impl Argument {
             .await;
         let number = number.map(|v| Self::new(v, self.span));
 
-        number.span_err(self.span, data.clone())
+        number.span_err(self.span)
     }
 
     pub async fn as_raw_checked(
         self,
-        data: Arc<InterpreterData>,
         valid_types: &'static [FslType],
-    ) -> Result<Argument, SpannedError> {
-        let raw = self
-            .kind
+        data: Arc<InterpreterData>,
+    ) -> Result<Value, SpannedError> {
+        self.kind
             .into_value(self.span, data.clone())
             .await?
             .as_raw_checked(valid_types, data.clone())
-            .await;
-        let raw = raw.map(|v| Self::new(v, self.span));
-
-        raw.span_err(self.span, data.clone())
+            .await
+            .span_err(self.span)
     }
 
-    pub async fn as_raw(self, data: Arc<InterpreterData>) -> Result<Argument, SpannedError> {
-        let raw = self
-            .kind
+    pub async fn as_raw(self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+        self.kind
             .into_value(self.span, data.clone())
             .await?
             .as_raw(data.clone())
-            .await;
-        let raw = raw.map(|v| Self::new(v, self.span));
-
-        raw.span_err(self.span, data.clone())
+            .await
+            .span_err(self.span)
     }
 
     pub async fn to_list_indexer(
@@ -852,7 +868,7 @@ impl Argument {
             .await?
             .to_list_indexer(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_map_indexer(
@@ -864,7 +880,7 @@ impl Argument {
             .await?
             .to_map_indexer(data.clone())
             .await
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn to_command(self, data: Arc<InterpreterData>) -> Result<Command, SpannedError> {
@@ -872,27 +888,27 @@ impl Argument {
             .into_value(self.span, data.clone())
             .await?
             .to_command(data.clone())
-            .span_err(self.span, data.clone())
+            .span_err(self.span)
     }
 
     pub async fn as_var_label(
-        &self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> Result<SourceStr, SpannedError> {
         self.kind
-            .with(self.span, data.clone(), async |value| {
-                value.as_var_label(data.clone()).span_err(self.span, data)
+            .with(self.span, data.clone(), async |value, span| {
+                value.as_var_label(data).span_err(span)
             })
             .await
     }
 
     pub async fn as_command_label(
-        &self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> Result<SourceStr, SpannedError> {
         self.kind
-            .with(self.span, data.clone(), async |value| {
-                value.as_command_label().span_err(self.span, data)
+            .with(self.span, data.clone(), async |value, span| {
+                value.as_command_label().span_err(span)
             })
             .await
     }

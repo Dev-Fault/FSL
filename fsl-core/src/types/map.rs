@@ -76,11 +76,10 @@ impl Map {
         &mut self,
         keys: &[SourceStr],
         value: Value,
-        data: Arc<InterpreterData>,
         span: Span,
     ) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey.span(span, data)),
+            [] => Err(RuntimeError::MissingKey.span(span)),
             [key] => match self.get(key) {
                 Some(_) => {
                     let return_value = self.insert(key.clone(), value);
@@ -89,44 +88,39 @@ impl Map {
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data)),
+                .span(span)),
             },
             [key, rest @ ..] => match self.get_mut(key) {
-                Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, data, span),
+                Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .span(span, data)),
+                .span(span)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data)),
+                .span(span)),
             },
         }
     }
 
-    pub fn remove_nested(
-        &mut self,
-        keys: &[SourceStr],
-        data: Arc<InterpreterData>,
-        span: Span,
-    ) -> Result<Value, SpannedError> {
+    pub fn remove_nested(&mut self, keys: &[SourceStr], span: Span) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
+            [] => Err(RuntimeError::MissingKey).span_err(span),
             [key] => {
                 let return_value = self.remove(key);
                 Ok(return_value.unwrap_or(Value::None))
             }
             [key, rest @ ..] => match self.get_mut(key) {
-                Some(Value::Map(inner_map)) => inner_map.remove_nested(rest, data, span),
+                Some(Value::Map(inner_map)) => inner_map.remove_nested(rest, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
         }
     }
@@ -135,83 +129,72 @@ impl Map {
         &mut self,
         keys: &[SourceStr],
         value: Value,
-        data: Arc<InterpreterData>,
         span: Span,
     ) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
+            [] => Err(RuntimeError::MissingKey).span_err(span),
             [key] => {
                 let return_value = self.insert(key.clone(), value);
                 Ok(return_value.unwrap_or(Value::None))
             }
             [key, rest @ ..] => match self.get_mut(key) {
-                Some(Value::Map(inner_map)) => inner_map.insert_nested(rest, value, data, span),
+                Some(Value::Map(inner_map)) => inner_map.insert_nested(rest, value, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
         }
     }
 
-    pub fn get_nested_clone(
-        &self,
-        keys: &[SourceStr],
-        data: Arc<InterpreterData>,
-        span: Span,
-    ) -> Result<Value, SpannedError> {
+    pub fn get_nested_clone(&self, keys: &[SourceStr], span: Span) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
+            [] => Err(RuntimeError::MissingKey).span_err(span),
             [key] => match self.get(key).cloned() {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
             [key, rest @ ..] => match self.get(key) {
-                Some(Value::Map(inner_map)) => inner_map.get_nested_clone(rest, data, span),
+                Some(Value::Map(inner_map)) => inner_map.get_nested_clone(rest, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
         }
     }
 
-    pub fn get_nested(
-        &self,
-        keys: &[SourceStr],
-        data: Arc<InterpreterData>,
-        span: Span,
-    ) -> Result<&Value, SpannedError> {
+    pub fn get_nested(&self, keys: &[SourceStr], span: Span) -> Result<&Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
+            [] => Err(RuntimeError::MissingKey).span_err(span),
             [key] => match self.get(key) {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
             [key, rest @ ..] => match self.get(key) {
-                Some(Value::Map(inner_map)) => inner_map.get_nested(rest, data, span),
+                Some(Value::Map(inner_map)) => inner_map.get_nested(rest, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
         }
     }
@@ -219,28 +202,27 @@ impl Map {
     pub fn get_nested_mut(
         &mut self,
         keys: &[SourceStr],
-        data: Arc<InterpreterData>,
         span: Span,
     ) -> Result<&mut Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span, data.clone()),
+            [] => Err(RuntimeError::MissingKey).span_err(span),
             [key] => match self.get_mut(key) {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
             [key, rest @ ..] => match self.get_mut(key) {
-                Some(Value::Map(inner_map)) => inner_map.get_nested_mut(rest, data, span),
+                Some(Value::Map(inner_map)) => inner_map.get_nested_mut(rest, span),
                 Some(_) => Err(RuntimeError::NotAMap {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
                 None => Err(RuntimeError::NonExistantKey {
                     key: key.to_string(),
                 }
-                .span(span, data.clone())),
+                .span(span)),
             },
         }
     }

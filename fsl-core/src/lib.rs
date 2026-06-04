@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     data::{InterpreterData, UserDefinitions},
-    error::{InterpreterError, RuntimeError, SpanError, ToSpannedError},
+    error::{InterpreterError, RuntimeError, SpanError, SpanToInterpreterError, ToSpannedError},
     libraries::{
         Library,
         r#async::register_async,
@@ -24,8 +24,8 @@ use crate::{
     span::Span,
     types::{
         FslType,
-        argument::{Accessor, AccessorSegment, ArgRule, Argument},
-        command::{Command, CommandDef, Handler, UserDef},
+        argument::{Accessor, AccessorSegment, Argument},
+        command::{Command, CommandDef, CommandSignature, Handler, UserDef},
         value::Value,
     },
 };
@@ -101,7 +101,9 @@ macro_rules! register_command {
             .register(
                 $label,
                 $rules,
-                Handler::new(|command, data| futures::FutureExt::boxed($executor(command, data))),
+                crate::types::command::Handler::new(|command, data| {
+                    futures::FutureExt::boxed($executor(command, data))
+                }),
             )
             .await;
     };
@@ -110,7 +112,9 @@ macro_rules! register_command {
             .register(
                 $label,
                 $rules,
-                Handler::new(move |$cmd, $dat| futures::FutureExt::boxed($body)),
+                crate::types::command::Handler::new(move |$cmd, $dat| {
+                    futures::FutureExt::boxed($body)
+                }),
             )
             .await;
     };
@@ -143,13 +147,13 @@ impl FslInterpreter {
     pub async fn register(
         &mut self,
         label: &'static str,
-        rules: &'static [ArgRule],
+        signature: &'static CommandSignature,
         executor: Handler,
     ) {
         self.command_definitions
             .write()
             .await
-            .insert(label, CommandDef::new(label, rules, executor));
+            .insert(label, CommandDef::new(label, signature, executor));
     }
 
     pub async fn register_library(&mut self, library: Library) {
@@ -294,8 +298,8 @@ impl FslInterpreter {
                             command_label: expression.name.to_string(),
                             arg_number: 0,
                         })
-                        .span(Span::from(expression), data.clone())
-                        .into());
+                        .span(Span::from(expression))
+                        .into_interpreter_error(data.clone()));
                     }
                 };
                 let mut ctx = data.ctx.write().await;
@@ -357,7 +361,7 @@ impl FslInterpreter {
                 Value::Command(command) => match command.execute(data.clone()).await {
                     Ok(_) => Ok(()),
                     Err(e) if e.exited_program() => Err(InterpreterError::Exit),
-                    Err(e) => Err(InterpreterError::Execution(e.into())),
+                    Err(e) => Err(e.into_interpreter_error(data.clone())),
                 },
                 _ => {
                     unreachable!("parse expression should always return a command")
@@ -395,7 +399,7 @@ impl FslInterpreter {
             if let Some(def) = user_def {
                 let mut command = Command::new(
                     SourceStr::from_span(Span::from(&expression), &data),
-                    RUN_RULES,
+                    &RUN_RULES,
                     Handler::new(|command, data| standard::run(command, data).boxed()),
                     Span::from(&expression),
                 );
@@ -417,8 +421,8 @@ impl FslInterpreter {
                 Err(RuntimeError::NonExistantCommand {
                     label: expression.name.to_string(),
                 }
-                .span(Span::from(&expression), data.clone())
-                .into())
+                .span(Span::from(&expression))
+                .into_interpreter_error(data.clone()))
             }
         }
     }
@@ -460,7 +464,9 @@ impl FslInterpreter {
             let span = Span::from(&arg);
             match arg.kind {
                 ArgKind::Number(number) => {
-                    let number = Self::parse_number(number).span_err(span, data.clone())?;
+                    let number = Self::parse_number(number)
+                        .span_err(span)
+                        .into_interpreter_error(data.clone())?;
                     Ok(Argument::new(number, span))
                 }
                 ArgKind::String(cow) => {
@@ -481,7 +487,12 @@ impl FslInterpreter {
                     let mut list: Vec<Value> = Vec::with_capacity(list_arg.data.len());
                     for arg in list_arg.data {
                         let parsed_arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
-                        list.push(parsed_arg.into_value(data.clone()).await?);
+                        list.push(
+                            parsed_arg
+                                .into_value(data.clone())
+                                .await
+                                .into_interpreter_error(data.clone())?,
+                        );
                     }
                     Ok(Argument::new(Value::from(list), span))
                 }
@@ -495,7 +506,8 @@ impl FslInterpreter {
                             Self::process_arg(data.clone(), defs.clone(), value)
                                 .await?
                                 .into_value(data.clone())
-                                .await?,
+                                .await
+                                .into_interpreter_error(data.clone())?,
                         );
                     }
 
@@ -514,13 +526,19 @@ impl FslInterpreter {
                         let key = Self::process_arg(data.clone(), defs.clone(), arg)
                             .await?
                             .into_value(data.clone())
-                            .await?;
+                            .await
+                            .into_interpreter_error(data.clone())?;
                         let segment = AccessorSegment::new(key, segment_span);
                         segments.push(segment);
                     }
 
                     let root_span = root.span;
-                    let root = AccessorSegment::new(root.into_value(data).await?, root_span);
+                    let root = AccessorSegment::new(
+                        root.into_value(data.clone())
+                            .await
+                            .into_interpreter_error(data.clone())?,
+                        root_span,
+                    );
                     let accessor = Accessor::new(root, segments);
                     Ok(Argument::new_path(accessor, span))
                 }
@@ -1512,12 +1530,14 @@ mod interpreter {
     async fn string_indexing() {
         test_interpreter(
             r#"
-        word.store("hello")
-        i.store(0)
-        repeat(word.length(),
-            print(word.index(i)),
-            i.store(add(i, 1))
-        )
+            word.store("hello")
+            i.store(0)
+            debug("here1")
+            repeat(word.length(),
+                debug("here2")
+                print(word.index(i)),
+                i.store(add(i, 1))
+            )
         "#,
             "hello",
         )

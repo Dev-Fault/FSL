@@ -9,9 +9,7 @@ use crate::{
     register_command,
     source_str::SourceStr,
     types::{
-        MAYBE_TEXT,
-        argument::{ArgPos, ArgRule},
-        command::{Command, Handler},
+        command::{Command, CommandSignature, ExpectedArgs},
         value::Value,
     },
 };
@@ -21,7 +19,7 @@ pub async fn register_exec(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, SH, SH_RULES, sh);
 }
 
-pub const EXEC_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), MAYBE_TEXT)];
+pub const EXEC_RULES: &CommandSignature = &CommandSignature::AnyArgs;
 pub const EXEC: &str = "exec";
 pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
@@ -43,12 +41,12 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             RuntimeError::FailedToRun {
                 process: program.to_string(),
             }
-            .span(arg_span, data.clone())
+            .span(arg_span)
         })?;
 
     if !output.status.success() {
         let output = String::from_utf8_lossy(&output.stderr);
-        return Err(RuntimeError::OutputFailure(output.trim().into()).span(arg_span, data.clone()));
+        return Err(RuntimeError::OutputFailure(output.trim().into()).span(arg_span));
     }
 
     let output = output.stdout;
@@ -59,7 +57,7 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     Ok(Value::from(text))
 }
 
-pub const SH_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), MAYBE_TEXT)];
+pub const SH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
 pub const SH: &str = "sh";
 pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
@@ -74,7 +72,7 @@ pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, S
             RuntimeError::FailedToRun {
                 process: "sh".into(),
             }
-            .span(command.span, data.clone())
+            .span(command.span)
         })?;
 
     if !output.status.success() {

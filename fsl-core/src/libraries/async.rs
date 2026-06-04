@@ -6,9 +6,7 @@ use crate::{
     error::{RuntimeError, SpannedError, ToSpannedError},
     register_command,
     types::{
-        FslType,
-        argument::{ArgPos, ArgRule},
-        command::{Command, Handler},
+        command::{Command, CommandSignature, ExpectedArgs},
         value::Value,
     },
 };
@@ -20,7 +18,7 @@ pub async fn register_async(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, YIELD, YIELD_RULES, r#yield);
 }
 
-pub const JOIN_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), &[FslType::Command])];
+pub const JOIN_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(1));
 pub const JOIN: &str = "join";
 pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
@@ -47,7 +45,7 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             Err(e) => {
                 return Err(
                     RuntimeError::Custom(format!("Failed to join threads:\n {}", e))
-                        .span(command.span, data.clone()),
+                        .span(command.span),
                 );
             }
         }
@@ -56,7 +54,7 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     Ok(Value::from(list))
 }
 
-pub const YIELD_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::Index(0), &[FslType::Command])];
+pub const YIELD_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
 pub const YIELD: &str = "yield";
 pub async fn r#yield(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;

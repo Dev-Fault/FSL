@@ -3,7 +3,7 @@ use std::{collections::HashMap, ops::Deref, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
-    data::{InterpreterData, Limiter},
+    data::Limiter,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     source_str::SourceStr,
     span::Span,
@@ -113,50 +113,38 @@ impl VarStore {
         self.data.pop();
     }
 
-    pub async fn modify<F, R>(
-        &self,
-        label: &SourceStr,
-        span: Span,
-        data: Arc<InterpreterData>,
-        f: F,
-    ) -> Result<R, SpannedError>
+    pub async fn modify<F, R>(&self, label: &SourceStr, span: Span, f: F) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a mut Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
     {
         for map in self.data.iter().rev() {
             let mut map = map.write().await;
             if let Some(var) = map.get_mut(label) {
-                return f(var.inner_mut(label).span_err(span, data.clone())?).await;
+                return f(var.inner_mut(label).span_err(span)?, span).await;
             }
         }
 
         Err(RuntimeError::NonExistantVar {
             label: label.to_string(),
         }
-        .span(span, data))
+        .span(span))
     }
 
-    pub async fn with<F, R>(
-        &self,
-        label: &SourceStr,
-        span: Span,
-        data: Arc<InterpreterData>,
-        f: F,
-    ) -> Result<R, SpannedError>
+    pub async fn with<F, R>(&self, label: &SourceStr, span: Span, f: F) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a Value) -> Result<R, SpannedError>,
+        F: for<'a> AsyncFnOnce(&'a Value, Span) -> Result<R, SpannedError>,
     {
         for map in self.data.iter().rev() {
-            let mut map = map.write().await;
-            if let Some(var) = map.get_mut(label) {
-                return f(var.inner()).await;
+            let map = map.read().await;
+            if let Some(var) = map.get(label) {
+                return f(var.inner(), span).await;
             }
         }
 
         Err(RuntimeError::NonExistantVar {
             label: label.to_string(),
         }
-        .span(span, data))
+        .span(span))
     }
 
     pub async fn get_clone(&self, label: &SourceStr) -> Result<Value, RuntimeError> {

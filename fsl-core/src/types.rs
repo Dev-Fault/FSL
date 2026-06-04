@@ -1,6 +1,6 @@
 use crate::{
     error::RuntimeError,
-    types::argument::{ArgPos, ArgRule},
+    types::command::{CommandSignature, ExpectedArgs},
 };
 
 pub mod argument;
@@ -112,24 +112,11 @@ pub const MAYBE_TEXT: &[FslType] = &[FslType::Command, FslType::Var, FslType::Te
 
 pub const MAYBE_BOOL: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
 
-pub const NO_ARGS: &[ArgRule] = &[ArgRule::none()];
+pub const NO_ARGS: &CommandSignature = &CommandSignature::Count(ExpectedArgs::None);
 
-pub const MATH_RULES: &[ArgRule] = &[
-    ArgRule {
-        position: ArgPos::AnyFrom(0),
-        valid_types: MAYBE_NUMBER,
-    },
-    ArgRule {
-        position: ArgPos::Index(0),
-        valid_types: MAYBE_NUMBER,
-    },
-    ArgRule {
-        position: ArgPos::Index(1),
-        valid_types: MAYBE_NUMBER,
-    },
-];
+pub const MATH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(2));
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FslType {
     Int,
     Float,

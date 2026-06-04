@@ -10,6 +10,7 @@ use crate::{
     span::Span,
     types::{
         FslType, LIST_KEY, MAP_KEY,
+        argument::Argument,
         command::Command,
         list::List,
         map::{FslMap, Map},
@@ -37,9 +38,9 @@ pub enum ValueError {
 }
 
 impl ToSpannedError for ValueError {
-    fn span(self, span: Span, data: Arc<InterpreterData>) -> SpannedError {
+    fn span(self, span: Span) -> SpannedError {
         match self {
-            ValueError::Runtime(runtime_error) => runtime_error.span(span, data),
+            ValueError::Runtime(runtime_error) => runtime_error.span(span),
             ValueError::Execution(execution_error) => execution_error,
         }
     }
@@ -674,9 +675,13 @@ impl Value {
 
     pub fn as_command_label(&self) -> Result<SourceStr, ValueError> {
         match self {
-            Value::Command(command) => Ok(command.get_label()),
+            Value::Command(command) => Ok(command.label()),
             _ => Err(self.conversion_err_to_type(FslType::Command).into()),
         }
+    }
+
+    pub fn to_arg(self, span: Span) -> Argument {
+        Argument::new(self, span)
     }
 }
 
@@ -710,7 +715,7 @@ impl std::fmt::Display for Value {
             Value::List(values) => format!("{}", values),
             Value::Map(map) => format!("{}", map),
             Value::Var(value) => value.to_string(),
-            Value::Command(command) => command.get_label().to_string(),
+            Value::Command(command) => command.label().to_string(),
             Value::None => "".to_string(),
         };
         write!(f, "{}", out)

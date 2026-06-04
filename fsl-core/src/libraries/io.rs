@@ -6,9 +6,7 @@ use crate::{
     error::{RuntimeError, SpannedError, ToSpannedError},
     register_command,
     types::{
-        NOT_NONE,
-        argument::{ArgPos, ArgRule},
-        command::{Command, Handler},
+        command::{Command, CommandSignature},
         value::Value,
     },
 };
@@ -17,7 +15,8 @@ pub async fn register_io(interpreter: &mut FslInterpreter) {
     register_command!(interpreter, SAY, SAY_RULES, say);
     register_command!(interpreter, ASK, ASK_RULES, ask);
 }
-pub const SAY_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
+
+pub const SAY_RULES: &CommandSignature = &CommandSignature::AnyArgs;
 pub const SAY: &str = "say";
 pub async fn say(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
@@ -34,7 +33,7 @@ pub async fn say(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     Ok(Value::None)
 }
 
-pub const ASK_RULES: &[ArgRule] = &[ArgRule::new(ArgPos::AnyFrom(0), NOT_NONE)];
+pub const ASK_RULES: &CommandSignature = &CommandSignature::AnyArgs;
 pub const ASK: &str = "ask";
 pub async fn ask(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
@@ -51,6 +50,6 @@ pub async fn ask(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut input = String::new();
     match std::io::stdin().read_line(&mut input) {
         Ok(_) => Ok(Value::from(input.trim().to_string())),
-        Err(e) => Err(RuntimeError::Custom(format!("{e}")).span(command.span, data.clone())),
+        Err(e) => Err(RuntimeError::Custom(format!("{e}")).span(command.span)),
     }
 }

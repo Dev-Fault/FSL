@@ -7,16 +7,10 @@ use tokio::sync::Mutex;
 use crate::{
     InterpreterData,
     data::UserDefinitions,
-    error::{
-        ExpectedArgs::{self},
-        RuntimeError, SpannedError, ToSpannedError,
-    },
+    error::{RuntimeError, SpannedError, ToSpannedError},
     source_str::SourceStr,
     span::Span,
-    types::{
-        argument::{ArgPos, ArgRule, Argument},
-        value::Value,
-    },
+    types::{argument::Argument, value::Value},
 };
 
 pub type InterpreterFut = BoxFuture<'static, Result<Value, SpannedError>>;
@@ -39,10 +33,40 @@ impl Handler {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum ArgPos {
+    Index(usize),
+    OptionalIndex(usize),
+    Range(Range<usize>),
+    AnyFrom(usize),
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum ArgRule {
+    Resolved(ArgPos),
+    Unresolved(ArgPos),
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum ExpectedArgs {
+    None,
+    Exactly(usize),
+    AtLeast(usize),
+    AtMost(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum CommandSignature {
+    Rules(&'static [ArgRule]),
+    Count(ExpectedArgs),
+    AnyArgs,
+}
+
 #[derive(Clone)]
 pub struct CommandDef {
     label: &'static str,
-    arg_rules: &'static [ArgRule],
+    signature: &'static CommandSignature,
     handler: Handler,
 }
 
@@ -55,10 +79,14 @@ impl fmt::Debug for CommandDef {
 }
 
 impl CommandDef {
-    pub fn new(label: &'static str, arg_rules: &'static [ArgRule], handler: Handler) -> Self {
+    pub fn new(
+        label: &'static str,
+        signature: &'static CommandSignature,
+        handler: Handler,
+    ) -> Self {
         Self {
             label,
-            arg_rules,
+            signature,
             handler,
         }
     }
@@ -66,7 +94,7 @@ impl CommandDef {
 
 pub struct Command {
     label: SourceStr,
-    arg_rules: &'static [ArgRule],
+    signature: &'static CommandSignature,
     args: VecDeque<Argument>,
     handler: Handler,
     pub span: Span,
@@ -85,7 +113,7 @@ impl Command {
 
     pub fn new(
         label: SourceStr,
-        arg_rules: &'static [ArgRule],
+        signature: &'static CommandSignature,
         handler: Handler,
         span: Span,
     ) -> Self {
@@ -93,7 +121,7 @@ impl Command {
             args: VecDeque::new(),
             handler,
             label,
-            arg_rules,
+            signature,
             span,
         }
     }
@@ -101,19 +129,19 @@ impl Command {
     pub fn from_def(value: &CommandDef, span: Span) -> Self {
         Self {
             label: SourceStr::Static(value.label),
-            arg_rules: value.arg_rules,
+            signature: value.signature,
             args: VecDeque::new(),
             handler: value.handler.clone(),
             span,
         }
     }
 
-    pub fn get_label(&self) -> SourceStr {
+    pub fn label(&self) -> SourceStr {
         self.label.clone()
     }
 
-    pub fn get_rules(&self) -> &'static [ArgRule] {
-        self.arg_rules
+    pub fn signature(&self) -> &'static CommandSignature {
+        self.signature
     }
 
     pub fn set_args(&mut self, args: VecDeque<Argument>) {
@@ -136,32 +164,36 @@ impl Command {
         &mut self.args
     }
 
-    async fn validate_arg_range(
-        &self,
-        arg_rule: &ArgRule,
+    async fn resolve_args(
+        &mut self,
+        rule: &ArgRule,
         range: &Range<usize>,
         data: Arc<InterpreterData>,
     ) -> Result<(), SpannedError> {
         for i in range.start..range.end {
-            let arg = &self.args[i];
-            let fsl_type = arg.to_type(data.clone()).await?;
-            if !arg_rule.valid_types.contains(&fsl_type) {
-                return Err(RuntimeError::WrongArgType {
-                    command_label: self.get_label().to_string(),
-                    arg_number: i,
-                    fsl_type,
-                    expected: arg_rule.valid_types,
-                }
-                .span(arg.span, data.clone()));
+            if let ArgRule::Resolved(_) = rule {
+                let span = self.args[i].span;
+                let arg = std::mem::replace(&mut self.args[i], Argument::new(Value::None, span));
+                let value = arg.as_raw(data.clone()).await?;
+                self.args[i] = Argument::new(value, span);
             }
         }
         Ok(())
     }
 
-    async fn validate_args(&self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
+    async fn validate_arg_rules(
+        &mut self,
+        rules: &'static [ArgRule],
+        data: Arc<InterpreterData>,
+    ) -> Result<(), SpannedError> {
         let mut max_args = 0;
-        for arg_rule in self.arg_rules {
-            match &arg_rule.position {
+        for rule in rules {
+            let pos = match rule {
+                ArgRule::Resolved(arg_pos) => arg_pos,
+                ArgRule::Unresolved(arg_pos) => arg_pos,
+            };
+
+            match &pos {
                 ArgPos::Index(i) => {
                     max_args = if max_args < (*i + 1) {
                         *i + 1
@@ -171,15 +203,14 @@ impl Command {
                     let range = *i..*i + 1;
                     match self.args.get(*i) {
                         Some(_) => {
-                            self.validate_arg_range(arg_rule, &range, data.clone())
-                                .await?;
+                            self.resolve_args(rule, &range, data.clone()).await?;
                         }
                         None => {
                             return Err(RuntimeError::MissingArg {
-                                command_label: self.get_label().to_string(),
+                                command_label: self.label().to_string(),
                                 arg_number: *i,
                             }
-                            .span(self.span, data.clone()));
+                            .span(self.span));
                         }
                     }
                 }
@@ -191,38 +222,36 @@ impl Command {
                     };
                     if self.args.len() < range.start {
                         return Err(RuntimeError::WrongArgCount {
-                            command_label: self.get_label().to_string(),
+                            command_label: self.label().to_string(),
                             expected: ExpectedArgs::AtLeast(range.start),
                             got: self.args.len(),
                         }
-                        .span(self.span, data.clone()));
+                        .span(self.span));
                     } else if self.args.len() > range.end {
                         return Err(RuntimeError::WrongArgCount {
-                            command_label: self.get_label().to_string(),
+                            command_label: self.label().to_string(),
                             expected: ExpectedArgs::AtMost(range.end),
                             got: self.args.len(),
                         }
-                        .span(self.span, data.clone()));
+                        .span(self.span));
                     } else {
-                        self.validate_arg_range(arg_rule, range, data.clone())
-                            .await?;
+                        self.resolve_args(rule, range, data.clone()).await?;
                     }
                 }
                 ArgPos::None => {
                     if !self.args.is_empty() {
                         return Err(RuntimeError::WrongArgCount {
-                            command_label: self.get_label().to_string(),
+                            command_label: self.label().to_string(),
                             expected: ExpectedArgs::None,
                             got: self.args.len(),
                         }
-                        .span(self.span, data.clone()));
+                        .span(self.span));
                     }
                 }
                 ArgPos::AnyFrom(i) => {
                     max_args = usize::MAX;
                     let range = *i..self.args.len();
-                    self.validate_arg_range(arg_rule, &range, data.clone())
-                        .await?;
+                    self.resolve_args(rule, &range, data.clone()).await?;
                 }
                 ArgPos::OptionalIndex(i) => {
                     max_args = if max_args < (*i + 1) {
@@ -232,25 +261,76 @@ impl Command {
                     };
                     let range = *i..*i + 1;
                     if self.args.get(*i).is_some() {
-                        self.validate_arg_range(arg_rule, &range, data.clone())
-                            .await?;
+                        self.resolve_args(rule, &range, data.clone()).await?;
                     }
                 }
             }
         }
-
         if self.args.len() > max_args {
             return Err(RuntimeError::WrongArgCount {
-                command_label: self.get_label().to_string(),
+                command_label: self.label().to_string(),
                 expected: ExpectedArgs::Exactly(max_args),
                 got: self.args.len(),
             }
-            .span(self.span, data.clone()));
+            .span(self.span));
         }
         Ok(())
     }
 
-    pub async fn execute(self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    async fn validate_args(&mut self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
+        match self.signature {
+            CommandSignature::Rules(rules) => self.validate_arg_rules(rules, data).await,
+            CommandSignature::Count(expected) => match expected {
+                ExpectedArgs::None => {
+                    if !self.args.is_empty() {
+                        return Err(RuntimeError::WrongArgCount {
+                            command_label: self.label().to_string(),
+                            expected: ExpectedArgs::None,
+                            got: self.args.len(),
+                        }
+                        .span(self.span));
+                    }
+                    Ok(())
+                }
+                ExpectedArgs::Exactly(i) => {
+                    if self.args.len() != *i {
+                        return Err(RuntimeError::WrongArgCount {
+                            command_label: self.label().to_string(),
+                            expected: ExpectedArgs::None,
+                            got: self.args.len(),
+                        }
+                        .span(self.span));
+                    }
+                    Ok(())
+                }
+                ExpectedArgs::AtLeast(i) => {
+                    if self.args.len() < *i {
+                        return Err(RuntimeError::WrongArgCount {
+                            command_label: self.label().to_string(),
+                            expected: ExpectedArgs::None,
+                            got: self.args.len(),
+                        }
+                        .span(self.span));
+                    }
+                    Ok(())
+                }
+                ExpectedArgs::AtMost(i) => {
+                    if self.args.len() > *i {
+                        return Err(RuntimeError::WrongArgCount {
+                            command_label: self.label().to_string(),
+                            expected: ExpectedArgs::None,
+                            got: self.args.len(),
+                        }
+                        .span(self.span));
+                    }
+                    Ok(())
+                }
+            },
+            CommandSignature::AnyArgs => Ok(()),
+        }
+    }
+
+    pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
         self.validate_args(data.clone()).await?;
 
         if data.should_execute().await {
@@ -272,14 +352,14 @@ impl Command {
 
 impl PartialEq for Command {
     fn eq(&self, other: &Self) -> bool {
-        self.get_label() == other.get_label()
+        self.label() == other.label()
     }
 }
 
 impl fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Command")
-            .field("label", &self.get_label())
+            .field("label", &self.label())
             .finish()
     }
 }
@@ -290,7 +370,7 @@ impl Clone for Command {
             args: self.args.clone(),
             handler: self.handler.clone(),
             label: self.label.clone(),
-            arg_rules: self.arg_rules,
+            signature: self.signature,
             span: self.span,
         }
     }
