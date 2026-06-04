@@ -19,6 +19,14 @@ impl SourceStr {
     pub fn from_span<'c>(span: Span, data: &InterpreterData) -> Self {
         Self::Borrowed(data.source.slice(span))
     }
+
+    pub fn into_owned_string(self) -> String {
+        if let Self::Owned(string) = self {
+            string
+        } else {
+            self.to_string()
+        }
+    }
 }
 
 impl Default for SourceStr {

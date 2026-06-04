@@ -1276,7 +1276,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             dbg!(&value);
             match value {
                 Value::Text(source_str) => {
-                    let mut text = source_str.to_string();
+                    let mut text = std::mem::take(source_str).into_owned_string();
                     let i = indexer.to_text_indexer().span_err(span)?;
                     let removed = text.remove(i);
                     *source_str = SourceStr::Owned(text);
@@ -1302,7 +1302,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         collection
             .modify(data.clone(), async |value, span| match value {
                 Value::Text(source_str) => {
-                    let mut text = source_str.to_string();
+                    let mut text = std::mem::take(source_str).into_owned_string();
                     let removed = text.remove(indexer.to_usize(data.clone()).await?);
                     *source_str = SourceStr::Owned(text);
                     Ok(Value::from(removed))
@@ -1525,11 +1525,10 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     array
         .modify(data.clone(), async |value, span| match value {
             Value::Text(source_str) => {
-                let mut text = source_str.to_string();
+                let mut text = std::mem::take(source_str).into_owned_string();
                 let ch = to_push.to_text(data.clone()).await?;
                 text.push_str(&ch);
                 *source_str = SourceStr::Owned(text);
-                dbg!(source_str);
                 Ok(())
             }
             Value::List(list) => {
