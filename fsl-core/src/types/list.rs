@@ -138,6 +138,30 @@ impl List {
         }
     }
 
+    pub fn set_nested(
+        &mut self,
+        indices: &[usize],
+        value: Value,
+        span: Span,
+    ) -> Result<Value, SpannedError> {
+        match indices {
+            [] => Err(RuntimeError::MissingIndex).span_err(span),
+            [i] => match self.get_mut(*i) {
+                Some(i) => {
+                    let old = std::mem::take(i);
+                    *i = value;
+                    Ok(old)
+                }
+                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+            },
+            [i, rest @ ..] => match self.get_mut(*i) {
+                Some(Value::List(inner_list)) => inner_list.set_nested(rest, value, span),
+                Some(_) => Err(RuntimeError::NotIndexable).span_err(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+            },
+        }
+    }
+
     pub fn remove_nested(&mut self, indices: &[usize], span: Span) -> Result<Value, SpannedError> {
         match indices {
             [] => Err(RuntimeError::MissingIndex).span_err(span),

@@ -145,7 +145,7 @@ pub async fn take_if_var(
             let mut vars = data_clone.vars.write().await;
             vars.take(&label).await.span_err(span)?
         };
-        arg.modify(data, {
+        arg.with_mut(data, {
             async |value, _| {
                 *value = var;
                 Ok(())
@@ -633,11 +633,14 @@ pub const SCOPE: &str = "";
 pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let args = command.take_args();
+
     data.vars.write().await.push();
+
     let mut return_value = Value::None;
     for value in args {
         return_value = value.as_raw(data.clone()).await?;
     }
+
     data.vars.write().await.pop().await;
 
     Ok(return_value)
@@ -1153,34 +1156,39 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
     }
 }
 
-pub const INDEX_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const INDEX_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Unresolved(ArgPos::Index(0)),
+    ArgRule::Resolved(ArgPos::Index(1)),
+]);
 pub const INDEX: &str = "index";
 pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
-    let indexer = args.pop_front().unwrap();
-    let indexer_span = indexer.span;
-    let indexer = indexer.to_list_indexer(data.clone()).await?;
+    let i = args.pop_front().unwrap();
 
     array
         .with(data.clone(), async |value, span| match value {
             Value::Text(text) => {
-                let i = *indexer
-                    .get(0)
-                    .ok_or(RuntimeError::IndexOutOfBounds.span(indexer_span))?;
+                let (i_span, i) = (i.span, i.to_usize(data.clone()).await?);
                 match text.chars().nth(i) {
                     Some(char) => Ok(char.into()),
-                    None => Err(RuntimeError::IndexOutOfBounds.span(indexer_span)),
+                    None => Err(RuntimeError::IndexOutOfBounds.span(i_span)),
                 }
             }
-            Value::List(list) => list.get_nested_clone(&indexer, indexer_span),
-            _ => Err(value.conversion_err_to_types(INDEXABLE).span(span))?,
+            Value::List(list) => {
+                let (i_span, i) = (i.span, i.to_list_indexer(data.clone()).await?);
+                list.get_nested_clone(&i, i_span)
+            }
+            _ => Err(value.conversion_err(INDEXABLE).span(span))?,
         })
         .await
 }
 
-pub const GET_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(1));
+pub const GET_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Unresolved(ArgPos::Index(0)),
+    ArgRule::Resolved(ArgPos::OptionalIndex(1)),
+]);
 pub const GET: &str = "get";
 pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
@@ -1189,17 +1197,30 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         let mut arg = args.pop_front().unwrap();
         arg.with(data, async |value, _| Ok(value.clone())).await
     } else {
-        let map = args.pop_front().unwrap();
+        let mut arg = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
-        let key_span = key.span;
-        let key = key.to_map_indexer(data.clone()).await?;
-        let map = map.to_map(data.clone()).await?;
-
-        map.get_nested_clone(&key, key_span)
+        arg.with(data.clone(), async |value, span| match value {
+            Value::Map(map) => {
+                let (key_span, key) = (key.span, key.to_map_indexer(data.clone()).await?);
+                let get = map.get_nested_clone(&key, key_span)?;
+                Ok(get)
+            }
+            Value::List(list) => {
+                let (i_span, i) = (key.span, key.to_list_indexer(data.clone()).await?);
+                let get = list.get_nested_clone(&i, i_span)?;
+                Ok(get)
+            }
+            _ => Err(value.conversion_err(&[FslType::Map]).span(span)),
+        })
+        .await
     }
 }
 
-pub const SET_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(1));
+pub const SET_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Unresolved(ArgPos::Index(0)),
+    ArgRule::Resolved(ArgPos::OptionalIndex(1)),
+    ArgRule::Resolved(ArgPos::OptionalIndex(2)),
+]);
 pub const SET: &str = "set";
 pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
@@ -1207,33 +1228,37 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     if args.len() == 2 {
         let mut old = args.pop_front().unwrap();
-        let new = args.pop_front().unwrap().as_raw(data.clone()).await?;
-        old.modify(data.clone(), async |value, _| {
+        let new = args.pop_front().unwrap();
+
+        old.with_mut(data.clone(), async |value, _| {
+            let new = new.into_value(data.clone()).await?;
             *value = new;
             Ok(())
         })
-        .await
-        .unwrap();
+        .await?;
+
         Ok(old.into_value(data).await?)
     } else if args.len() == 3 {
-        let mut map = args.pop_front().unwrap();
+        let mut arg = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
-        let arg = args.pop_front().unwrap();
+        let to_set = args.pop_front().unwrap();
 
-        let key = key.to_map_indexer(data.clone()).await?;
-
-        let value = arg.as_raw_checked(NOT_NONE, data.clone()).await?;
-
-        let return_value = map
-            .modify(data.clone(), async |map, span| match map {
-                Value::Map(map) => {
-                    let value = map.set_nested(&key, value, span)?;
-                    Ok(value)
-                }
-                _ => Err(map.conversion_err_to_types(&[FslType::Map]).span(span)),
-            })
-            .await?;
-        Ok(return_value)
+        arg.with_mut(data.clone(), async |value, span| match value {
+            Value::Map(map) => {
+                let to_set = to_set.into_value(data.clone()).await?;
+                let key = key.to_map_indexer(data.clone()).await?;
+                let to_set = map.set_nested(&key, to_set, span)?;
+                Ok(to_set)
+            }
+            Value::List(list) => {
+                let to_set = to_set.into_value(data.clone()).await?;
+                let key = key.to_list_indexer(data.clone()).await?;
+                let to_set = list.set_nested(&key, to_set, span)?;
+                Ok(to_set)
+            }
+            _ => Err(value.conversion_err(&[FslType::Map]).span(span)),
+        })
+        .await
     } else {
         Err(RuntimeError::WrongArgCount {
             command_label: command.label().to_string(),
@@ -1255,7 +1280,7 @@ pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         .with(data.clone(), async |value, span| match value {
             Value::Text(text) => Ok(Value::from(text.len())),
             Value::List(list) => Ok(Value::from(list.len())),
-            _ => Err(value.conversion_err_to_types(INDEXABLE).span(span)),
+            _ => Err(value.conversion_err(INDEXABLE).span(span)),
         })
         .await
 }
@@ -1272,35 +1297,32 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     if args.len() == 1 {
         let arg = args.pop_front().unwrap();
         let (mut root, indexer) = arg.into_indexer(data.clone()).await?;
-        root.modify(data.clone(), async |value, span| {
-            dbg!(&value);
-            match value {
-                Value::Text(source_str) => {
-                    let mut text = std::mem::take(source_str).into_owned_string();
-                    let i = indexer.to_text_indexer().span_err(span)?;
-                    let removed = text.remove(i);
-                    *source_str = SourceStr::Owned(text);
-                    Ok(Value::from(removed))
-                }
-                Value::List(list) => {
-                    let indexer = indexer.to_list_indexer().span_err(span)?;
-                    let removed = list.remove_nested(&indexer, span)?;
-                    Ok(removed)
-                }
-                Value::Map(map) => {
-                    let indexer = indexer.to_map_indexer().span_err(span)?;
-                    let removed = map.remove_nested(&indexer, span)?;
-                    Ok(removed)
-                }
-                _ => Err(value.conversion_err_to_types(&COLLECTION).span(span)),
+        root.with_mut(data.clone(), async |value, span| match value {
+            Value::Text(source_str) => {
+                let mut text = std::mem::take(source_str).into_owned_string();
+                let i = indexer.to_text_indexer().span_err(span)?;
+                let removed = text.remove(i);
+                *source_str = SourceStr::Owned(text);
+                Ok(Value::from(removed))
             }
+            Value::List(list) => {
+                let indexer = indexer.to_list_indexer().span_err(span)?;
+                let removed = list.remove_nested(&indexer, span)?;
+                Ok(removed)
+            }
+            Value::Map(map) => {
+                let indexer = indexer.to_map_indexer().span_err(span)?;
+                let removed = map.remove_nested(&indexer, span)?;
+                Ok(removed)
+            }
+            _ => Err(value.conversion_err(&COLLECTION).span(span)),
         })
         .await
     } else {
         let mut collection = args.pop_front().unwrap();
         let indexer = args.pop_front().unwrap();
         collection
-            .modify(data.clone(), async |value, span| match value {
+            .with_mut(data.clone(), async |value, span| match value {
                 Value::Text(source_str) => {
                     let mut text = std::mem::take(source_str).into_owned_string();
                     let removed = text.remove(indexer.to_usize(data.clone()).await?);
@@ -1317,198 +1339,152 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                         map.remove_nested(&indexer.to_map_indexer(data.clone()).await?, span)?;
                     Ok(removed)
                 }
-                _ => Err(value.conversion_err_to_types(&COLLECTION).span(span)),
+                _ => Err(value.conversion_err(&COLLECTION).span(span)),
             })
             .await
     }
 }
 
-pub const SWAP_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(3));
+pub const SWAP_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Unresolved(ArgPos::Index(0)),
+    ArgRule::Resolved(ArgPos::Index(1)),
+    ArgRule::Resolved(ArgPos::Index(2)),
+]);
 pub const SWAP: &str = "swap";
 pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-
     let mut array = args.pop_front().unwrap();
+    let a_pos = args.pop_front().unwrap();
+    let b_pos = args.pop_front().unwrap();
 
-    let a_key = args.pop_front().unwrap();
-    let a_key_span = a_key.span;
-    let b_key = args.pop_front().unwrap();
-    let b_key_span = b_key.span;
-
-    let value_loc = array.span;
-    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
-
-    let array = array
-        .as_raw_checked(&[FslType::List, FslType::Text], data.clone())
+    array
+        .with_mut(data.clone(), async |value, span| match value {
+            Value::Text(text) => {
+                let text = std::mem::take(text).into_owned_string();
+                let mut chars: Vec<char> = text.chars().collect();
+                let (a_pos_span, a_pos) = (a_pos.span, a_pos.to_usize(data.clone()).await?);
+                let (b_pos_span, b_pos) = (b_pos.span, b_pos.to_usize(data.clone()).await?);
+                chars
+                    .get(a_pos)
+                    .ok_or(RuntimeError::IndexOutOfBounds.span(a_pos_span))?;
+                chars
+                    .get(b_pos)
+                    .ok_or(RuntimeError::IndexOutOfBounds.span(b_pos_span))?;
+                chars.swap(a_pos, b_pos);
+                *value = Value::from(chars.into_iter().collect::<String>());
+                Ok(())
+            }
+            Value::List(list) => {
+                let (a_pos_span, a_pos) = (a_pos.span, a_pos.to_list_indexer(data.clone()).await?);
+                let (b_pos_span, b_pos) = (b_pos.span, b_pos.to_list_indexer(data.clone()).await?);
+                let mut tmp = std::mem::take(list.get_nested_mut(&a_pos, span)?);
+                let b = list.get_nested_mut(&b_pos, a_pos_span)?;
+                std::mem::swap(b, &mut tmp);
+                let a = list.get_nested_mut(&a_pos, b_pos_span)?;
+                std::mem::swap(a, &mut tmp);
+                Ok(())
+            }
+            _ => Err(value.conversion_err(INDEXABLE).span(span)),
+        })
         .await?;
 
-    match array {
-        Value::Text(text) => {
-            let i = a_key.to_int(data.clone()).await?;
-            let j = b_key.to_int(data.clone()).await?;
-            let a = i as usize;
-            let b = j as usize;
-
-            let mut chars: Vec<char> = text.chars().collect();
-
-            if a < chars.len() && b < chars.len() {
-                chars.swap(a, b);
-                let text: String = chars.iter().collect();
-                let return_value = update_if_var(var, Value::from(text), data, value_loc).await?;
-                Ok(return_value)
-            } else {
-                Err(RuntimeError::IndexOutOfBounds.span(command.span))
-            }
-        }
-        Value::List(mut list) => {
-            let i = a_key.to_list_indexer(data.clone()).await?;
-            let j = b_key.to_list_indexer(data.clone()).await?;
-
-            let a_value = list.get_nested_clone(&i, a_key_span)?;
-            let b_value = list.get_nested_clone(&j, b_key_span)?;
-
-            let a_swap = list.get_nested_mut(&i, a_key_span)?;
-            *a_swap = b_value;
-            let b_swap = list.get_nested_mut(&j, b_key_span)?;
-            *b_swap = a_value;
-
-            let return_value = update_if_var(var, Value::List(list), data, value_loc).await?;
-
-            Ok(return_value)
-        }
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
+    Ok(array.take_value())
 }
 
-pub const REPLACE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(3));
+pub const REPLACE_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Unresolved(ArgPos::Index(0)),
+    ArgRule::Resolved(ArgPos::Index(1)),
+    ArgRule::Resolved(ArgPos::Index(2)),
+]);
 pub const REPLACE: &str = "replace";
 pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
+    let mut collection = args.pop_front().unwrap();
+    let indexer = args.pop_front().unwrap();
+    let replacement = args.pop_front().unwrap();
+    collection
+        .with_mut(data.clone(), async |value, span| match value {
+            Value::Text(source_str) => {
+                let mut text = std::mem::take(source_str).into_owned_string();
+                let (i_span, i) = (indexer.span, indexer.to_usize(data.clone()).await?);
+                let replacement = replacement.to_text(data.clone()).await?;
 
-    let mut array = args.pop_front().unwrap();
-    let key = args.pop_front().unwrap();
-    let arg = args.pop_front().unwrap();
-    let arg_span = arg.span;
-    let arg = arg.as_raw_checked(ANY, data.clone()).await?;
-
-    let key_span = key.span;
-    let key = key.to_list_indexer(data.clone()).await?;
-
-    let value_loc = array.span;
-    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
-
-    let array = array
-        .as_raw_checked(&[FslType::List, FslType::Text], data.clone())
-        .await?;
-
-    match array {
-        Value::Text(text) => {
-            let mut key = key;
-            if key.len() > 1 {
-                return Err(RuntimeError::IndexOutOfBounds.span(command.span));
-            }
-            let Some(i) = key.pop() else {
-                return Err(RuntimeError::IndexOutOfBounds.span(command.span));
-            };
-            let replacement_loc = arg_span;
-            let replacement = arg.to_text(data.clone()).await.span_err(arg_span)?;
-
-            if replacement.len() != 1 {
-                return Err(RuntimeError::InvalidArgument(
-                    "replacement value must be a single character".to_string(),
-                )
-                .span(replacement_loc));
-            }
-
-            let mut chars: Vec<char> = text.chars().collect();
-            let old_ch;
-            match chars.get_mut(i) {
-                Some(ch) => {
-                    old_ch = *ch;
-                    *ch = replacement.chars().next().unwrap();
-
-                    let text: String = chars.iter().collect();
-                    update_if_var(var, Value::from(text), data, value_loc).await?;
-                    Ok(Value::Text(SourceStr::Owned(old_ch.to_string())))
+                if !text.is_char_boundary(i) {
+                    Err(RuntimeError::IndexOutOfBounds.span(i_span))
+                } else {
+                    let old_ch = text[i..]
+                        .chars()
+                        .next()
+                        .ok_or(RuntimeError::IndexOutOfBounds.span(i_span))?;
+                    text.replace_range(i..i + old_ch.len_utf8(), &replacement);
+                    *source_str = SourceStr::Owned(text);
+                    Ok(Value::from(old_ch))
                 }
-                None => Err(RuntimeError::IndexOutOfBounds.span(key_span)),
             }
-        }
-        Value::List(mut list) => {
-            let old_value = list.get_nested_mut(&key, key_span)?;
-
-            let return_value = old_value.clone();
-            *old_value = arg;
-
-            update_if_var(var, Value::List(list), data.clone(), value_loc).await?;
-
-            Ok(return_value)
-        }
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
+            Value::List(list) => {
+                let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
+                let replacement = replacement.into_value(data.clone()).await?;
+                let current = list.get_nested_mut(&i, i_span)?;
+                let old = std::mem::replace(current, replacement);
+                Ok(old)
+            }
+            Value::Map(map) => {
+                let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
+                let replacement = replacement.into_value(data.clone()).await?;
+                let current = map.get_nested_mut(&i, i_span)?;
+                let old = std::mem::replace(current, replacement);
+                Ok(old)
+            }
+            _ => Err(value.conversion_err(COLLECTION).span(span)),
+        })
+        .await
 }
 
-pub const INSERT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(3));
+pub const INSERT_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Unresolved(ArgPos::Index(0)),
+    ArgRule::Resolved(ArgPos::Index(1)),
+    ArgRule::Resolved(ArgPos::Index(2)),
+]);
 pub const INSERT: &str = "insert";
 pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
+    let mut collection = args.pop_front().unwrap();
+    let indexer = args.pop_front().unwrap();
+    let to_insert = args.pop_front().unwrap();
+    collection
+        .with_mut(data.clone(), async |value, span| match value {
+            Value::Text(source_str) => {
+                let mut text = std::mem::take(source_str).into_owned_string();
+                let (i_span, i) = (indexer.span, indexer.to_usize(data.clone()).await?);
+                let to_insert = to_insert.to_text(data.clone()).await?;
 
-    let mut array = args.pop_front().unwrap();
-    let key = args.pop_front().unwrap();
-    let key_span = key.span;
-
-    let arg = args.pop_front().unwrap();
-
-    let value_loc = array.span;
-    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
-
-    let array = array.as_raw_checked(COLLECTION, data.clone()).await?;
-
-    match array {
-        Value::Text(text) => {
-            let i = key.to_usize(data.clone()).await?;
-
-            let text_to_insert = arg.to_text(data.clone()).await?;
-
-            let mut text = text.to_string();
-            if i <= text.len() {
-                text.insert_str(i, &text_to_insert);
-            } else {
-                return Err(RuntimeError::IndexOutOfBounds.span(command.span));
+                if !text.is_char_boundary(i) {
+                    Err(RuntimeError::IndexOutOfBounds.span(i_span))
+                } else {
+                    text.insert_str(i, &to_insert.into_owned_string());
+                    *source_str = SourceStr::Owned(text);
+                    Ok(())
+                }
             }
-
-            let return_value =
-                update_if_var(var, Value::from(std::mem::take(&mut text)), data, value_loc).await?;
-
-            Ok(return_value)
-        }
-        Value::List(mut list) => {
-            let key = key.to_list_indexer(data.clone()).await?;
-
-            let value_to_insert = arg.as_raw_checked(NOT_NONE, data.clone()).await?;
-
-            list.insert_nested(&key, value_to_insert, key_span)?;
-
-            let return_value = update_if_var(var, Value::List(list), data, value_loc).await?;
-
-            Ok(return_value)
-        }
-        Value::Map(mut map) => {
-            let key = key.to_map_indexer(data.clone()).await?;
-
-            let value_to_insert = arg.as_raw_checked(NOT_NONE, data.clone()).await?;
-
-            map.insert_nested(&key, value_to_insert, key_span)?;
-
-            let return_value = update_if_var(var, Value::Map(map), data, value_loc).await?;
-
-            Ok(return_value)
-        }
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
+            Value::List(list) => {
+                let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
+                let to_insert = to_insert.into_value(data.clone()).await?;
+                list.insert_nested(&i, to_insert, i_span)?;
+                Ok(())
+            }
+            Value::Map(map) => {
+                let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
+                let to_insert = to_insert.into_value(data.clone()).await?;
+                map.insert_nested(&i, to_insert, i_span)?;
+                Ok(())
+            }
+            _ => Err(value.conversion_err(COLLECTION).span(span)),
+        })
+        .await?;
+    Ok(collection.take_value())
 }
 
 pub const PUSH_RULES: &CommandSignature = &CommandSignature::Rules(&[
@@ -1523,7 +1499,7 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let to_push = args.pop_front().unwrap();
 
     array
-        .modify(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), async |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
                 let ch = to_push.to_text(data.clone()).await?;
@@ -1532,11 +1508,11 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
                 Ok(())
             }
             Value::List(list) => {
-                let to_push = to_push.as_raw_checked(NOT_NONE, data.clone()).await?;
+                let to_push = to_push.into_value(data.clone()).await?;
                 list.push(to_push);
                 Ok(())
             }
-            _ => Err(value.conversion_err_to_types(INDEXABLE).span(span)),
+            _ => Err(value.conversion_err(INDEXABLE).span(span)),
         })
         .await?;
     Ok(array.take_value())
@@ -1547,34 +1523,24 @@ pub const POP: &str = "pop";
 pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-
     let mut array = args.pop_front().unwrap();
 
-    let value_loc = array.span;
-    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
-    let array = array
-        .as_raw_checked(&[FslType::List, FslType::Text], data.clone())
-        .await?;
+    array
+        .with_mut(data.clone(), async |value, span| match value {
+            Value::Text(source_str) => {
+                let mut text = std::mem::take(source_str).into_owned_string();
+                let popped = text.pop();
+                *source_str = SourceStr::Owned(text);
+                Ok(popped.map(Value::from).unwrap_or(Value::None))
+            }
+            Value::List(list) => {
+                let popped = list.pop();
+                Ok(popped.unwrap_or(Value::None))
+            }
 
-    match array {
-        Value::Text(text) => {
-            let mut text = text.to_string();
-            let popped_text = text
-                .pop()
-                .map(|c| Value::from(c.to_string()))
-                .unwrap_or(Value::None);
-
-            update_if_var(var, Value::from(text), data, value_loc).await?;
-            Ok(popped_text)
-        }
-        Value::List(mut list) => {
-            let popped_value = list.pop().unwrap_or(Value::None);
-
-            update_if_var(var, Value::List(list), data, value_loc).await?;
-            Ok(popped_value)
-        }
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
+            _ => Err(value.conversion_err(INDEXABLE).span(span)),
+        })
+        .await
 }
 
 pub const SEARCH_REPLACE_RULES: &CommandSignature =
@@ -1696,12 +1662,12 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     };
 
     let value = arg
-        .modify(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), async |value, span| match value {
             Value::Int(value) => {
                 *value += amount;
                 Ok(*value)
             }
-            _ => Err(value.conversion_err_to_types(&[FslType::Int]).span(span)),
+            _ => Err(value.conversion_err(&[FslType::Int]).span(span)),
         })
         .await?;
     match arg.as_var_label(data).await {
@@ -1724,12 +1690,12 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     };
 
     let value = arg
-        .modify(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), async |value, span| match value {
             Value::Int(value) => {
                 *value -= amount;
                 Ok(*value)
             }
-            _ => Err(value.conversion_err_to_types(&[FslType::Int]).span(span)),
+            _ => Err(value.conversion_err(&[FslType::Int]).span(span)),
         })
         .await?;
     match arg.as_var_label(data).await {
@@ -1917,11 +1883,7 @@ pub const IS_NONE: &str = "is_none";
 pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let value = args
-        .pop_front()
-        .unwrap()
-        .as_raw_checked(ANY, data.clone())
-        .await?;
+    let value = args.pop_front().unwrap().as_raw(data.clone()).await?;
     Ok(Value::Bool(value.is_type(FslType::None)))
 }
 

@@ -113,7 +113,12 @@ impl VarStore {
         self.data.pop();
     }
 
-    pub async fn modify<F, R>(&self, label: &SourceStr, span: Span, f: F) -> Result<R, SpannedError>
+    pub async fn with_mut<F, R>(
+        &self,
+        label: &SourceStr,
+        span: Span,
+        f: F,
+    ) -> Result<R, SpannedError>
     where
         F: for<'a> AsyncFnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
     {

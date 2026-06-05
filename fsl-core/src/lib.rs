@@ -78,6 +78,7 @@ macro_rules! register_commands {
 /// # use fsl_core::types::value::*;
 /// # use fsl_core::types::command::*;
 /// # use std::sync::Arc;
+/// # use fsl_core::types::command::Handler;
 /// let rt = tokio::runtime::Runtime::new().unwrap();
 /// rt.block_on(async {
 ///     let mut interpreter = FslInterpreter::new().await;

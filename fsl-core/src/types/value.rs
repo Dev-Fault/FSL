@@ -577,7 +577,7 @@ impl Value {
             if valid_types.contains(&value.to_type()) {
                 Ok(value)
             } else {
-                Err(value.conversion_err_to_types(valid_types).into())
+                Err(value.conversion_err(valid_types).into())
             }
         })
     }
@@ -697,7 +697,7 @@ impl Value {
         }
     }
 
-    pub fn conversion_err_to_types(&self, to: &[FslType]) -> RuntimeError {
+    pub fn conversion_err(&self, to: &[FslType]) -> RuntimeError {
         RuntimeError::InvalidConversion {
             from: self.to_string(),
             to: to.to_vec(),
