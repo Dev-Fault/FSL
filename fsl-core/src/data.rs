@@ -1,8 +1,9 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -82,11 +83,11 @@ impl MemoryLimit {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct InterpreterFlags {
-    pub break_flag: bool,
-    pub continue_flag: bool,
-    pub return_flag: bool,
+    pub break_flag: AtomicBool,
+    pub continue_flag: AtomicBool,
+    pub return_flag: AtomicBool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -121,12 +122,11 @@ impl InterpreterLimits {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct ExecutionContext {
-    pub call_stack: Vec<SourceStr>,
-    pub def_stack: Vec<SourceStr>,
+    pub def_stack: RwLock<Vec<SourceStr>>,
     pub flags: InterpreterFlags,
-    pub loop_depth: usize,
+    pub loop_depth: AtomicUsize,
 }
 
 #[derive(Debug, Default)]
@@ -141,7 +141,7 @@ pub struct InterpreterData {
 
     pub vars: Arc<RwLock<VarStore>>,
 
-    pub ctx: RwLock<ExecutionContext>,
+    pub ctx: Arc<ExecutionContext>,
 }
 
 impl InterpreterData {
@@ -186,7 +186,7 @@ impl InterpreterData {
             total_loops: self.total_loops.clone(),
             output: self.output.clone(),
             vars: Arc::new(RwLock::new(self.vars.read().await.clone())),
-            ctx: RwLock::new(self.ctx.read().await.clone()),
+            ctx: Arc::new(ExecutionContext::default()),
         }
         .into()
     }
@@ -220,99 +220,64 @@ impl InterpreterData {
         }
     }
 
-    pub async fn push_call(&self, command_label: SourceStr) {
-        let mut ctx = self.ctx.write().await;
-        ctx.call_stack.push(command_label);
-    }
-
-    pub async fn pop_call(&self) {
-        let mut ctx = self.ctx.write().await;
-        ctx.call_stack.pop();
-    }
-
     pub async fn push_def(&self, def: SourceStr) {
-        let mut ctx = self.ctx.write().await;
-        ctx.def_stack.push(def);
+        self.ctx.def_stack.write().await.push(def);
     }
 
     pub async fn pop_def(&self) {
-        let mut ctx = self.ctx.write().await;
-        ctx.def_stack.pop();
-    }
-
-    pub async fn call_stack_to_string(&self) -> String {
-        let ctx = self.ctx.read().await;
-        let mut output = String::new();
-        for (i, call) in ctx.call_stack.iter().enumerate() {
-            let call = if call.is_empty() { "scope" } else { call };
-
-            if i < ctx.call_stack.len() - 1 {
-                output.push_str(&format!("{} > ", call));
-            } else {
-                output.push_str(call);
-            }
-        }
-        output
+        self.ctx.def_stack.write().await.pop();
     }
 
     pub async fn inc_loop_depth(&self) {
-        let mut ctx = self.ctx.write().await;
-        ctx.loop_depth += 1;
+        self.ctx.loop_depth.fetch_add(1, Ordering::Relaxed);
     }
 
     pub async fn dec_loop_depth(&self) {
-        let mut ctx = self.ctx.write().await;
-        ctx.loop_depth -= 1;
+        self.ctx.loop_depth.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub async fn loop_depth(&self) -> usize {
-        let ctx = self.ctx.read().await;
-        ctx.loop_depth
+        self.ctx.loop_depth.load(Ordering::Relaxed)
     }
 
     pub async fn get_return_flag(&self) -> bool {
-        let ctx = self.ctx.read().await;
-        ctx.flags.return_flag
+        self.ctx.flags.return_flag.load(Ordering::Relaxed)
     }
 
     pub async fn set_return_flag(&self, value: bool) {
-        let mut ctx = self.ctx.write().await;
-        ctx.flags.return_flag = value;
+        self.ctx.flags.return_flag.store(value, Ordering::Relaxed);
     }
 
     pub async fn get_continue_flag(&self) -> bool {
-        let ctx = self.ctx.read().await;
-        ctx.flags.continue_flag
+        self.ctx.flags.continue_flag.load(Ordering::Relaxed)
     }
 
     pub async fn set_continue_flag(&self, value: bool) {
-        let mut ctx = self.ctx.write().await;
-        ctx.flags.continue_flag = value;
+        self.ctx.flags.continue_flag.store(value, Ordering::Relaxed);
     }
 
     pub async fn get_break_flag(&self) -> bool {
-        let ctx = self.ctx.read().await;
-        ctx.flags.break_flag
+        self.ctx.flags.break_flag.load(Ordering::Relaxed)
     }
 
     pub async fn set_break_flag(&self, value: bool) {
-        let mut ctx = self.ctx.write().await;
-        ctx.flags.break_flag = value;
+        self.ctx.flags.break_flag.store(value, Ordering::Relaxed);
     }
 
     pub async fn should_execute(&self) -> bool {
-        let ctx = self.ctx.read().await;
-        ctx.flags.return_flag || ctx.flags.continue_flag || ctx.flags.break_flag
+        self.ctx.flags.return_flag.load(Ordering::Relaxed)
+            || self.ctx.flags.continue_flag.load(Ordering::Relaxed)
+            || self.ctx.flags.break_flag.load(Ordering::Relaxed)
     }
 
     pub async fn find_user_def(&self, label: &SourceStr) -> Option<Arc<UserDef>> {
-        let ctx = self.ctx.read().await;
+        let def_stack = self.ctx.def_stack.read().await;
         let root = self.user_defs.clone();
 
         let mut levels = vec![root.clone()];
         let mut current = root.clone();
 
-        for call in ctx.def_stack.iter() {
+        for call in def_stack.iter() {
             let defs;
             match current.lock().await.get(call) {
                 Some(def) => {

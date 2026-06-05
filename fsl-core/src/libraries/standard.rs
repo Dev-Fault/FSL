@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use rand::seq::SliceRandom;
+use rand::{distr::weighted::Weight, seq::SliceRandom};
 use tokio_stream::StreamExt;
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
     source_str::SourceStr,
     span::Span,
     types::{
-        ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, NO_ARGS, NOT_NONE,
+        ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, NO_ARGS, NOT_NONE, NUMBER,
         argument::Argument,
         command::{ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs},
         list::List,
@@ -189,27 +189,41 @@ async fn contains_float(
 pub const ADD: &str = "add";
 pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = tokio_stream::iter(command.take_args());
-    let mut args = args
-        .then(|v| v.to_number(data.clone()))
-        .collect::<Result<Vec<Argument>, _>>()
+    let mut args = command.take_args();
+    let mut int: i64 = 0;
+    let mut float: f64 = 0.0;
+    let mut is_float: bool = false;
+    for arg in &mut args {
+        arg.with(data.clone(), async |value, span| {
+            match value {
+                Value::Int(i) => {
+                    int = int
+                        .checked_add(*i)
+                        .ok_or(RuntimeError::Overflow)
+                        .span_err(span)?;
+                }
+                Value::Float(f) => {
+                    float += f;
+                    is_float = true;
+                }
+                Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(span)? {
+                    Value::Int(i) => int += i,
+                    Value::Float(f) => {
+                        float += f;
+                        is_float = true
+                    }
+                    _ => unreachable!("pare number only returns int, float"),
+                },
+                _ => return Err(value.conversion_err(NUMBER).span(span)),
+            }
+            Ok(())
+        })
         .await?;
-    if contains_float(&mut args, data.clone()).await? {
-        let mut sum: f64 = 0.0;
-        for value in args {
-            let value = value.to_float(data.clone()).await?;
-            sum += value;
-        }
-        Ok(Value::Float(sum))
+    }
+    if is_float {
+        Ok(Value::Float((int as f64) + float))
     } else {
-        let mut sum: i64 = 0;
-        for value in args {
-            let value = value.to_int(data.clone()).await?;
-            sum = sum
-                .checked_add(value)
-                .ok_or(RuntimeError::Overflow.span(command.span))?;
-        }
-        Ok(Value::Int(sum))
+        Ok(Value::Int(int))
     }
 }
 
@@ -974,15 +988,18 @@ pub async fn while_command(
     let mut command = command;
     let mut args = command.take_args();
     let while_condition = args.pop_front().unwrap();
-
     let mut final_value = Value::None;
+
+    let mut commands = Vec::with_capacity(args.len());
+    for arg in args {
+        commands.push(arg.to_command(data.clone()).await?);
+    }
 
     data.inc_loop_depth().await;
 
     'outer: while while_condition.clone().to_bool(data.clone()).await? {
-        for command in &args {
-            let command = command.clone().to_command(data.clone()).await?;
-            final_value = command.execute(data.clone()).await?;
+        for command in &commands {
+            final_value = command.clone().execute(data.clone()).await?;
 
             if data.get_break_flag().await || data.get_return_flag().await {
                 data.set_break_flag(false).await;
@@ -1009,12 +1026,16 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let repetitions = args.pop_front().unwrap().to_int(data.clone()).await?;
     let mut final_value = Value::None;
 
+    let mut commands = Vec::with_capacity(args.len());
+    for arg in args {
+        commands.push(arg.to_command(data.clone()).await?);
+    }
+
     data.inc_loop_depth().await;
 
     'outer: for _ in 0..repetitions {
-        for command in &args {
-            let command = command.clone().to_command(data.clone()).await?;
-            final_value = command.execute(data.clone()).await?;
+        for command in &commands {
+            final_value = command.clone().execute(data.clone()).await?;
 
             if data.get_break_flag().await || data.get_return_flag().await {
                 data.set_break_flag(false).await;

@@ -18,18 +18,17 @@ pub type InterpreterFut = BoxFuture<'static, Result<Value, SpannedError>>;
 pub type InterpreterFn = Arc<dyn Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync>;
 
 #[derive(Clone)]
-pub struct Handler(InterpreterFn);
+pub enum Handler {
+    Static(fn(Command, Arc<InterpreterData>) -> InterpreterFut),
+    Dynamic(InterpreterFn),
+}
 
 impl Handler {
-    pub fn new<F>(func: F) -> Self
-    where
-        F: Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync + 'static,
-    {
-        Self(Arc::new(func))
-    }
-
     pub fn handle(&self, command: Command, data: Arc<InterpreterData>) -> InterpreterFut {
-        (self.0)(command, data)
+        match self {
+            Handler::Static(f) => f(command, data),
+            Handler::Dynamic(f) => f(command, data),
+        }
     }
 }
 
@@ -337,14 +336,9 @@ impl Command {
             return Ok(Value::None);
         }
 
-        data.push_call(self.label.clone()).await;
-
         let handler = self.handler.clone();
         match handler.handle(self, data.clone()).await {
-            Ok(value) => {
-                data.pop_call().await;
-                Ok(value)
-            }
+            Ok(value) => Ok(value),
             Err(e) => Err(e),
         }
     }

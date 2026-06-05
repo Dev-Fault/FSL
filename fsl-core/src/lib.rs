@@ -102,9 +102,9 @@ macro_rules! register_command {
             .register(
                 $label,
                 $rules,
-                crate::types::command::Handler::new(|command, data| {
+                crate::types::command::Handler::Dynamic(Arc::new(|command, data| {
                     futures::FutureExt::boxed($executor(command, data))
-                }),
+                })),
             )
             .await;
     };
@@ -113,9 +113,9 @@ macro_rules! register_command {
             .register(
                 $label,
                 $rules,
-                crate::types::command::Handler::new(move |$cmd, $dat| {
+                crate::types::command::Handler::Dynamic(Arc::new(move |$cmd, $dat| {
                     futures::FutureExt::boxed($body)
-                }),
+                })),
             )
             .await;
     };
@@ -303,8 +303,8 @@ impl FslInterpreter {
                         .into_interpreter_error(data.clone()));
                     }
                 };
-                let mut ctx = data.ctx.write().await;
-                ctx.def_stack.push(def_label);
+                let mut def_stack = data.ctx.def_stack.write().await;
+                def_stack.push(def_label);
             }
         }
         for arg in &expression.args {
@@ -333,8 +333,8 @@ impl FslInterpreter {
 
         for expression in expressions.all() {
             Self::execute_def(data.clone(), defs.clone(), expression).await?;
-            let mut ctx = data.ctx.write().await;
-            ctx.def_stack.clear();
+            let mut def_stack = data.ctx.def_stack.write().await;
+            def_stack.clear();
         }
 
         for expression in expressions.unfiltered {
@@ -401,7 +401,7 @@ impl FslInterpreter {
                 let mut command = Command::new(
                     SourceStr::from_span(Span::from(&expression), &data),
                     &RUN_RULES,
-                    Handler::new(|command, data| standard::run(command, data).boxed()),
+                    Handler::Static(|command, data| standard::run(command, data).boxed()),
                     Span::from(&expression),
                 );
 
