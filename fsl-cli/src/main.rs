@@ -41,9 +41,9 @@ async fn main() {
         args.script
     };
 
-    let mut interpreter = FslInterpreter::new().await;
+    let mut interpreter = FslInterpreter::new();
 
-    interpreter.register_all_libraries().await;
+    interpreter.register_all_libraries();
 
     let result = if args.embeded {
         interpreter

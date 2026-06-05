@@ -7,7 +7,6 @@ use std::{
 
 use async_recursion::async_recursion;
 use futures::FutureExt;
-use tokio::sync::RwLock;
 
 use crate::{
     data::{InterpreterData, UserDefinitions},
@@ -43,7 +42,7 @@ pub type CommandDefinitions = HashMap<&'static str, CommandDef>;
 
 #[derive(Debug, Clone)]
 pub struct FslInterpreter {
-    pub command_definitions: Arc<RwLock<CommandDefinitions>>,
+    pub command_definitions: CommandDefinitions,
 }
 
 type ProcessResult<'c, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'c>>;
@@ -81,7 +80,7 @@ macro_rules! register_commands {
 /// # use fsl_core::types::command::Handler;
 /// let rt = tokio::runtime::Runtime::new().unwrap();
 /// rt.block_on(async {
-///     let mut interpreter = FslInterpreter::new().await;
+///     let mut interpreter = FslInterpreter::new();
 ///     register_command!(interpreter, "greet", NO_ARGS, |cmd, data| {
 ///         async move {
 ///             data.output.lock().await.push_str("Hello!");
@@ -98,26 +97,22 @@ macro_rules! register_commands {
 #[macro_export]
 macro_rules! register_command {
     ($self:expr, $label:expr, $rules:expr, $executor:path) => {
-        $self
-            .register(
-                $label,
-                $rules,
-                crate::types::command::Handler::Dynamic(Arc::new(|command, data| {
-                    futures::FutureExt::boxed($executor(command, data))
-                })),
-            )
-            .await;
+        $self.register(
+            $label,
+            $rules,
+            crate::types::command::Handler::Dynamic(Arc::new(|command, data| {
+                futures::FutureExt::boxed($executor(command, data))
+            })),
+        );
     };
     ($self:expr, $label:expr, $rules:expr, |$cmd:ident, $dat:ident| $body:block) => {
-        $self
-            .register(
-                $label,
-                $rules,
-                crate::types::command::Handler::Dynamic(Arc::new(move |$cmd, $dat| {
-                    futures::FutureExt::boxed($body)
-                })),
-            )
-            .await;
+        $self.register(
+            $label,
+            $rules,
+            crate::types::command::Handler::Dynamic(Arc::new(move |$cmd, $dat| {
+                futures::FutureExt::boxed($body)
+            })),
+        );
     };
 }
 
@@ -127,8 +122,8 @@ macro_rules! fsl {
         // 1. Stringify the Rust tokens into a raw string slice at compile time
         let code = $code;
 
-        let mut interpreter = FslInterpreter::new().await;
-        interpreter.register_all_libraries().await;
+        let mut interpreter = FslInterpreter::new();
+        interpreter.register_all_libraries()
         interpreter
             .interpret(code.to_string(), InterpreterData::default())
             .await
@@ -136,41 +131,39 @@ macro_rules! fsl {
 }
 
 impl FslInterpreter {
-    pub async fn new() -> Self {
+    pub fn new() -> Self {
         let mut interpreter = Self {
-            command_definitions: Arc::new(RwLock::new(CommandDefinitions::new())),
+            command_definitions: CommandDefinitions::new(),
         };
-        interpreter.register_library(Library::Std).await;
+        interpreter.register_library(Library::Std);
         interpreter
     }
 
     /// Register command to interpreter allowing it to execute it, overwrites commands with same name if they exist
-    pub async fn register(
+    pub fn register(
         &mut self,
         label: &'static str,
         signature: &'static CommandSignature,
         executor: Handler,
     ) {
         self.command_definitions
-            .write()
-            .await
             .insert(label, CommandDef::new(label, signature, executor));
     }
 
-    pub async fn register_library(&mut self, library: Library) {
+    pub fn register_library(&mut self, library: Library) {
         match library {
-            Library::Exec => register_exec(self).await,
-            Library::Io => register_io(self).await,
-            Library::Std => register_std(self).await,
-            Library::Async => register_async(self).await,
+            Library::Exec => register_exec(self),
+            Library::Io => register_io(self),
+            Library::Std => register_std(self),
+            Library::Async => register_async(self),
         }
     }
 
-    pub async fn register_all_libraries(&mut self) {
-        register_std(self).await;
-        register_exec(self).await;
-        register_io(self).await;
-        register_async(self).await;
+    pub fn register_all_libraries(&mut self) {
+        register_std(self);
+        register_exec(self);
+        register_io(self);
+        register_async(self);
     }
 
     /// Interprets plain fsl code
@@ -287,7 +280,7 @@ impl FslInterpreter {
     #[async_recursion]
     async fn execute_def<'c>(
         data: Arc<InterpreterData>,
-        defs: Arc<RwLock<CommandDefinitions>>,
+        defs: &CommandDefinitions,
         expression: &Expression<'c>,
     ) -> Result<(), InterpreterError> {
         if expression.name.as_str() == DEF {
@@ -309,19 +302,19 @@ impl FslInterpreter {
         }
         for arg in &expression.args {
             if let ArgKind::Expression(inner) = &arg.kind {
-                Self::execute_def(data.clone(), defs.clone(), inner).await?;
+                Self::execute_def(data.clone(), &defs, inner).await?;
             }
         }
         if expression.name.as_str() == DEF {
             // TODO attempt to optimize expression.clone()
-            Self::interpret_command(data.clone(), defs, expression.clone()).await?;
+            Self::interpret_command(data.clone(), &defs, expression.clone()).await?;
         }
         Ok(())
     }
 
     async fn execute_expressions<'c>(
         data: Arc<InterpreterData>,
-        defs: Arc<RwLock<CommandDefinitions>>,
+        defs: CommandDefinitions,
         source: SourceStr,
     ) -> Result<String, InterpreterError> {
         let expressions = Parser::new(&source).filter_parse(&[DEF])?;
@@ -332,13 +325,13 @@ impl FslInterpreter {
         }
 
         for expression in expressions.all() {
-            Self::execute_def(data.clone(), defs.clone(), expression).await?;
+            Self::execute_def(data.clone(), &defs, expression).await?;
             let mut def_stack = data.ctx.def_stack.write().await;
             def_stack.clear();
         }
 
         for expression in expressions.unfiltered {
-            let result = Self::interpret_command(data.clone(), defs.clone(), expression).await;
+            let result = Self::interpret_command(data.clone(), &defs, expression).await;
             if let Err(e) = result {
                 match e == InterpreterError::Exit {
                     true => break,
@@ -353,7 +346,7 @@ impl FslInterpreter {
 
     async fn interpret_command<'c>(
         data: Arc<InterpreterData>,
-        defs: Arc<RwLock<CommandDefinitions>>,
+        defs: &CommandDefinitions,
         expression: Expression<'c>,
     ) -> Result<(), InterpreterError> {
         let result = Self::process_expression(data.clone(), defs, expression).await;
@@ -374,11 +367,10 @@ impl FslInterpreter {
 
     async fn process_expression<'c>(
         data: Arc<InterpreterData>,
-        defs: Arc<RwLock<CommandDefinitions>>,
+        defs: &CommandDefinitions,
         expression: Expression<'c>,
     ) -> Result<Value, InterpreterError> {
-        let defs_read = defs.read().await;
-        let def = defs_read.get(expression.name.as_str());
+        let def = defs.get(expression.name.as_str());
 
         if let Some(def) = def {
             let mut command = Command::from_def(def, Span::from(&expression));
@@ -386,7 +378,7 @@ impl FslInterpreter {
             let mut args: VecDeque<_> = VecDeque::with_capacity(expression.args.len());
 
             for arg in expression.args {
-                args.push_back(Self::process_arg(data.clone(), defs.clone(), arg).await?);
+                args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
             }
 
             command.set_args(args);
@@ -412,7 +404,7 @@ impl FslInterpreter {
                 ));
 
                 for arg in expression.args {
-                    args.push_back(Self::process_arg(data.clone(), defs.clone(), arg).await?);
+                    args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
                 }
 
                 command.set_args(args);
@@ -456,9 +448,9 @@ impl FslInterpreter {
         }
     }
 
-    fn process_arg<'c>(
+    fn process_arg<'a: 'c, 'c>(
         data: Arc<InterpreterData>,
-        defs: Arc<RwLock<CommandDefinitions>>,
+        defs: &'a CommandDefinitions,
         arg: Arg<'c>,
     ) -> ProcessResult<'c, Argument, InterpreterError> {
         Box::pin(async move {
@@ -487,7 +479,7 @@ impl FslInterpreter {
                     let span = Span::from(&list_arg);
                     let mut list: Vec<Value> = Vec::with_capacity(list_arg.data.len());
                     for arg in list_arg.data {
-                        let parsed_arg = Self::process_arg(data.clone(), defs.clone(), arg).await?;
+                        let parsed_arg = Self::process_arg(data.clone(), &defs, arg).await?;
                         list.push(
                             parsed_arg
                                 .into_value(data.clone())
@@ -504,7 +496,7 @@ impl FslInterpreter {
                     for (key, value) in map.data {
                         value_map.insert(
                             SourceStr::Borrowed(data.source.slice(Span::from(&key))),
-                            Self::process_arg(data.clone(), defs.clone(), value)
+                            Self::process_arg(data.clone(), &defs, value)
                                 .await?
                                 .into_value(data.clone())
                                 .await
@@ -520,11 +512,11 @@ impl FslInterpreter {
                     Ok(Argument::new(value, span))
                 }
                 ArgKind::Path(path) => {
-                    let root = Self::process_arg(data.clone(), defs.clone(), *path.root).await?;
+                    let root = Self::process_arg(data.clone(), &defs, *path.root).await?;
                     let mut segments = Vec::with_capacity(path.segments.len());
                     for arg in path.segments {
                         let segment_span = Span::from(&arg.token);
-                        let key = Self::process_arg(data.clone(), defs.clone(), arg)
+                        let key = Self::process_arg(data.clone(), &defs, arg)
                             .await?
                             .into_value(data.clone())
                             .await
@@ -589,8 +581,8 @@ mod interpreter {
             // 1. Stringify the Rust tokens into a raw string slice at compile time
             let code = $code;
 
-            let mut interpreter = FslInterpreter::new().await;
-            interpreter.register_all_libraries().await;
+            let mut interpreter = FslInterpreter::new();
+            interpreter.register_all_libraries();
             let result = interpreter
                 .interpret(code.to_string(), InterpreterData::default())
                 .await;
@@ -613,7 +605,6 @@ mod interpreter {
 
     async fn test_interpreter_err(code: &str) {
         let result = FslInterpreter::new()
-            .await
             .interpret(code.to_string(), InterpreterData::default())
             .await;
         dbg!(&result);
@@ -622,7 +613,6 @@ mod interpreter {
 
     async fn test_interpreter_not_err(code: &str) {
         let result = FslInterpreter::new()
-            .await
             .interpret(code.to_string(), InterpreterData::default())
             .await;
         dbg!(&result);
@@ -631,7 +621,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn catch_output_overflow() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_output_limit(u16::MAX as usize));
         let code = r#"
@@ -646,7 +636,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn catch_memory_limit_embedded() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_memory_limit(u16::MAX as usize));
         let code = r#"
@@ -662,7 +652,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn catch_memory_overflow() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_memory_limit(u16::MAX as usize));
         let code = r#"
@@ -677,7 +667,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn catch_output_limit_embedded() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_output_limit(12));
         let code = r#"
@@ -699,7 +689,7 @@ mod interpreter {
     async fn catch_output_limit_embedded_accumulated() {
         // block 1 outputs 8 chars, block 2 outputs 8 chars, limit is 12
         // neither block alone exceeds, but together they should
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_output_limit(12));
         let code = r#"{print("00001111")}{print("00001111")}"#.to_string();
@@ -711,7 +701,7 @@ mod interpreter {
     // Literal chars outside blocks count toward limit
     #[tokio::test]
     async fn catch_output_limit_embedded_literals() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_output_limit(12));
         let code = r#"aaaaaaaaaaaa{print("x")}"#.to_string(); // 12 literal chars then more
@@ -722,7 +712,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn catch_loop_limit() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_loop_limit(499));
         let code = r#"
@@ -736,7 +726,7 @@ mod interpreter {
 
     #[tokio::test]
     async fn catch_loop_limit_embedded() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_loop_limit(1499));
         let code = r#"
@@ -753,7 +743,7 @@ mod interpreter {
     // Inner blocks can't bypass loop limit by each running up to the limit
     #[tokio::test]
     async fn catch_loop_limit_embedded_ok() {
-        let interpreter = FslInterpreter::new().await;
+        let interpreter = FslInterpreter::new();
         let data = InterpreterData::default()
             .with_limits(InterpreterLimits::default().with_loop_limit(1500));
         let code = r#"
