@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
-use fsl_core::{FslInterpreter, data::InterpreterData, fsl, types::value::Value};
+use fsl_core::{FslInterpreter, data::InterpreterData, types::value::Value};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -17,19 +17,6 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() {
-    /*
-    let result = fsl!(
-        "
-        sum.store(0)
-
-	    repeat(1000000,
-	        sum.inc()
-	    )
-	    print(\"done\")
-    "
-    );
-    dbg!(result);
-    */
     let args = Args::parse();
 
     let stdin = if io::stdin().is_terminal() {

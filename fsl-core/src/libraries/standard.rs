@@ -9,7 +9,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     DEF, DEF_RULES, FslInterpreter, InterpreterData,
-    data::{DefinitionFinder, UserDeclaration, UserDefintion},
+    data::UserDeclaration,
     def,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     execute_command, register_async, register_sync,
@@ -27,7 +27,7 @@ use crate::{
 };
 
 pub const F_ADD: &str = "f_add";
-pub fn f_add(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn f_add(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut int: i64 = 0;

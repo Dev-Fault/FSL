@@ -336,7 +336,7 @@ impl Command {
         }
     }
 
-    pub fn execute(mut self, data: Arc<InterpreterData>) -> InterpreterResult {
+    pub fn execute(self, data: Arc<InterpreterData>) -> InterpreterResult {
         if data.should_execute() {
             return InterpreterResult::Sync(Ok(Value::None));
         }
