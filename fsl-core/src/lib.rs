@@ -98,7 +98,7 @@ macro_rules! register_async {
         $self.register(
             $label,
             $rules,
-            $crate::types::command::Handler::Dynamic(Arc::new(|command, data| {
+            $crate::types::command::Handler::AsyncDynamic(Arc::new(|command, data| {
                 futures::FutureExt::boxed($executor(command, data))
             })),
         );
@@ -107,7 +107,7 @@ macro_rules! register_async {
         $self.register(
             $label,
             $rules,
-            $crate::types::command::Handler::Dynamic(Arc::new(move |$cmd, $dat| {
+            $crate::types::command::Handler::AsyncDynamic(Arc::new(move |$cmd, $dat| {
                 futures::FutureExt::boxed($body)
             })),
         );
@@ -417,7 +417,9 @@ impl FslInterpreter {
                 args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
             }
 
-            command.set_args(args);
+            command
+                .set_args(args)
+                .into_interpreter_error(data.clone())?;
 
             Ok(Value::from_command(command))
         } else {
@@ -428,7 +430,7 @@ impl FslInterpreter {
                 let mut command = Command::new(
                     SourceStr::from_span(Span::from(&expression), &data),
                     &RUN_RULES,
-                    Handler::Static(|command, data| standard::run(command, data).boxed()),
+                    Handler::AsyncStatic(|command, data| standard::run(command, data).boxed()),
                     Span::from(&expression),
                 );
 
@@ -442,7 +444,9 @@ impl FslInterpreter {
                     args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
                 }
 
-                command.set_args(args);
+                command
+                    .set_args(args)
+                    .into_interpreter_error(data.clone())?;
 
                 Ok(Value::Command(Box::new(command)))
             } else {
@@ -516,9 +520,7 @@ impl FslInterpreter {
                     for arg in list_arg.data {
                         let parsed_arg = Self::process_arg(data.clone(), &defs, arg).await?;
                         list.push(
-                            parsed_arg
-                                .into_value(data.clone())
-                                .await
+                            await_result!(parsed_arg.into_value(data.clone()))
                                 .into_interpreter_error(data.clone())?,
                         );
                     }
@@ -531,11 +533,12 @@ impl FslInterpreter {
                     for (key, value) in map.data {
                         value_map.insert(
                             SourceStr::Borrowed(data.source.slice(Span::from(&key))),
-                            Self::process_arg(data.clone(), &defs, value)
-                                .await?
-                                .into_value(data.clone())
-                                .await
-                                .into_interpreter_error(data.clone())?,
+                            await_result!(
+                                Self::process_arg(data.clone(), &defs, value)
+                                    .await?
+                                    .into_value(data.clone())
+                            )
+                            .into_interpreter_error(data.clone())?,
                         );
                     }
 
@@ -551,19 +554,19 @@ impl FslInterpreter {
                     let mut segments = Vec::with_capacity(path.segments.len());
                     for arg in path.segments {
                         let segment_span = Span::from(&arg.token);
-                        let key = Self::process_arg(data.clone(), &defs, arg)
-                            .await?
-                            .into_value(data.clone())
-                            .await
-                            .into_interpreter_error(data.clone())?;
+                        let key = await_result!(
+                            Self::process_arg(data.clone(), &defs, arg)
+                                .await?
+                                .into_value(data.clone())
+                        )
+                        .into_interpreter_error(data.clone())?;
                         let segment = AccessorSegment::new(key, segment_span);
                         segments.push(segment);
                     }
 
                     let root_span = root.span;
                     let root = AccessorSegment::new(
-                        root.into_value(data.clone())
-                            .await
+                        await_result!(root.into_value(data.clone()))
                             .into_interpreter_error(data.clone())?,
                         root_span,
                     );
@@ -590,7 +593,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for (i, mut arg) in args.into_iter().enumerate() {
         let span = arg.span;
         let kind = arg.to_type(data.clone()).await?;
-        match arg.into_value(data.clone()).await? {
+        match await_result!(arg.into_value(data.clone()))? {
             Value::Var(label) => {
                 if encountered_command {
                     return Err(RuntimeError::ParametersOutOfOrder.span(command.span));

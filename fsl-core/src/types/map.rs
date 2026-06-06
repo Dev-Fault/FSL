@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{
+    await_result,
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     source_str::SourceStr,
@@ -51,7 +52,7 @@ impl Map {
             Map::Unresolved(arc) => {
                 let mut map = Arc::unwrap_or_clone(arc);
                 for (_, value) in map.iter_mut() {
-                    *value = std::mem::take(value).as_raw(data.clone()).await?;
+                    *value = await_result!(std::mem::take(value).as_raw(data.clone()))?;
                 }
                 Ok(Map::Resolved(Arc::new(map)))
             }

@@ -1,15 +1,21 @@
-use std::{future::ready, sync::Arc};
+use std::sync::Arc;
 
 use async_recursion::async_recursion;
-use futures::future::Either;
 
 use crate::{
+    await_result,
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     execute_command,
     source_str::SourceStr,
     span::Span,
-    types::{FslType, command::Command, list::List, map::Map, value::Value},
+    types::{
+        FslType,
+        command::{Command, InterpreterResult},
+        list::List,
+        map::Map,
+        value::Value,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -399,12 +405,10 @@ impl Accessor {
                 for segment in &self.segments {
                     let key = match segment.value {
                         Value::Int(i) => Ok(i as usize),
-                        Value::Var(_) => segment
-                            .value
-                            .clone()
-                            .to_usize(data.clone())
-                            .await
-                            .span_err(segment.span),
+                        Value::Var(_) => {
+                            await_result!(segment.value.clone().to_usize(data.clone()))
+                                .span_err(segment.span)
+                        }
                         _ => Err(segment
                             .value
                             .conversion_err(&[FslType::Int])
@@ -421,11 +425,7 @@ impl Accessor {
                 }?;
                 let i = match segment.value {
                     Value::Int(i) => Ok(i as usize),
-                    Value::Var(_) => segment
-                        .value
-                        .clone()
-                        .to_usize(data.clone())
-                        .await
+                    Value::Var(_) => await_result!(segment.value.clone().to_usize(data.clone()))
                         .span_err(segment.span),
                     _ => Err(segment
                         .value
@@ -490,13 +490,15 @@ impl ArgumentKind {
         self,
         span: Span,
         data: Arc<InterpreterData>,
-    ) -> impl Future<Output = Result<Value, SpannedError>> {
+    ) -> InterpreterResult<Value, SpannedError> {
         match self {
             ArgumentKind::Value(value) => {
-                return Either::Left(ready(Ok(value)));
+                return InterpreterResult::Sync(Ok(value));
             }
             ArgumentKind::Accessor(path) => {
-                return Either::Right(path.into_value(span, data));
+                return InterpreterResult::Async(Box::pin(async move {
+                    path.into_value(span, data).await
+                }));
             }
         }
     }
@@ -572,7 +574,7 @@ impl ArgumentKind {
 
 #[derive(Debug, Clone)]
 pub struct Argument {
-    kind: ArgumentKind,
+    pub kind: ArgumentKind,
     pub span: Span,
 }
 
@@ -627,8 +629,8 @@ impl Argument {
         self.kind.with_mut(self.span, data.clone(), f).await
     }
 
-    pub async fn into_value(self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-        self.kind.into_value(self.span, data).await
+    pub fn into_value(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, SpannedError> {
+        self.kind.into_value(self.span, data)
     }
 
     pub async fn into_indexer(
@@ -743,84 +745,48 @@ impl Argument {
     }
 
     pub async fn to_int(self, data: Arc<InterpreterData>) -> Result<i64, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_int(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        await_result!(value.to_int(data.clone())).span_err(self.span)
     }
 
     pub async fn to_usize(self, data: Arc<InterpreterData>) -> Result<usize, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_usize(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        await_result!(value.to_usize(data.clone())).span_err(self.span)
     }
 
     pub async fn to_float(self, data: Arc<InterpreterData>) -> Result<f64, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_float(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_float(data.clone()).await.span_err(self.span)
     }
 
     pub async fn to_bool(self, data: Arc<InterpreterData>) -> Result<bool, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_bool(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_bool(data.clone()).await.span_err(self.span)
     }
 
     pub async fn to_var(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_var(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_var(data.clone()).await.span_err(self.span)
     }
 
     pub async fn to_text(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_text(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_text(data.clone()).await.span_err(self.span)
     }
 
     pub async fn to_list(self, data: Arc<InterpreterData>) -> Result<List, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_list(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_list(data.clone()).await.span_err(self.span)
     }
 
     pub async fn to_map(self, data: Arc<InterpreterData>) -> Result<Map, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_map(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_map(data.clone()).await.span_err(self.span)
     }
 
     pub async fn to_number(self, data: Arc<InterpreterData>) -> Result<Argument, SpannedError> {
-        let number = self
-            .kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_number(data.clone())
-            .await;
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        let number = value.to_number(data.clone()).await;
         let number = number.map(|v| Self::new(v, self.span));
 
         number.span_err(self.span)
@@ -831,30 +797,26 @@ impl Argument {
         valid_types: &'static [FslType],
         data: Arc<InterpreterData>,
     ) -> Result<Value, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value
             .as_raw_checked(valid_types, data.clone())
             .await
             .span_err(self.span)
     }
 
-    pub async fn as_raw(self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    pub fn as_raw(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, SpannedError> {
+        let span = self.span;
         self.kind
             .into_value(self.span, data.clone())
-            .await?
-            .as_raw(data.clone())
-            .await
-            .span_err(self.span)
+            .and_then_result(move |v| v.as_raw(data).map_err(move |e| e.span(span)))
     }
 
     pub async fn to_list_indexer(
         self,
         data: Arc<InterpreterData>,
     ) -> Result<Vec<usize>, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value
             .to_list_indexer(data.clone())
             .await
             .span_err(self.span)
@@ -864,20 +826,13 @@ impl Argument {
         self,
         data: Arc<InterpreterData>,
     ) -> Result<Vec<SourceStr>, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_map_indexer(data.clone())
-            .await
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_map_indexer(data.clone()).await.span_err(self.span)
     }
 
     pub async fn to_command(self, data: Arc<InterpreterData>) -> Result<Command, SpannedError> {
-        self.kind
-            .into_value(self.span, data.clone())
-            .await?
-            .to_command(data.clone())
-            .span_err(self.span)
+        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
+        value.to_command(data.clone()).span_err(self.span)
     }
 
     pub async fn as_var_label(

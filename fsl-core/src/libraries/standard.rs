@@ -8,7 +8,7 @@ use rand::seq::SliceRandom;
 use tokio_stream::StreamExt;
 
 use crate::{
-    DEF, DEF_RULES, FslInterpreter, InterpreterData,
+    DEF, DEF_RULES, FslInterpreter, InterpreterData, await_result,
     data::UserDeclaration,
     def,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
@@ -27,6 +27,8 @@ use crate::{
 };
 
 pub const F_ADD: &str = "f_add";
+pub const F_ADD_RULES: &CommandSignature =
+    &CommandSignature::Rules(&[ArgRule::Resolved(ArgPos::AnyFrom(0))]);
 pub fn f_add(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
@@ -65,7 +67,7 @@ pub fn f_add(command: Command, _: Arc<InterpreterData>) -> Result<Value, Spanned
 }
 
 pub fn register_std(interpreter: &mut FslInterpreter) {
-    register_sync!(interpreter, F_ADD, MATH_RULES, f_add);
+    register_sync!(interpreter, F_ADD, F_ADD_RULES, f_add);
     register_sync!(interpreter, NO_OP, NO_OP_RULES, no_op);
     register_async!(interpreter, ADD, MATH_RULES, add);
     register_async!(interpreter, SUB, MATH_RULES, sub);
@@ -383,7 +385,7 @@ pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let min = args.pop_front().unwrap();
     let max = args.pop_front().unwrap();
 
-    match to_clamp.into_value(data.clone()).await? {
+    match await_result!(to_clamp.into_value(data.clone()))? {
         Value::Int(to_clamp) => {
             let min = min.to_int(data.clone()).await?;
             let max = max.to_int(data.clone()).await?;
@@ -419,7 +421,7 @@ pub async fn clamp_min(
     let to_clamp = args.pop_front().unwrap().to_number(data.clone()).await?;
     let min = args.pop_front().unwrap();
 
-    match to_clamp.into_value(data.clone()).await? {
+    match await_result!(to_clamp.into_value(data.clone()))? {
         Value::Int(to_clamp) => {
             let min = min.to_int(data.clone()).await?;
 
@@ -453,7 +455,7 @@ pub async fn clamp_max(
     let to_clamp = args.pop_front().unwrap().to_number(data.clone()).await?;
     let max = args.pop_front().unwrap();
 
-    match to_clamp.into_value(data.clone()).await? {
+    match await_result!(to_clamp.into_value(data.clone()))? {
         Value::Int(to_clamp) => {
             let max = max.to_int(data.clone()).await?;
 
@@ -611,7 +613,7 @@ pub const CLONE: &str = "clone";
 pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let arg = command.take_args().pop_front().unwrap();
-    let arg = arg.as_raw(data.clone()).await?;
+    let arg = await_result!(arg.as_raw(data.clone()))?;
     Ok(arg)
 }
 
@@ -693,7 +695,7 @@ pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     let mut return_value = Value::None;
     for value in args {
-        return_value = value.as_raw(data.clone()).await?;
+        return_value = await_result!(value.as_raw(data.clone()))?;
     }
 
     data.vars.write().await.pop().await;
@@ -976,7 +978,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             let case_span = case.span;
             let mut case = case.to_command(data.clone()).await?;
             let arg = case.pop_front_arg().unwrap();
-            let arg = arg.as_raw(data.clone()).await?;
+            let arg = await_result!(arg.as_raw(data.clone()))?;
 
             if arg.equal(&expression, data.clone()).span_err(case_span)? {
                 return execute_command!(case, data);
@@ -1281,13 +1283,13 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         let new = args.pop_front().unwrap();
 
         old.with_mut(data.clone(), async |value, _| {
-            let new = new.into_value(data.clone()).await?;
+            let new = await_result!(new.into_value(data.clone()))?;
             *value = new;
             Ok(())
         })
         .await?;
 
-        Ok(old.into_value(data).await?)
+        Ok(await_result!(old.into_value(data))?)
     } else if args.len() == 3 {
         let mut arg = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
@@ -1295,13 +1297,13 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
         arg.with_mut(data.clone(), async |value, span| match value {
             Value::Map(map) => {
-                let to_set = to_set.into_value(data.clone()).await?;
+                let to_set = await_result!(to_set.into_value(data.clone()))?;
                 let key = key.to_map_indexer(data.clone()).await?;
                 let to_set = map.set_nested(&key, to_set, span)?;
                 Ok(to_set)
             }
             Value::List(list) => {
-                let to_set = to_set.into_value(data.clone()).await?;
+                let to_set = await_result!(to_set.into_value(data.clone()))?;
                 let key = key.to_list_indexer(data.clone()).await?;
                 let to_set = list.set_nested(&key, to_set, span)?;
                 Ok(to_set)
@@ -1475,14 +1477,14 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
             }
             Value::List(list) => {
                 let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
-                let replacement = replacement.into_value(data.clone()).await?;
+                let replacement = await_result!(replacement.into_value(data.clone()))?;
                 let current = list.get_nested_mut(&i, i_span)?;
                 let old = std::mem::replace(current, replacement);
                 Ok(old)
             }
             Value::Map(map) => {
                 let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
-                let replacement = replacement.into_value(data.clone()).await?;
+                let replacement = await_result!(replacement.into_value(data.clone()))?;
                 let current = map.get_nested_mut(&i, i_span)?;
                 let old = std::mem::replace(current, replacement);
                 Ok(old)
@@ -1521,13 +1523,13 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             }
             Value::List(list) => {
                 let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
-                let to_insert = to_insert.into_value(data.clone()).await?;
+                let to_insert = await_result!(to_insert.into_value(data.clone()))?;
                 list.insert_nested(&i, to_insert, i_span)?;
                 Ok(())
             }
             Value::Map(map) => {
                 let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
-                let to_insert = to_insert.into_value(data.clone()).await?;
+                let to_insert = await_result!(to_insert.into_value(data.clone()))?;
                 map.insert_nested(&i, to_insert, i_span)?;
                 Ok(())
             }
@@ -1558,7 +1560,8 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
                 Ok(())
             }
             Value::List(list) => {
-                let to_push = to_push.into_value(data.clone()).await?;
+                let to_push = await_result!(to_push.into_value(data.clone()))?;
+                dbg!(&to_push);
                 list.push(to_push);
                 Ok(())
             }
@@ -1642,13 +1645,9 @@ pub async fn slice_replace(
     }
 
     let (from, to) = (
-        std::mem::take(&mut range[0])
-            .to_usize(data.clone())
-            .await
+        await_result!(std::mem::take(&mut range[0]).to_usize(data.clone()))
             .span_err(command.span)?,
-        std::mem::take(&mut range[1])
-            .to_usize(data.clone())
-            .await
+        await_result!(std::mem::take(&mut range[1]).to_usize(data.clone()))
             .span_err(command.span)?,
     );
 
@@ -1933,7 +1932,7 @@ pub const IS_NONE: &str = "is_none";
 pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let value = args.pop_front().unwrap().as_raw(data.clone()).await?;
+    let value = await_result!(args.pop_front().unwrap().as_raw(data.clone()))?;
     Ok(Value::Bool(value.is_type(FslType::None)))
 }
 
@@ -2205,13 +2204,13 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         let arg = args.pop_front().unwrap();
         let arg_span = arg.span;
         let parameter = parameter_labels.pop_front().unwrap();
-        let value = arg.into_value(data.clone()).await?;
+        let value = await_result!(arg.into_value(data.clone()))?;
         match value {
             Value::Var(var) => {
                 aliases.insert(parameter, var);
             }
             _ => {
-                let value = value.as_raw(data.clone()).await.span_err(arg_span)?;
+                let value = await_result!(value.as_raw(data.clone())).span_err(arg_span)?;
                 data.vars
                     .write()
                     .await
@@ -2355,7 +2354,7 @@ pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Va
 
     match return_value {
         Some(arg) => {
-            let arg = arg.as_raw(data.clone()).await?;
+            let arg = await_result!(arg.as_raw(data.clone()))?;
             data.set_return_flag(true);
             Ok(arg)
         }
