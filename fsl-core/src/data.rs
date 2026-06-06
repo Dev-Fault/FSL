@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -16,11 +16,113 @@ use crate::{
     error::RuntimeError,
     source_str::SourceStr,
     span::Span,
-    types::{command::UserDef, value::Value},
+    types::{
+        command::{Command, UserDef},
+        value::Value,
+    },
     vars::{DEFAULT_MEMORY_LIMIT, VarStore},
 };
 
 pub type UserDefinitions = HashMap<SourceStr, Arc<UserDef>>;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct DefinitionKey {
+    pub parent: SourceStr,
+    pub label: SourceStr,
+}
+
+impl DefinitionKey {
+    pub fn new(parent: SourceStr, label: SourceStr) -> Self {
+        Self { parent, label }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserDeclaration {
+    pub label: SourceStr,
+    pub definition: Option<UserDefintion>,
+}
+
+impl UserDeclaration {
+    pub fn new(label: SourceStr) -> Self {
+        Self {
+            label,
+            definition: None,
+        }
+    }
+
+    pub fn define(&mut self, definition: UserDefintion) {
+        self.definition = Some(definition);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserDefintion {
+    pub parameters: VecDeque<SourceStr>,
+    pub commands: Vec<Command>,
+}
+
+impl UserDefintion {
+    pub fn new(parameters: VecDeque<SourceStr>, commands: Vec<Command>) -> Self {
+        Self {
+            parameters,
+            commands,
+        }
+    }
+}
+
+pub type UserDefinitionStore = HashMap<DefinitionKey, UserDeclaration>;
+
+pub trait DefinitionFinder {
+    fn find_def(&self, label: &SourceStr, call_stack: &Vec<SourceStr>) -> Option<UserDeclaration>;
+    fn with_mut_def(
+        &mut self,
+        label: &SourceStr,
+        call_stack: &Vec<SourceStr>,
+        f: impl FnOnce(&mut UserDeclaration),
+    ) -> Result<(), RuntimeError>;
+}
+
+impl DefinitionFinder for UserDefinitionStore {
+    fn with_mut_def(
+        &mut self,
+        label: &SourceStr,
+        call_stack: &Vec<SourceStr>,
+        f: impl FnOnce(&mut UserDeclaration),
+    ) -> Result<(), RuntimeError> {
+        let key = DefinitionKey::new(SourceStr::Static(""), label.clone());
+
+        if let Some(decl) = self.get_mut(&key) {
+            f(decl);
+            return Ok(());
+        }
+
+        for call in call_stack.iter().rev() {
+            let key = DefinitionKey::new(call.clone(), label.clone());
+            if let Some(decl) = self.get_mut(&key) {
+                f(decl);
+                return Ok(());
+            }
+        }
+        return Err(RuntimeError::ValueDef);
+    }
+
+    fn find_def(&self, label: &SourceStr, call_stack: &Vec<SourceStr>) -> Option<UserDeclaration> {
+        let key = DefinitionKey::new(SourceStr::Static(""), label.clone());
+
+        if let Some(decl) = self.get(&key) {
+            return Some(decl.clone());
+        }
+
+        for call in call_stack.iter().rev() {
+            let key = DefinitionKey::new(call.clone(), label.clone());
+            if let Some(decl) = self.get(&key) {
+                return Some(decl.clone());
+            }
+        }
+        None
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct MemoryLimit {
@@ -123,12 +225,12 @@ impl InterpreterLimits {
 
 #[derive(Debug, Default)]
 pub struct ExecutionContext {
-    pub def_stack: RwLock<Vec<SourceStr>>,
+    pub def_stack: std::sync::Mutex<Vec<SourceStr>>,
     pub flags: InterpreterFlags,
     pub loop_depth: AtomicUsize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct InterpreterData {
     pub(crate) source: Bytes,
     pub(crate) user_defs: Arc<Mutex<UserDefinitions>>,
@@ -139,6 +241,7 @@ pub struct InterpreterData {
     pub limits: InterpreterLimits,
 
     pub vars: Arc<RwLock<VarStore>>,
+    pub def_store: Arc<std::sync::Mutex<UserDefinitionStore>>,
 
     pub ctx: Arc<ExecutionContext>,
 }
@@ -185,6 +288,7 @@ impl InterpreterData {
             total_loops: self.total_loops.clone(),
             output: self.output.clone(),
             vars: Arc::new(RwLock::new(self.vars.read().await.clone())),
+            def_store: self.def_store.clone(),
             ctx: Arc::new(ExecutionContext::default()),
         }
         .into()
@@ -219,58 +323,71 @@ impl InterpreterData {
         }
     }
 
-    pub async fn push_def(&self, def: SourceStr) {
-        self.ctx.def_stack.write().await.push(def);
+    pub fn push_def(&self, def: SourceStr) {
+        self.ctx.def_stack.lock().unwrap().push(def);
     }
 
-    pub async fn pop_def(&self) {
-        self.ctx.def_stack.write().await.pop();
+    pub fn pop_def(&self) {
+        self.ctx.def_stack.lock().unwrap().pop();
     }
 
-    pub async fn inc_loop_depth(&self) {
+    pub fn inc_loop_depth(&self) {
         self.ctx.loop_depth.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub async fn dec_loop_depth(&self) {
+    pub fn dec_loop_depth(&self) {
         self.ctx.loop_depth.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub async fn loop_depth(&self) -> usize {
+    pub fn loop_depth(&self) -> usize {
         self.ctx.loop_depth.load(Ordering::Relaxed)
     }
 
-    pub async fn get_return_flag(&self) -> bool {
+    pub fn get_return_flag(&self) -> bool {
         self.ctx.flags.return_flag.load(Ordering::Relaxed)
     }
 
-    pub async fn set_return_flag(&self, value: bool) {
+    pub fn set_return_flag(&self, value: bool) {
         self.ctx.flags.return_flag.store(value, Ordering::Relaxed);
     }
 
-    pub async fn get_continue_flag(&self) -> bool {
+    pub fn get_continue_flag(&self) -> bool {
         self.ctx.flags.continue_flag.load(Ordering::Relaxed)
     }
 
-    pub async fn set_continue_flag(&self, value: bool) {
+    pub fn set_continue_flag(&self, value: bool) {
         self.ctx.flags.continue_flag.store(value, Ordering::Relaxed);
     }
 
-    pub async fn get_break_flag(&self) -> bool {
+    pub fn get_break_flag(&self) -> bool {
         self.ctx.flags.break_flag.load(Ordering::Relaxed)
     }
 
-    pub async fn set_break_flag(&self, value: bool) {
+    pub fn set_break_flag(&self, value: bool) {
         self.ctx.flags.break_flag.store(value, Ordering::Relaxed);
     }
 
-    pub async fn should_execute(&self) -> bool {
+    pub fn should_execute(&self) -> bool {
         self.ctx.flags.return_flag.load(Ordering::Relaxed)
             || self.ctx.flags.continue_flag.load(Ordering::Relaxed)
             || self.ctx.flags.break_flag.load(Ordering::Relaxed)
     }
 
+    pub fn find_def(&self, label: &SourceStr) -> Option<UserDeclaration> {
+        let def_store = self.def_store.lock().unwrap();
+        if let Some(decl) = def_store.get(&DefinitionKey::new(SourceStr::Static(""), label.clone()))
+        {
+            return Some(decl.clone());
+        }
+        let call_stack = self.ctx.def_stack.lock().unwrap();
+        dbg!(&self.def_store);
+        dbg!(&call_stack);
+        def_store.find_def(label, &call_stack)
+    }
+
+    /*
     pub async fn find_user_def(&self, label: &SourceStr) -> Option<Arc<UserDef>> {
-        let def_stack = self.ctx.def_stack.read().await;
+        let def_stack = self.ctx.def_stack.lock().unwrap();
         let root = self.user_defs.clone();
 
         let mut levels = vec![root.clone()];
@@ -278,12 +395,14 @@ impl InterpreterData {
 
         for call in def_stack.iter() {
             let defs;
-            match current.lock().await.get(call) {
+            let current_lock = current.lock().unwrap();
+            match current_lock.get(call) {
                 Some(def) => {
                     defs = Some(def.local_defs.clone());
                 }
                 None => break,
             }
+            drop(current_lock);
             if let Some(defs) = defs {
                 current = defs.clone();
                 levels.push(defs);
@@ -291,10 +410,11 @@ impl InterpreterData {
         }
 
         for level in levels.iter().rev() {
-            if let Some(def) = level.lock().await.get(label).cloned() {
+            if let Some(def) = level.lock().unwrap().get(label).cloned() {
                 return Some(def);
             }
         }
         None
     }
+    */
 }

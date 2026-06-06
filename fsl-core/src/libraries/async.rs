@@ -1,21 +1,21 @@
 use std::sync::Arc;
 
+use futures::future::join_all;
+
 use crate::{
     FslInterpreter,
     data::InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    register_command,
+    execute_command,
     types::{
         command::{Command, CommandSignature, ExpectedArgs},
         value::Value,
     },
 };
 
-use futures::future::join_all;
-
 pub fn register_async(interpreter: &mut FslInterpreter) {
-    register_command!(interpreter, JOIN, JOIN_RULES, join);
-    register_command!(interpreter, YIELD, YIELD_RULES, r#yield);
+    crate::register_async!(interpreter, JOIN, JOIN_RULES, join);
+    crate::register_async!(interpreter, YIELD, YIELD_RULES, r#yield);
 }
 
 pub const JOIN_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(1));
@@ -32,7 +32,9 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut executors = Vec::new();
     for command in commands {
         let data = data.fork().await;
-        let future = tokio::spawn(command.execute(data.clone()));
+        let future = tokio::spawn(Box::pin(
+            async move { execute_command!(command, data.clone()) },
+        ));
         executors.push(future);
     }
 
@@ -61,7 +63,7 @@ pub async fn r#yield(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut args = command.take_args();
     let command = args.pop_front().unwrap().to_command(data.clone()).await?;
     tokio::task::yield_now().await;
-    let result = command.execute(data).await?;
+    let result = execute_command!(command, data.clone())?;
 
     Ok(result)
 }

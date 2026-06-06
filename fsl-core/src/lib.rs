@@ -9,8 +9,14 @@ use async_recursion::async_recursion;
 use futures::FutureExt;
 
 use crate::{
-    data::{InterpreterData, UserDefinitions},
-    error::{InterpreterError, RuntimeError, SpanError, SpanToInterpreterError, ToSpannedError},
+    data::{
+        DefinitionFinder, DefinitionKey, InterpreterData, UserDeclaration, UserDefinitionStore,
+        UserDefinitions, UserDefintion,
+    },
+    error::{
+        InterpreterError, RuntimeError, SpanError, SpanToInterpreterError, SpannedError,
+        ToSpannedError,
+    },
     libraries::{
         Library,
         r#async::register_async,
@@ -95,7 +101,7 @@ macro_rules! register_commands {
 /// });
 /// ```
 #[macro_export]
-macro_rules! register_command {
+macro_rules! register_async {
     ($self:expr, $label:expr, $rules:expr, $executor:path) => {
         $self.register(
             $label,
@@ -117,13 +123,31 @@ macro_rules! register_command {
 }
 
 #[macro_export]
+macro_rules! register_sync {
+    ($self:expr, $label:expr, $rules:expr, $executor:path) => {
+        $self.register(
+            $label,
+            $rules,
+            crate::types::command::Handler::SyncStatic($executor),
+        );
+    };
+    ($self:expr, $label:expr, $rules:expr, |$cmd:ident, $dat:ident| $body:block) => {
+        $self.register(
+            $label,
+            $rules,
+            crate::types::command::Handler::Dynamic(Arc::new(move |$cmd, $dat| $body)),
+        );
+    };
+}
+
+#[macro_export]
 macro_rules! fsl {
     ($code:literal) => {{
         // 1. Stringify the Rust tokens into a raw string slice at compile time
         let code = $code;
 
         let mut interpreter = FslInterpreter::new();
-        interpreter.register_all_libraries()
+        interpreter.register_all_libraries();
         interpreter
             .interpret(code.to_string(), InterpreterData::default())
             .await
@@ -175,12 +199,13 @@ impl FslInterpreter {
         let mut data = data;
         data.set_source(input);
         let data = Arc::new(data);
-        Self::execute_expressions(
+        let result = Self::execute_expressions(
             data.clone(),
             self.command_definitions.clone(),
             data.source_str(),
         )
-        .await
+        .await;
+        result
     }
 
     /// Recursively interprets code inside {}'s
@@ -260,12 +285,34 @@ impl FslInterpreter {
             if let Some(label) = expression.args.first() {
                 let label = SourceStr::Borrowed(data.source.slice(Span::from(&label.token)));
                 let def = Arc::new(UserDef::declaration(label.clone()));
+
+                {
+                    let defs = data.ctx.def_stack.lock().unwrap();
+                    match defs.last() {
+                        Some(parent) => {
+                            data.def_store.lock().unwrap().insert(
+                                DefinitionKey::new(parent.clone(), label.clone()),
+                                UserDeclaration::new(label.clone()),
+                            );
+                        }
+                        None => {
+                            data.def_store.lock().unwrap().insert(
+                                DefinitionKey::new(SourceStr::Static(""), label.clone()),
+                                UserDeclaration::new(label.clone()),
+                            );
+                        }
+                    }
+                }
+
+                data.ctx.def_stack.lock().unwrap().push(label.clone());
+
                 for arg in &expression.args {
                     if let ArgKind::Expression(inner) = &arg.kind {
                         let mut user_defs = def.local_defs.lock().await;
                         Self::forward_declare_defs(inner, &mut user_defs, data.clone()).await;
                     }
                 }
+                data.ctx.def_stack.lock().unwrap().pop();
                 user_defs.insert(label, def);
             }
         } else {
@@ -296,7 +343,7 @@ impl FslInterpreter {
                         .into_interpreter_error(data.clone()));
                     }
                 };
-                let mut def_stack = data.ctx.def_stack.write().await;
+                let mut def_stack = data.ctx.def_stack.lock().unwrap();
                 def_stack.push(def_label);
             }
         }
@@ -307,8 +354,62 @@ impl FslInterpreter {
         }
         if expression.name.as_str() == DEF {
             // TODO attempt to optimize expression.clone()
-            Self::interpret_command(data.clone(), &defs, expression.clone()).await?;
+            // Self::interpret_command(data.clone(), &defs, expression.clone()).await?;
+
+            let result = Self::process_expression(data.clone(), defs, expression.clone()).await;
+            if let Ok(Value::Command(def)) = result {
+                let _ = Self::define_def(*def, data.clone())
+                    .await
+                    .into_interpreter_error(data.clone())?;
+            }
         }
+        Ok(())
+    }
+
+    async fn define_def(def: Command, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
+        let mut def = def;
+        let mut args = def.take_args();
+        let mut label = args.pop_front().unwrap();
+        let label_span = label.span;
+        let label = label.as_var_label(data.clone()).await?;
+        let mut parameters: VecDeque<SourceStr> = VecDeque::new();
+        let mut commands: Vec<Command> = Vec::new();
+
+        let mut encountered_command = false;
+        for (i, mut arg) in args.into_iter().enumerate() {
+            let span = arg.span;
+            let kind = arg.to_type(data.clone()).await?;
+            match arg.into_value(data.clone()).await? {
+                Value::Var(label) => {
+                    if encountered_command {
+                        return Err(RuntimeError::ParametersOutOfOrder.span(def.span));
+                    }
+                    parameters.push_back(label);
+                }
+                Value::Command(command) => {
+                    encountered_command = true;
+                    commands.push(*command);
+                }
+                _ => {
+                    return Err(RuntimeError::WrongArgType {
+                        command_label: def.label().to_string(),
+                        arg_number: i,
+                        fsl_type: kind,
+                        expected: &[FslType::Var, FslType::Command],
+                    }
+                    .span(span));
+                }
+            }
+        }
+
+        let call_stack = data.ctx.def_stack.lock().unwrap();
+        data.def_store
+            .lock()
+            .unwrap()
+            .with_mut_def(&label, &call_stack, |decl| {
+                decl.define(UserDefintion::new(parameters, commands));
+            })
+            .span_err(label_span)?;
         Ok(())
     }
 
@@ -322,13 +423,16 @@ impl FslInterpreter {
         for expression in expressions.all() {
             let mut user_commands = data.user_defs.lock().await;
             Self::forward_declare_defs(expression, &mut user_commands, data.clone()).await;
+            data.ctx.def_stack.lock().unwrap().clear();
         }
 
         for expression in expressions.all() {
             Self::execute_def(data.clone(), &defs, expression).await?;
-            let mut def_stack = data.ctx.def_stack.write().await;
+            let mut def_stack = data.ctx.def_stack.lock().unwrap();
             def_stack.clear();
         }
+
+        dbg!(&data.def_store);
 
         for expression in expressions.unfiltered {
             let result = Self::interpret_command(data.clone(), &defs, expression).await;
@@ -352,7 +456,7 @@ impl FslInterpreter {
         let result = Self::process_expression(data.clone(), defs, expression).await;
         match result {
             Ok(value) => match value {
-                Value::Command(command) => match command.execute(data.clone()).await {
+                Value::Command(command) => match execute_command!(command, data.clone()) {
                     Ok(_) => Ok(()),
                     Err(e) if e.exited_program() => Err(InterpreterError::Exit),
                     Err(e) => Err(e.into_interpreter_error(data.clone())),
@@ -385,9 +489,8 @@ impl FslInterpreter {
 
             Ok(Value::from_command(command))
         } else {
-            let user_def = data
-                .find_user_def(&SourceStr::from_token(expression.name, data.source.clone()))
-                .await;
+            let user_def =
+                data.find_def(&SourceStr::from_token(expression.name, data.source.clone()));
 
             if let Some(def) = user_def {
                 let mut command = Command::new(
@@ -2247,6 +2350,76 @@ mod interpreter {
             "66",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn deeply_nested_def() {
+        assert_fsl!(
+            r#"
+                 d1.def(
+                     d2()
+                     d2.def(
+                         d3()
+                         d3.def(
+                             d4_2()
+                             d4.def(
+                                 d5.def(
+                                     d6()
+                                     d6.def(
+                                         print("d6")
+                                     )
+                                     d6_2.def(
+                                         no_op()
+                                     )
+                                 )
+                                 d5()
+                                 d5_2.def(
+                                     no_op()
+                                 )
+                             )
+                             d4_2.def(
+                                 d4()
+                                 no_op()
+                             )
+                         )
+                         d3_2.def(
+                             no_op()
+                         )
+                     )
+                 )                   
+                 d1()
+
+                 *
+                 2_d1.def(
+                     2_d2.def(
+                         2_d3.def(
+                             2_d4.def(
+                                 2_d5.def(
+                                     2_d6.def(
+                                         no_op()
+                                     )
+                                     2_d6_2.def(
+                                         no_op()
+                                     )
+                                 )
+                                 2_d5_2.def(
+                                     no_op()
+                                 )
+                             )
+                             2_d4_2.def(
+                                 2_d4()
+                                 no_op()
+                             )
+                         )
+                         2_d3_2.def(
+                             no_op()
+                         )
+                     )
+                 )                   
+                 *
+            "#,
+            "d6"
+        )
     }
 
     #[tokio::test]

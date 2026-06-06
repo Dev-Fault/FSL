@@ -4,7 +4,7 @@ use crate::{
     FslInterpreter,
     data::InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    register_command,
+    register_async,
     types::{
         command::{Command, CommandSignature},
         value::Value,
@@ -12,8 +12,8 @@ use crate::{
 };
 
 pub fn register_io(interpreter: &mut FslInterpreter) {
-    register_command!(interpreter, SAY, SAY_RULES, say);
-    register_command!(interpreter, ASK, ASK_RULES, ask);
+    register_async!(interpreter, SAY, SAY_RULES, say);
+    register_async!(interpreter, ASK, ASK_RULES, ask);
 }
 
 pub const SAY_RULES: &CommandSignature = &CommandSignature::AnyArgs;

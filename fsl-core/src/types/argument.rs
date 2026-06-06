@@ -6,6 +6,7 @@ use futures::future::Either;
 use crate::{
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
+    execute_command,
     source_str::SourceStr,
     span::Span,
     types::{FslType, command::Command, list::List, map::Map, value::Value},
@@ -435,11 +436,8 @@ impl Accessor {
             }
             FslType::Command => {
                 let value = std::mem::take(&mut self.root.value);
-                let value = value
-                    .to_command(data.clone())
-                    .span_err(self.root.span)?
-                    .execute(data.clone())
-                    .await?;
+                let command = value.to_command(data.clone()).span_err(self.root.span)?;
+                let value = execute_command!(command, data.clone())?;
                 self.root.value = value;
                 self.to_indexer(self.root.span, data).await
             }
@@ -465,11 +463,8 @@ impl Accessor {
             FslType::Map => Ok(Self::resolve_segments(self, FslType::Map, data).await?),
             FslType::Command => {
                 let value = std::mem::take(&mut self.root.value);
-                let value = value
-                    .to_command(data.clone())
-                    .span_err(self.root.span)?
-                    .execute(data.clone())
-                    .await?;
+                let command = value.to_command(data.clone()).span_err(self.root.span)?;
+                let value = execute_command!(command, data.clone())?;
                 self.root.value = value;
                 self.to_indexer(span, data).await
             }
@@ -608,11 +603,8 @@ impl Argument {
     {
         if let ArgumentKind::Value(Value::Command(_)) = &mut self.kind {
             let value = self.take_value();
-            let value = value
-                .to_command(data.clone())
-                .span_err(self.span)?
-                .execute(data.clone())
-                .await?;
+            let command = value.to_command(data.clone()).span_err(self.span)?;
+            let value = execute_command!(command, data.clone())?;
             self.kind = ArgumentKind::Value(value);
         }
         self.kind.with_inner(self.span, data.clone(), f).await
@@ -628,7 +620,7 @@ impl Argument {
     {
         let mut kind = std::mem::take(&mut self.kind);
         if let ArgumentKind::Value(Value::Command(command)) = kind {
-            let value = command.execute(data.clone()).await?;
+            let value = execute_command!(command, data.clone())?;
             kind = ArgumentKind::Value(value);
         }
         self.kind = kind;

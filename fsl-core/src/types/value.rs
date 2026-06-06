@@ -6,6 +6,7 @@ use futures::future::Either;
 use crate::{
     InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
+    execute_command,
     source_str::SourceStr,
     span::Span,
     types::{
@@ -263,11 +264,8 @@ impl Value {
                     value.to_int(data.clone()).await
                 }
                 Value::Command(command) => {
-                    command
-                        .execute(data.clone())
-                        .await?
-                        .to_int(data.clone())
-                        .await
+                    let result = execute_command!(command, data.clone())?;
+                    result.to_int(data.clone()).await
                 }
                 _ => unreachable!(),
             }
@@ -316,11 +314,8 @@ impl Value {
                     value.to_float(data.clone()).await
                 }
                 Value::Command(command) => {
-                    command
-                        .execute(data.clone())
-                        .await?
-                        .to_float(data.clone())
-                        .await
+                    let result = execute_command!(command, data.clone())?;
+                    result.to_float(data.clone()).await
                 }
                 _ => unreachable!(),
             }
@@ -355,11 +350,8 @@ impl Value {
                     value.to_bool(data.clone()).await
                 }
                 Value::Command(command) => {
-                    command
-                        .execute(data.clone())
-                        .await?
-                        .to_bool(data.clone())
-                        .await
+                    let result = execute_command!(command, data.clone())?;
+                    result.to_bool(data.clone()).await
                 }
                 _ => unreachable!(),
             }
@@ -381,11 +373,8 @@ impl Value {
             | Value::None => Either::Left(ready(Err(self.conversion_err_to_type(to_type).into()))),
             Value::Var(label) => Either::Left(ready(Ok(label))),
             Value::Command(command) => Either::Right(Box::pin(async move {
-                command
-                    .execute(data.clone())
-                    .await?
-                    .to_var(data.clone())
-                    .await
+                let result = execute_command!(command, data.clone())?;
+                result.to_var(data.clone()).await
             })),
         }
     }
@@ -430,11 +419,8 @@ impl Value {
                     value.to_text(data.clone()).await
                 }
                 Value::Command(command) => {
-                    command
-                        .execute(data.clone())
-                        .await?
-                        .to_text(data.clone())
-                        .await
+                    let result = execute_command!(command, data.clone())?;
+                    result.to_text(data.clone()).await
                 }
                 _ => unreachable!(),
             }
@@ -460,11 +446,8 @@ impl Value {
                     value.to_list(data.clone()).await
                 }
                 Value::Command(command) => {
-                    command
-                        .execute(data.clone())
-                        .await?
-                        .to_list(data.clone())
-                        .await
+                    let result = execute_command!(command, data.clone())?;
+                    result.to_list(data.clone()).await
                 }
             }
         })
@@ -489,11 +472,8 @@ impl Value {
                     value.to_map(data.clone()).await
                 }
                 Value::Command(command) => {
-                    command
-                        .execute(data.clone())
-                        .await?
-                        .to_map(data.clone())
-                        .await
+                    let result = execute_command!(command, data.clone())?;
+                    result.to_map(data.clone()).await
                 }
             }
         })
@@ -536,11 +516,8 @@ impl Value {
                     value.to_number(data.clone()).await
                 }
                 Value::Command(command) => {
-                    command
-                        .execute(data.clone())
-                        .await?
-                        .to_number(data.clone())
-                        .await
+                    let result = execute_command!(command, data.clone())?;
+                    result.to_number(data.clone()).await
                 }
                 _ => unreachable!(),
             }
@@ -568,8 +545,8 @@ impl Value {
                     var.as_raw(data.clone()).await?
                 }
                 Value::Command(command) => {
-                    let result = command.execute(data.clone()).await?;
-                    result.as_raw(data.clone()).await?
+                    let result = execute_command!(command, data.clone())?;
+                    result.as_raw_checked(valid_types, data.clone()).await?
                 }
                 Value::None => self,
             };
@@ -599,7 +576,7 @@ impl Value {
                     var.as_raw(data.clone()).await?
                 }
                 Value::Command(command) => {
-                    let result = command.execute(data.clone()).await?;
+                    let result = execute_command!(command, data.clone())?;
                     result.as_raw(data.clone()).await?
                 }
                 Value::None => self,

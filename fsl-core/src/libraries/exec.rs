@@ -6,7 +6,7 @@ use crate::{
     FslInterpreter,
     data::InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    register_command,
+    register_async,
     source_str::SourceStr,
     types::{
         command::{Command, CommandSignature, ExpectedArgs},
@@ -15,8 +15,8 @@ use crate::{
 };
 
 pub fn register_exec(interpreter: &mut FslInterpreter) {
-    register_command!(interpreter, EXEC, EXEC_RULES, exec);
-    register_command!(interpreter, SH, SH_RULES, sh);
+    register_async!(interpreter, EXEC, EXEC_RULES, exec);
+    register_async!(interpreter, SH, SH_RULES, sh);
 }
 
 pub const EXEC_RULES: &CommandSignature = &CommandSignature::AnyArgs;

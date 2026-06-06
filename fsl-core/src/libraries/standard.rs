@@ -9,14 +9,15 @@ use tokio_stream::StreamExt;
 
 use crate::{
     FslInterpreter, InterpreterData,
+    data::UserDeclaration,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
-    register_command,
+    execute_command, register_async, register_sync,
     source_str::SourceStr,
     span::Span,
     types::{
         ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, NO_ARGS, NOT_NONE, NUMBER,
         argument::Argument,
-        command::{ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs},
+        command::{ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs, Handler},
         list::List,
         map::FslMap,
         value::Value,
@@ -24,113 +25,152 @@ use crate::{
     vars::Var,
 };
 
+pub const F_ADD: &str = "f_add";
+pub fn f_add(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let mut args = command.take_args();
+    let mut int: i64 = 0;
+    let mut float: f64 = 0.0;
+    let mut is_float: bool = false;
+    for arg in &mut args {
+        let value = arg.take_value();
+        match value {
+            Value::Int(i) => {
+                int = int
+                    .checked_add(i)
+                    .ok_or(RuntimeError::Overflow)
+                    .span_err(arg.span)?;
+            }
+            Value::Float(f) => {
+                float += f;
+                is_float = true;
+            }
+            Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(arg.span)? {
+                Value::Int(i) => int += i,
+                Value::Float(f) => {
+                    float += f;
+                    is_float = true
+                }
+                _ => unreachable!("parse number only returns int, float"),
+            },
+            _ => return Err(value.conversion_err(NUMBER).span(arg.span)),
+        }
+    }
+    if is_float {
+        Ok(Value::Float((int as f64) + float))
+    } else {
+        Ok(Value::Int(int))
+    }
+}
+
 pub fn register_std(interpreter: &mut FslInterpreter) {
-    register_command!(interpreter, ADD, MATH_RULES, add);
-    register_command!(interpreter, SUB, MATH_RULES, sub);
-    register_command!(interpreter, MUL, MATH_RULES, mul);
-    register_command!(interpreter, DIV, MATH_RULES, div);
-    register_command!(interpreter, MODULUS, MATH_RULES, modulus);
-    register_command!(interpreter, CLAMP, CLAMP_RULES, clamp);
-    register_command!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
-    register_command!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
-    register_command!(interpreter, PRECISION, PRECISION_RULES, precision);
-    register_command!(interpreter, STORE, STORE_RULES, store);
-    register_command!(interpreter, ASSIGN, ASSIGN_RULES, assign);
-    register_command!(interpreter, CONST, CONST_RULES, r#const);
-    register_command!(interpreter, LOCAL, LOCAL_RULES, local);
-    register_command!(interpreter, UPDATE, UPDATE_RULES, update);
-    register_command!(interpreter, GET, GET_RULES, get);
-    register_command!(interpreter, SET, SET_RULES, set);
-    register_command!(interpreter, CLONE, CLONE_RULES, clone);
-    register_command!(interpreter, TAKE, TAKE_RULES, take);
-    register_command!(interpreter, PRINT, PRINT_RULES, print);
-    register_command!(interpreter, ARGS, ARGS_RULES, args);
-    register_command!(interpreter, DEBUG, DEBUG_RULES, debug);
-    register_command!(interpreter, SCOPE, SCOPE_RULES, scope);
-    register_command!(interpreter, NO_OP, NO_OP_RULES, no_op);
-    register_command!(interpreter, EQ, EQ_RULES, eq);
-    register_command!(interpreter, GT, GT_RULES, gt);
-    register_command!(interpreter, GTOE, GTOE_RULES, gtoe);
-    register_command!(interpreter, LT, LT_RULES, lt);
-    register_command!(interpreter, LTOE, LTOE_RULES, ltoe);
-    register_command!(interpreter, NOT, NOT_RULES, not);
-    register_command!(interpreter, AND, AND_RULES, and);
-    register_command!(interpreter, OR, OR_RULES, or);
-    register_command!(interpreter, IF, IF_RULES, r#if);
-    register_command!(interpreter, THEN, BLOCK_RULES, block);
-    register_command!(interpreter, ELSE_IF, BLOCK_RULES, block);
-    register_command!(interpreter, ELSE, BLOCK_RULES, block);
-    register_command!(interpreter, SWITCH, SWITCH_RULES, switch);
-    register_command!(interpreter, CASE, BLOCK_RULES, block);
-    register_command!(interpreter, FALLBACK, BLOCK_RULES, block);
-    register_command!(interpreter, WHILE_LOOP, WHILE_RULES, while_command);
-    register_command!(interpreter, REPEAT, REPEAT_RULES, repeat);
-    register_command!(interpreter, FOR_EACH, FOR_EACH_RULES, for_each);
-    register_command!(interpreter, INDEX, INDEX_RULES, index);
-    register_command!(interpreter, LENGTH, LENGTH_RULES, length);
-    register_command!(interpreter, SWAP, SWAP_RULES, swap);
-    register_command!(interpreter, INSERT, INSERT_RULES, insert);
-    register_command!(interpreter, REMOVE, REMOVE_RULES, remove);
-    register_command!(interpreter, PUSH, PUSH_RULES, push);
-    register_command!(interpreter, POP, POP_RULES, pop);
-    register_command!(interpreter, REPLACE, REPLACE_RULES, replace);
-    register_command!(
+    register_sync!(interpreter, F_ADD, MATH_RULES, f_add);
+    register_sync!(interpreter, NO_OP, NO_OP_RULES, no_op);
+    register_async!(interpreter, ADD, MATH_RULES, add);
+    register_async!(interpreter, SUB, MATH_RULES, sub);
+    register_async!(interpreter, MUL, MATH_RULES, mul);
+    register_async!(interpreter, DIV, MATH_RULES, div);
+    register_async!(interpreter, MODULUS, MATH_RULES, modulus);
+    register_async!(interpreter, CLAMP, CLAMP_RULES, clamp);
+    register_async!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
+    register_async!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
+    register_async!(interpreter, PRECISION, PRECISION_RULES, precision);
+    register_async!(interpreter, STORE, STORE_RULES, store);
+    register_async!(interpreter, ASSIGN, ASSIGN_RULES, assign);
+    register_async!(interpreter, CONST, CONST_RULES, r#const);
+    register_async!(interpreter, LOCAL, LOCAL_RULES, local);
+    register_async!(interpreter, UPDATE, UPDATE_RULES, update);
+    register_async!(interpreter, GET, GET_RULES, get);
+    register_async!(interpreter, SET, SET_RULES, set);
+    register_async!(interpreter, CLONE, CLONE_RULES, clone);
+    register_async!(interpreter, TAKE, TAKE_RULES, take);
+    register_async!(interpreter, PRINT, PRINT_RULES, print);
+    register_async!(interpreter, ARGS, ARGS_RULES, args);
+    register_async!(interpreter, DEBUG, DEBUG_RULES, debug);
+    register_async!(interpreter, SCOPE, SCOPE_RULES, scope);
+    register_async!(interpreter, EQ, EQ_RULES, eq);
+    register_async!(interpreter, GT, GT_RULES, gt);
+    register_async!(interpreter, GTOE, GTOE_RULES, gtoe);
+    register_async!(interpreter, LT, LT_RULES, lt);
+    register_async!(interpreter, LTOE, LTOE_RULES, ltoe);
+    register_async!(interpreter, NOT, NOT_RULES, not);
+    register_async!(interpreter, AND, AND_RULES, and);
+    register_async!(interpreter, OR, OR_RULES, or);
+    register_async!(interpreter, IF, IF_RULES, r#if);
+    register_async!(interpreter, THEN, BLOCK_RULES, block);
+    register_async!(interpreter, ELSE_IF, BLOCK_RULES, block);
+    register_async!(interpreter, ELSE, BLOCK_RULES, block);
+    register_async!(interpreter, SWITCH, SWITCH_RULES, switch);
+    register_async!(interpreter, CASE, BLOCK_RULES, block);
+    register_async!(interpreter, FALLBACK, BLOCK_RULES, block);
+    register_async!(interpreter, WHILE_LOOP, WHILE_RULES, while_command);
+    register_async!(interpreter, REPEAT, REPEAT_RULES, repeat);
+    register_async!(interpreter, FOR_EACH, FOR_EACH_RULES, for_each);
+    register_async!(interpreter, INDEX, INDEX_RULES, index);
+    register_async!(interpreter, LENGTH, LENGTH_RULES, length);
+    register_async!(interpreter, SWAP, SWAP_RULES, swap);
+    register_async!(interpreter, INSERT, INSERT_RULES, insert);
+    register_async!(interpreter, REMOVE, REMOVE_RULES, remove);
+    register_async!(interpreter, PUSH, PUSH_RULES, push);
+    register_async!(interpreter, POP, POP_RULES, pop);
+    register_async!(interpreter, REPLACE, REPLACE_RULES, replace);
+    register_async!(
         interpreter,
         SLICE_REPLACE,
         SLICE_REPLACE_RULES,
         slice_replace
     );
-    register_command!(
+    register_async!(
         interpreter,
         SEARCH_REPLACE,
         SEARCH_REPLACE_RULES,
         search_replace
     );
-    register_command!(interpreter, REVERSE, REVERSE_RULES, reverse);
-    register_command!(interpreter, INC, INC_RULES, inc);
-    register_command!(interpreter, DEC, DEC_RULES, dec);
-    register_command!(interpreter, CONTAINS, CONTAINS_RULES, contains);
-    register_command!(interpreter, STARTS_WITH, STARTS_WITH_RULES, starts_with);
-    register_command!(interpreter, ENDS_WITH, ENDS_WITH_RULES, ends_with);
-    register_command!(interpreter, CONCAT, CONCAT_RULES, concat);
-    register_command!(interpreter, PREPEND, PREPEND_RULES, prepend);
-    register_command!(interpreter, CAPITALIZE, CAPITALIZE_RULES, capitalize);
-    register_command!(interpreter, UPPERCASE, UPPERCASE_RULES, uppercase);
-    register_command!(interpreter, LOWERCASE, LOWERCASE_RULES, lowercase);
-    register_command!(interpreter, TRIM, TRIM_RULES, trim);
-    register_command!(
+    register_async!(interpreter, REVERSE, REVERSE_RULES, reverse);
+    register_async!(interpreter, INC, INC_RULES, inc);
+    register_async!(interpreter, DEC, DEC_RULES, dec);
+    register_async!(interpreter, CONTAINS, CONTAINS_RULES, contains);
+    register_async!(interpreter, STARTS_WITH, STARTS_WITH_RULES, starts_with);
+    register_async!(interpreter, ENDS_WITH, ENDS_WITH_RULES, ends_with);
+    register_async!(interpreter, CONCAT, CONCAT_RULES, concat);
+    register_async!(interpreter, PREPEND, PREPEND_RULES, prepend);
+    register_async!(interpreter, CAPITALIZE, CAPITALIZE_RULES, capitalize);
+    register_async!(interpreter, UPPERCASE, UPPERCASE_RULES, uppercase);
+    register_async!(interpreter, LOWERCASE, LOWERCASE_RULES, lowercase);
+    register_async!(interpreter, TRIM, TRIM_RULES, trim);
+    register_async!(
         interpreter,
         TRIM_WHITESPACE,
         TRIM_WHITESPACE_RULES,
         trim_whitespace
     );
-    register_command!(interpreter, IS_NUMBER, IS_NUMBER_RULES, is_number);
-    register_command!(interpreter, IS_NONE, IS_NONE_RULES, is_none);
-    register_command!(interpreter, IS_ALPHA, IS_ALPHA_RULES, is_alpha);
-    register_command!(interpreter, IS_ALPHA_EN, IS_ALPHA_EN_RULES, is_alpha_en);
-    register_command!(
+    register_async!(interpreter, IS_NUMBER, IS_NUMBER_RULES, is_number);
+    register_async!(interpreter, IS_NONE, IS_NONE_RULES, is_none);
+    register_async!(interpreter, IS_ALPHA, IS_ALPHA_RULES, is_alpha);
+    register_async!(interpreter, IS_ALPHA_EN, IS_ALPHA_EN_RULES, is_alpha_en);
+    register_async!(
         interpreter,
         IS_WHITESPACE,
         IS_WHITESPACE_RULES,
         is_whitespace
     );
-    register_command!(
+    register_async!(
         interpreter,
         REMOVE_WHITESPACE,
         REMOVE_WHITESPACE_RULES,
         remove_whitespace
     );
-    register_command!(interpreter, SPLIT, SPLIT_RULES, split);
-    register_command!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
-    register_command!(interpreter, SLEEP, SLEEP_RULES, sleep);
-    register_command!(interpreter, STOPWATCH, STOPWATCH_RULES, stopwatch);
-    register_command!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
-    register_command!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
-    register_command!(interpreter, DEF, DEF_RULES, def);
-    register_command!(interpreter, EXIT, NO_ARGS, exit);
-    register_command!(interpreter, BREAK, NO_ARGS, r#break);
-    register_command!(interpreter, CONTINUE, NO_ARGS, r#continue);
-    register_command!(interpreter, RETURN, RETURN_RULES, r#return);
+    register_async!(interpreter, SPLIT, SPLIT_RULES, split);
+    register_async!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
+    register_async!(interpreter, SLEEP, SLEEP_RULES, sleep);
+    register_async!(interpreter, STOPWATCH, STOPWATCH_RULES, stopwatch);
+    register_async!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
+    register_async!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
+    register_async!(interpreter, DEF, DEF_RULES, def);
+    register_async!(interpreter, EXIT, NO_ARGS, exit);
+    register_async!(interpreter, BREAK, NO_ARGS, r#break);
+    register_async!(interpreter, CONTINUE, NO_ARGS, r#continue);
+    register_async!(interpreter, RETURN, RETURN_RULES, r#return);
 }
 
 pub async fn take_if_var(
@@ -662,7 +702,7 @@ pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
 pub const NO_OP_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::None);
 pub const NO_OP: &str = "no_op";
-pub async fn no_op(_: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn no_op(_: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     Ok(Value::None)
 }
 
@@ -865,7 +905,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             _ => {
                 if command_count == 1 {
                     if condition {
-                        return command.to_command(data.clone()).await?.execute(data).await;
+                        return execute_command!(command.to_command(data.clone()).await?, data);
                     } else {
                         return Ok(Value::None);
                     }
@@ -883,11 +923,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 
     if condition {
-        then_command
-            .to_command(data.clone())
-            .await?
-            .execute(data.clone())
-            .await
+        execute_command!(then_command.to_command(data.clone()).await?, data)
     } else {
         for else_if in else_ifs {
             let mut else_if = else_if.to_command(data.clone()).await?;
@@ -895,7 +931,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             let condition = condition.to_bool(data.clone()).await?;
 
             if condition {
-                return else_if.execute(data.clone()).await;
+                return execute_command!(else_if, data);
             } else {
                 continue;
             }
@@ -903,11 +939,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
         if else_command.is_some() {
             let else_command = else_command.unwrap();
-            return else_command
-                .to_command(data.clone())
-                .await?
-                .execute(data.clone())
-                .await;
+            return execute_command!(else_command.to_command(data.clone()).await?, data);
         }
 
         Ok(Value::None)
@@ -946,17 +978,13 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             let arg = arg.as_raw(data.clone()).await?;
 
             if arg.equal(&expression, data.clone()).span_err(case_span)? {
-                return case.execute(data.clone()).await;
+                return execute_command!(case, data);
             } else {
                 continue;
             }
         }
 
-        fallback
-            .to_command(data.clone())
-            .await?
-            .execute(data.clone())
-            .await
+        execute_command!(fallback.to_command(data.clone()).await?, data)
     } else {
         Err(RuntimeError::SwitchMustHaveSingleFallbackCommand.span(command.span))
     }
@@ -995,25 +1023,25 @@ pub async fn while_command(
         commands.push(arg.to_command(data.clone()).await?);
     }
 
-    data.inc_loop_depth().await;
+    data.inc_loop_depth();
 
     'outer: while while_condition.clone().to_bool(data.clone()).await? {
         for command in &commands {
-            final_value = command.clone().execute(data.clone()).await?;
+            final_value = execute_command!(command.clone(), data.clone())?;
 
-            if data.get_break_flag().await || data.get_return_flag().await {
-                data.set_break_flag(false).await;
+            if data.get_break_flag() || data.get_return_flag() {
+                data.set_break_flag(false);
                 break 'outer;
             }
-            if data.get_continue_flag().await {
-                data.set_continue_flag(false).await;
+            if data.get_continue_flag() {
+                data.set_continue_flag(false);
                 continue 'outer;
             }
         }
         data.inc_total_loops().span_err(command.span)?;
     }
 
-    data.dec_loop_depth().await;
+    data.dec_loop_depth();
 
     Ok(final_value)
 }
@@ -1031,25 +1059,25 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         commands.push(arg.to_command(data.clone()).await?);
     }
 
-    data.inc_loop_depth().await;
+    data.inc_loop_depth();
 
     'outer: for _ in 0..repetitions {
         for command in &commands {
-            final_value = command.clone().execute(data.clone()).await?;
+            final_value = execute_command!(command.clone(), data.clone())?;
 
-            if data.get_break_flag().await || data.get_return_flag().await {
-                data.set_break_flag(false).await;
+            if data.get_break_flag() || data.get_return_flag() {
+                data.set_break_flag(false);
                 break 'outer;
             }
-            if data.get_continue_flag().await {
-                data.set_continue_flag(false).await;
+            if data.get_continue_flag() {
+                data.set_continue_flag(false);
                 continue 'outer;
             }
         }
         data.inc_total_loops().span_err(command.span)?;
     }
 
-    data.dec_loop_depth().await;
+    data.dec_loop_depth();
 
     Ok(final_value)
 }
@@ -1072,7 +1100,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let label = label.to_var(data.clone()).await?;
 
     data.vars.write().await.push();
-    data.inc_loop_depth().await;
+    data.inc_loop_depth();
 
     let mut return_value = None;
     let result = match array {
@@ -1092,7 +1120,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .span_err(label_span)?;
 
                     let command = command.clone().to_command(data.clone()).await?;
-                    let command_value = command.execute(data.clone()).await?;
+                    let command_value = execute_command!(command, data.clone())?;
 
                     let character = data
                         .vars
@@ -1109,14 +1137,14 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                     text.replace_range(i..i + c.len_utf8(), &replacement);
                     offset = text.len() as isize - original_len as isize;
 
-                    if data.get_return_flag().await {
+                    if data.get_return_flag() {
                         return_value = Some(command_value);
                         break 'outer;
-                    } else if data.get_break_flag().await {
-                        data.set_break_flag(false).await;
+                    } else if data.get_break_flag() {
+                        data.set_break_flag(false);
                         break 'outer;
-                    } else if data.get_continue_flag().await {
-                        data.set_continue_flag(false).await;
+                    } else if data.get_continue_flag() {
+                        data.set_continue_flag(false);
                         continue 'outer;
                     }
                 }
@@ -1137,7 +1165,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .span_err(label_span)?;
 
                     let command = command.clone().to_command(data.clone()).await?;
-                    let command_value = command.execute(data.clone()).await?;
+                    let command_value = execute_command!(command, data.clone())?;
 
                     *element = data
                         .vars
@@ -1148,14 +1176,14 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .span_err(label_span)?
                         .unwrap();
 
-                    if data.get_return_flag().await {
+                    if data.get_return_flag() {
                         return_value = Some(command_value);
                         break 'outer;
-                    } else if data.get_break_flag().await {
-                        data.set_break_flag(false).await;
+                    } else if data.get_break_flag() {
+                        data.set_break_flag(false);
                         break 'outer;
-                    } else if data.get_continue_flag().await {
-                        data.set_continue_flag(false).await;
+                    } else if data.get_continue_flag() {
+                        data.set_continue_flag(false);
                         continue 'outer;
                     }
                 }
@@ -1169,7 +1197,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
     };
 
     data.vars.write().await.pop().await;
-    data.dec_loop_depth().await;
+    data.dec_loop_depth();
 
     match return_value {
         Some(value) => Ok(value),
@@ -2070,11 +2098,7 @@ pub async fn stopwatch(
     let start = std::time::Instant::now();
     let mut final_value = Value::None;
     for command in args {
-        final_value = command
-            .to_command(data.clone())
-            .await?
-            .execute(data.clone())
-            .await?;
+        final_value = execute_command!(command.to_command(data.clone()).await?, data.clone())?;
     }
     let elapsed = start.elapsed().as_secs_f64();
     let return_value = Value::from(FslMap::from([
@@ -2150,13 +2174,13 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         }
     }
 
-    match data.find_user_def(&label).await {
+    match data.find_def(&label) {
         Some(def) => {
-            def.define(parameters, commands).await;
+            //def.define(parameters, commands).await;
 
             Ok(Value::None)
         }
-        None => Err(RuntimeError::ValueDef.span(label_span)),
+        None => Ok(Value::None),
     }
 }
 
@@ -2199,13 +2223,92 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let command_label = args.pop_front().unwrap().as_var_label(data.clone()).await?;
 
+    data.push_def(command_label.clone());
+
+    let Some(UserDeclaration {
+        definition: Some(def),
+        ..
+    }) = data.find_def(&command_label)
+    else {
+        println!("couldn't find {}", command_label);
+        todo!()
+    };
+    let (mut parameter_labels, commands) = { (def.parameters, def.commands) };
+
+    if args.len() != parameter_labels.len() {
+        return Err(RuntimeError::WrongArgCount {
+            command_label: command_label.to_string(),
+            expected: ExpectedArgs::Exactly(parameter_labels.len()),
+            got: args.len(),
+        }
+        .span(command.span));
+    }
+
+    data.vars.write().await.push();
+
+    let mut aliases: HashMap<SourceStr, SourceStr> = HashMap::new();
+    let parameters = parameter_labels.len();
+    for _ in 0..parameters {
+        let arg = args.pop_front().unwrap();
+        let arg_span = arg.span;
+        let parameter = parameter_labels.pop_front().unwrap();
+        let value = arg.into_value(data.clone()).await?;
+        match value {
+            Value::Var(var) => {
+                aliases.insert(parameter, var);
+            }
+            _ => {
+                let value = value.as_raw(data.clone()).await.span_err(arg_span)?;
+                data.vars
+                    .write()
+                    .await
+                    .insert(&parameter, Var::Mut(value))
+                    .await
+                    .span_err(command.span)?;
+            }
+        }
+    }
+
+    let mut final_value = Value::None;
+    for mut command in commands {
+        let args = command.get_args_mut();
+        for arg in args {
+            let mut value = arg.take_value();
+            alias_parameter(&mut value, &aliases, data.clone());
+            arg.replace_value(value);
+        }
+        final_value = execute_command!(command, data.clone())?;
+        if data.get_return_flag() {
+            data.set_return_flag(false);
+            break;
+        }
+    }
+    data.vars.write().await.pop().await;
+
+    data.pop_def();
+
+    Ok(final_value)
+    //Ok(Value::None)
+}
+
+/*
+pub const RUN_RULES: CommandSignature = CommandSignature::AnyArgs;
+pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let mut args = command.take_args();
+
+    let command_label = args.pop_front().unwrap().as_var_label(data.clone()).await?;
+
     data.push_def(command_label.clone()).await;
 
     let (mut parameter_labels, commands) = {
-        let def = data
-            .find_user_def(&command_label)
-            .await
-            .expect("command should be defined");
+        let def = data.find_user_def(&command_label).await;
+        let def = match def {
+            Some(def) => def,
+            None => {
+                return Ok(Value::None);
+            }
+        };
 
         let parameter_labels = def.parameters.lock().await.clone();
         let commands = def.commands.lock().await.clone();
@@ -2266,11 +2369,12 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     Ok(final_value)
 }
+*/
 
 pub const BREAK: &str = "break";
 pub async fn r#break(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    if data.loop_depth().await > 0 {
-        data.set_break_flag(true).await;
+    if data.loop_depth() > 0 {
+        data.set_break_flag(true);
     } else {
         return Err(RuntimeError::BreakOutsideLoop.span(command.span));
     }
@@ -2282,8 +2386,8 @@ pub async fn r#continue(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, SpannedError> {
-    if data.loop_depth().await > 0 {
-        data.set_continue_flag(true).await;
+    if data.loop_depth() > 0 {
+        data.set_continue_flag(true);
     } else {
         return Err(RuntimeError::ContinueOutsideLoop.span(command.span));
     }
@@ -2299,11 +2403,11 @@ pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Va
     match return_value {
         Some(arg) => {
             let arg = arg.as_raw(data.clone()).await?;
-            data.set_return_flag(true).await;
+            data.set_return_flag(true);
             Ok(arg)
         }
         None => {
-            data.set_return_flag(true).await;
+            data.set_return_flag(true);
             Ok(Value::None)
         }
     }

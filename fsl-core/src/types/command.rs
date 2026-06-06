@@ -17,17 +17,24 @@ pub type InterpreterFut = BoxFuture<'static, Result<Value, SpannedError>>;
 
 pub type InterpreterFn = Arc<dyn Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync>;
 
+pub enum InterpreterResult {
+    Sync(Result<Value, SpannedError>),
+    Async(BoxFuture<'static, Result<Value, SpannedError>>),
+}
+
 #[derive(Clone)]
 pub enum Handler {
+    SyncStatic(fn(Command, Arc<InterpreterData>) -> Result<Value, SpannedError>),
     Static(fn(Command, Arc<InterpreterData>) -> InterpreterFut),
     Dynamic(InterpreterFn),
 }
 
 impl Handler {
-    pub fn handle(&self, command: Command, data: Arc<InterpreterData>) -> InterpreterFut {
+    pub fn handle(&self, command: Command, data: Arc<InterpreterData>) -> InterpreterResult {
         match self {
-            Handler::Static(f) => f(command, data),
-            Handler::Dynamic(f) => f(command, data),
+            Handler::Static(f) => InterpreterResult::Async(f(command, data)),
+            Handler::Dynamic(f) => InterpreterResult::Async(f(command, data)),
+            Handler::SyncStatic(f) => InterpreterResult::Sync(f(command, data)),
         }
     }
 }
@@ -98,6 +105,8 @@ pub struct Command {
     handler: Handler,
     pub span: Span,
 }
+
+impl Eq for Command {}
 
 impl Command {
     pub async fn mem_size(&self) -> Result<usize, RuntimeError> {
@@ -276,7 +285,7 @@ impl Command {
         Ok(())
     }
 
-    async fn validate_args(&mut self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
+    pub async fn validate_args(&mut self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
         match self.signature {
             CommandSignature::Rules(rules) => self.validate_arg_rules(rules, data).await,
             CommandSignature::Count(expected) => match expected {
@@ -329,19 +338,30 @@ impl Command {
         }
     }
 
-    pub async fn execute(mut self, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-        self.validate_args(data.clone()).await?;
-
-        if data.should_execute().await {
-            return Ok(Value::None);
+    pub fn execute(mut self, data: Arc<InterpreterData>) -> InterpreterResult {
+        if data.should_execute() {
+            return InterpreterResult::Sync(Ok(Value::None));
         }
 
         let handler = self.handler.clone();
-        match handler.handle(self, data.clone()).await {
-            Ok(value) => Ok(value),
-            Err(e) => Err(e),
-        }
+        handler.handle(self, data.clone())
     }
+}
+
+#[macro_export]
+macro_rules! execute_command {
+    ($command:expr, $data:expr) => {{
+        let mut command = $command;
+        let result = command.validate_args($data.clone()).await;
+        if let Err(_) = result {
+            result.map(|_| Value::None)
+        } else {
+            match command.execute($data) {
+                crate::types::command::InterpreterResult::Sync(value) => value,
+                crate::types::command::InterpreterResult::Async(pin) => pin.await,
+            }
+        }
+    }};
 }
 
 impl PartialEq for Command {
