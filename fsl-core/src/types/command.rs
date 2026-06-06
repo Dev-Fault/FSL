@@ -227,6 +227,10 @@ impl Command {
         Ok(())
     }
 
+    pub fn should_resolve_args(&self) -> bool {
+        self.should_resolve_args
+    }
+
     pub fn take_args(&mut self) -> VecDeque<Argument> {
         std::mem::take(&mut self.args)
     }
@@ -261,9 +265,7 @@ impl Command {
     }
 
     pub async fn resolve_args(&mut self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
-        if self.should_resolve_args
-            && let CommandSignature::Rules(rules) = self.signature
-        {
+        if let CommandSignature::Rules(rules) = self.signature {
             for rule in *rules {
                 let pos = match rule {
                     ArgRule::Resolved(arg_pos) => arg_pos,
@@ -444,7 +446,11 @@ impl Command {
 macro_rules! execute_command {
     ($command:expr, $data:expr) => {{
         let mut command = $command;
-        let result = command.resolve_args($data.clone()).await;
+        let result = if command.should_resolve_args() {
+            command.resolve_args($data.clone()).await
+        } else {
+            Ok(())
+        };
         if let Err(_) = result {
             result.map(|_| Value::None)
         } else {

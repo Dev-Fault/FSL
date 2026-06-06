@@ -539,7 +539,6 @@ impl Value {
     /// Reduces value to base type
     /// Recursively reduces inner values of lists and maps to their most base type
     /// Expensive, use as_base if list/map inner values do not need to be reduced
-    #[inline(always)]
     pub fn as_raw(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, ValueError> {
         match self {
             Value::Int(_) => InterpreterResult::Sync(Ok(self)),
