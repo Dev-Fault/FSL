@@ -8,8 +8,9 @@ use rand::seq::SliceRandom;
 use tokio_stream::StreamExt;
 
 use crate::{
-    FslInterpreter, InterpreterData,
-    data::UserDeclaration,
+    DEF, DEF_RULES, FslInterpreter, InterpreterData,
+    data::{DefinitionFinder, UserDeclaration, UserDefintion},
+    def,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     execute_command, register_async, register_sync,
     source_str::SourceStr,
@@ -17,7 +18,7 @@ use crate::{
     types::{
         ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, NO_ARGS, NOT_NONE, NUMBER,
         argument::Argument,
-        command::{ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs, Handler},
+        command::{ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs},
         list::List,
         map::FslMap,
         value::Value,
@@ -2134,54 +2135,6 @@ pub async fn shuffle(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut list = args.pop_front().unwrap().to_list(data).await?;
     list.shuffle(&mut rand::rng());
     Ok(Value::List(list))
-}
-
-pub const DEF_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(2));
-pub const DEF: &str = "def";
-pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut command = command;
-    let mut args = command.take_args();
-    let mut label = args.pop_front().unwrap();
-    let label_span = label.span;
-    let label = label.as_var_label(data.clone()).await?;
-    let mut parameters: VecDeque<SourceStr> = VecDeque::new();
-    let mut commands: Vec<Command> = Vec::new();
-
-    let mut encountered_command = false;
-    for (i, mut arg) in args.into_iter().enumerate() {
-        let span = arg.span;
-        let kind = arg.to_type(data.clone()).await?;
-        match arg.into_value(data.clone()).await? {
-            Value::Var(label) => {
-                if encountered_command {
-                    return Err(RuntimeError::ParametersOutOfOrder.span(command.span));
-                }
-                parameters.push_back(label);
-            }
-            Value::Command(command) => {
-                encountered_command = true;
-                commands.push(*command);
-            }
-            _ => {
-                return Err(RuntimeError::WrongArgType {
-                    command_label: command.label().to_string(),
-                    arg_number: i,
-                    fsl_type: kind,
-                    expected: &[FslType::Var, FslType::Command],
-                }
-                .span(span));
-            }
-        }
-    }
-
-    match data.find_def(&label) {
-        Some(def) => {
-            //def.define(parameters, commands).await;
-
-            Ok(Value::None)
-        }
-        None => Ok(Value::None),
-    }
 }
 
 fn alias_parameter(

@@ -16,14 +16,9 @@ use crate::{
     error::RuntimeError,
     source_str::SourceStr,
     span::Span,
-    types::{
-        command::{Command, UserDef},
-        value::Value,
-    },
+    types::{command::Command, value::Value},
     vars::{DEFAULT_MEMORY_LIMIT, VarStore},
 };
-
-pub type UserDefinitions = HashMap<SourceStr, Arc<UserDef>>;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct DefinitionKey {
@@ -233,7 +228,6 @@ pub struct ExecutionContext {
 #[derive(Debug, Default, Clone)]
 pub struct InterpreterData {
     pub(crate) source: Bytes,
-    pub(crate) user_defs: Arc<Mutex<UserDefinitions>>,
 
     pub args: Arc<Mutex<Vec<Value>>>,
     pub output: Arc<Mutex<String>>,
@@ -284,7 +278,6 @@ impl InterpreterData {
             source: self.source.clone(),
             args: self.args.clone(),
             limits: self.limits.clone(),
-            user_defs: self.user_defs.clone(),
             total_loops: self.total_loops.clone(),
             output: self.output.clone(),
             vars: Arc::new(RwLock::new(self.vars.read().await.clone())),
@@ -380,41 +373,6 @@ impl InterpreterData {
             return Some(decl.clone());
         }
         let call_stack = self.ctx.def_stack.lock().unwrap();
-        dbg!(&self.def_store);
-        dbg!(&call_stack);
         def_store.find_def(label, &call_stack)
     }
-
-    /*
-    pub async fn find_user_def(&self, label: &SourceStr) -> Option<Arc<UserDef>> {
-        let def_stack = self.ctx.def_stack.lock().unwrap();
-        let root = self.user_defs.clone();
-
-        let mut levels = vec![root.clone()];
-        let mut current = root.clone();
-
-        for call in def_stack.iter() {
-            let defs;
-            let current_lock = current.lock().unwrap();
-            match current_lock.get(call) {
-                Some(def) => {
-                    defs = Some(def.local_defs.clone());
-                }
-                None => break,
-            }
-            drop(current_lock);
-            if let Some(defs) = defs {
-                current = defs.clone();
-                levels.push(defs);
-            }
-        }
-
-        for level in levels.iter().rev() {
-            if let Some(def) = level.lock().unwrap().get(label).cloned() {
-                return Some(def);
-            }
-        }
-        None
-    }
-    */
 }

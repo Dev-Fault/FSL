@@ -9,10 +9,7 @@ use async_recursion::async_recursion;
 use futures::FutureExt;
 
 use crate::{
-    data::{
-        DefinitionFinder, DefinitionKey, InterpreterData, UserDeclaration, UserDefinitionStore,
-        UserDefinitions, UserDefintion,
-    },
+    data::{DefinitionFinder, DefinitionKey, InterpreterData, UserDeclaration, UserDefintion},
     error::{
         InterpreterError, RuntimeError, SpanError, SpanToInterpreterError, SpannedError,
         ToSpannedError,
@@ -30,7 +27,7 @@ use crate::{
     types::{
         FslType,
         argument::{Accessor, AccessorSegment, Argument},
-        command::{Command, CommandDef, CommandSignature, Handler, UserDef},
+        command::{Command, CommandDef, CommandSignature, ExpectedArgs, Handler},
         value::Value,
     },
 };
@@ -72,22 +69,17 @@ macro_rules! register_commands {
 
 /// # Examples
 /// Registers command to the interpreter
-/// Command can either be a path to fn with the correct signature
-/// or an async closure
-///
-/// Greet command:
 /// ```
 /// # use fsl_core::*;
-/// # use fsl_core::data::*;
-/// # use fsl_core::types::*;
-/// # use fsl_core::types::value::*;
-/// # use fsl_core::types::command::*;
-/// # use std::sync::Arc;
 /// # use fsl_core::types::command::Handler;
+/// # use fsl_core::types::value::Value;
+/// # use fsl_core::data::InterpreterData;
+/// # use std::sync::Arc;
+/// # use fsl_core::types::NO_ARGS;
 /// let rt = tokio::runtime::Runtime::new().unwrap();
 /// rt.block_on(async {
 ///     let mut interpreter = FslInterpreter::new();
-///     register_command!(interpreter, "greet", NO_ARGS, |cmd, data| {
+///     register_async!(interpreter, "greet", NO_ARGS, |cmd, data| {
 ///         async move {
 ///             data.output.lock().await.push_str("Hello!");
 ///             Ok(Value::None)
@@ -106,7 +98,7 @@ macro_rules! register_async {
         $self.register(
             $label,
             $rules,
-            crate::types::command::Handler::Dynamic(Arc::new(|command, data| {
+            $crate::types::command::Handler::Dynamic(Arc::new(|command, data| {
                 futures::FutureExt::boxed($executor(command, data))
             })),
         );
@@ -115,7 +107,7 @@ macro_rules! register_async {
         $self.register(
             $label,
             $rules,
-            crate::types::command::Handler::Dynamic(Arc::new(move |$cmd, $dat| {
+            $crate::types::command::Handler::Dynamic(Arc::new(move |$cmd, $dat| {
                 futures::FutureExt::boxed($body)
             })),
         );
@@ -276,15 +268,10 @@ impl FslInterpreter {
     }
 
     #[async_recursion]
-    async fn forward_declare_defs<'c>(
-        expression: &Expression<'c>,
-        user_defs: &mut UserDefinitions,
-        data: Arc<InterpreterData>,
-    ) {
+    async fn forward_declare_defs<'c>(expression: &Expression<'c>, data: Arc<InterpreterData>) {
         if expression.name.as_str() == DEF {
             if let Some(label) = expression.args.first() {
                 let label = SourceStr::Borrowed(data.source.slice(Span::from(&label.token)));
-                let def = Arc::new(UserDef::declaration(label.clone()));
 
                 {
                     let defs = data.ctx.def_stack.lock().unwrap();
@@ -308,17 +295,15 @@ impl FslInterpreter {
 
                 for arg in &expression.args {
                     if let ArgKind::Expression(inner) = &arg.kind {
-                        let mut user_defs = def.local_defs.lock().await;
-                        Self::forward_declare_defs(inner, &mut user_defs, data.clone()).await;
+                        Self::forward_declare_defs(inner, data.clone()).await;
                     }
                 }
                 data.ctx.def_stack.lock().unwrap().pop();
-                user_defs.insert(label, def);
             }
         } else {
             for arg in &expression.args {
                 if let ArgKind::Expression(inner) = &arg.kind {
-                    Self::forward_declare_defs(inner, user_defs, data.clone()).await;
+                    Self::forward_declare_defs(inner, data.clone()).await;
                 }
             }
         }
@@ -353,63 +338,13 @@ impl FslInterpreter {
             }
         }
         if expression.name.as_str() == DEF {
-            // TODO attempt to optimize expression.clone()
-            // Self::interpret_command(data.clone(), &defs, expression.clone()).await?;
-
             let result = Self::process_expression(data.clone(), defs, expression.clone()).await;
-            if let Ok(Value::Command(def)) = result {
-                let _ = Self::define_def(*def, data.clone())
+            if let Ok(Value::Command(command)) = result {
+                def(*command, data.clone())
                     .await
                     .into_interpreter_error(data.clone())?;
             }
         }
-        Ok(())
-    }
-
-    async fn define_def(def: Command, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
-        let mut def = def;
-        let mut args = def.take_args();
-        let mut label = args.pop_front().unwrap();
-        let label_span = label.span;
-        let label = label.as_var_label(data.clone()).await?;
-        let mut parameters: VecDeque<SourceStr> = VecDeque::new();
-        let mut commands: Vec<Command> = Vec::new();
-
-        let mut encountered_command = false;
-        for (i, mut arg) in args.into_iter().enumerate() {
-            let span = arg.span;
-            let kind = arg.to_type(data.clone()).await?;
-            match arg.into_value(data.clone()).await? {
-                Value::Var(label) => {
-                    if encountered_command {
-                        return Err(RuntimeError::ParametersOutOfOrder.span(def.span));
-                    }
-                    parameters.push_back(label);
-                }
-                Value::Command(command) => {
-                    encountered_command = true;
-                    commands.push(*command);
-                }
-                _ => {
-                    return Err(RuntimeError::WrongArgType {
-                        command_label: def.label().to_string(),
-                        arg_number: i,
-                        fsl_type: kind,
-                        expected: &[FslType::Var, FslType::Command],
-                    }
-                    .span(span));
-                }
-            }
-        }
-
-        let call_stack = data.ctx.def_stack.lock().unwrap();
-        data.def_store
-            .lock()
-            .unwrap()
-            .with_mut_def(&label, &call_stack, |decl| {
-                decl.define(UserDefintion::new(parameters, commands));
-            })
-            .span_err(label_span)?;
         Ok(())
     }
 
@@ -421,8 +356,7 @@ impl FslInterpreter {
         let expressions = Parser::new(&source).filter_parse(&[DEF])?;
 
         for expression in expressions.all() {
-            let mut user_commands = data.user_defs.lock().await;
-            Self::forward_declare_defs(expression, &mut user_commands, data.clone()).await;
+            Self::forward_declare_defs(expression, data.clone()).await;
             data.ctx.def_stack.lock().unwrap().clear();
         }
 
@@ -431,8 +365,6 @@ impl FslInterpreter {
             let mut def_stack = data.ctx.def_stack.lock().unwrap();
             def_stack.clear();
         }
-
-        dbg!(&data.def_store);
 
         for expression in expressions.unfiltered {
             let result = Self::interpret_command(data.clone(), &defs, expression).await;
@@ -641,6 +573,55 @@ impl FslInterpreter {
             }
         })
     }
+}
+
+pub const DEF_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(2));
+pub const DEF: &str = "def";
+pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let mut args = command.take_args();
+    let mut label = args.pop_front().unwrap();
+    let label_span = label.span;
+    let label = label.as_var_label(data.clone()).await?;
+    let mut parameters: VecDeque<SourceStr> = VecDeque::new();
+    let mut commands: Vec<Command> = Vec::new();
+
+    let mut encountered_command = false;
+    for (i, mut arg) in args.into_iter().enumerate() {
+        let span = arg.span;
+        let kind = arg.to_type(data.clone()).await?;
+        match arg.into_value(data.clone()).await? {
+            Value::Var(label) => {
+                if encountered_command {
+                    return Err(RuntimeError::ParametersOutOfOrder.span(command.span));
+                }
+                parameters.push_back(label);
+            }
+            Value::Command(command) => {
+                encountered_command = true;
+                commands.push(*command);
+            }
+            _ => {
+                return Err(RuntimeError::WrongArgType {
+                    command_label: command.label().to_string(),
+                    arg_number: i,
+                    fsl_type: kind,
+                    expected: &[FslType::Var, FslType::Command],
+                }
+                .span(span));
+            }
+        }
+    }
+
+    let call_stack = data.ctx.def_stack.lock().unwrap();
+    data.def_store
+        .lock()
+        .unwrap()
+        .with_mut_def(&label, &call_stack, |decl| {
+            decl.define(UserDefintion::new(parameters, commands));
+        })
+        .span_err(label_span)?;
+    Ok(Value::None)
 }
 
 #[cfg(test)]

@@ -2,11 +2,9 @@ use core::fmt;
 use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use futures::future::BoxFuture;
-use tokio::sync::Mutex;
 
 use crate::{
     InterpreterData,
-    data::UserDefinitions,
     error::{RuntimeError, SpannedError, ToSpannedError},
     source_str::SourceStr,
     span::Span,
@@ -387,29 +385,5 @@ impl Clone for Command {
             signature: self.signature,
             span: self.span,
         }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct UserDef {
-    pub label: SourceStr,
-    pub parameters: Mutex<VecDeque<SourceStr>>,
-    pub commands: Mutex<Vec<Command>>,
-    pub local_defs: Arc<Mutex<UserDefinitions>>,
-}
-
-impl UserDef {
-    pub fn declaration(label: SourceStr) -> Self {
-        Self {
-            label,
-            ..Default::default()
-        }
-    }
-
-    pub async fn define(&self, parameters: VecDeque<SourceStr>, commands: Vec<Command>) {
-        let mut old_parameters = self.parameters.lock().await;
-        *old_parameters = parameters;
-        let mut old_commands = self.commands.lock().await;
-        *old_commands = commands;
     }
 }
