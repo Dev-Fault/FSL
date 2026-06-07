@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 
 use crate::{
-    FslInterpreter,
+    FslInterpreter, await_result,
     data::InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
     register_async,
@@ -26,10 +26,10 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let program = arg.to_text(data.clone()).await?;
+    let program = await_result!(arg.to_text(data.clone()))?;
     let args = tokio_stream::iter(args.into_iter());
     let args: Vec<SourceStr> = args
-        .then(|v| v.to_text(data.clone()))
+        .then(async |v| await_result!(v.to_text(data.clone())))
         .collect::<Result<Vec<SourceStr>, _>>()
         .await?;
     let args: Vec<&str> = args.iter().map(|cs| &**cs).collect();
@@ -62,7 +62,8 @@ pub const SH: &str = "sh";
 pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let script = args.pop_front().unwrap().to_text(data.clone()).await?;
+    let arg = args.pop_front().unwrap();
+    let script = await_result!(arg.to_text(data.clone()))?;
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&*script)

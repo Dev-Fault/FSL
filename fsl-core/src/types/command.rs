@@ -1,7 +1,7 @@
 use core::fmt;
 use std::{collections::VecDeque, ops::Range, sync::Arc};
 
-use futures::{TryFutureExt, future::BoxFuture};
+use futures::{FutureExt, TryFutureExt, future::BoxFuture};
 
 use crate::{
     InterpreterData,
@@ -31,6 +31,20 @@ impl<T, E> InterpreterResult<T, E> {
             InterpreterResult::Sync(r) => InterpreterResult::Sync(r.map_err(op)),
             InterpreterResult::Async(pin) => {
                 InterpreterResult::Async(Box::pin(async { pin.map_err(op).await }))
+            }
+        }
+    }
+
+    pub fn map<F, O>(self, op: O) -> InterpreterResult<F, E>
+    where
+        O: FnOnce(T) -> F + Send + 'static,
+        E: 'static,
+        T: 'static,
+    {
+        match self {
+            InterpreterResult::Sync(r) => InterpreterResult::Sync(r.map(op)),
+            InterpreterResult::Async(pin) => {
+                InterpreterResult::Async(Box::pin(async { pin.await.map(op) }))
             }
         }
     }

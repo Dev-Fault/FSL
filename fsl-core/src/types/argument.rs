@@ -9,6 +9,7 @@ use crate::{
     execute_command,
     source_str::SourceStr,
     span::Span,
+    try_result,
     types::{
         FslType,
         command::{Command, InterpreterResult},
@@ -728,61 +729,89 @@ impl Argument {
             .await
     }
 
-    pub async fn to_int(self, data: Arc<InterpreterData>) -> Result<i64, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_int(data.clone())).span_err(self.span)
+    pub fn to_int(self, data: Arc<InterpreterData>) -> InterpreterResult<i64, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_int(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_usize(self, data: Arc<InterpreterData>) -> Result<usize, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_usize(data.clone())).span_err(self.span)
+    pub fn to_usize(self, data: Arc<InterpreterData>) -> InterpreterResult<usize, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_usize(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_float(self, data: Arc<InterpreterData>) -> Result<f64, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_float(data.clone())).span_err(self.span)
+    pub fn to_float(self, data: Arc<InterpreterData>) -> InterpreterResult<f64, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_float(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_bool(self, data: Arc<InterpreterData>) -> Result<bool, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_bool(data.clone())).span_err(self.span)
+    pub fn to_bool(self, data: Arc<InterpreterData>) -> InterpreterResult<bool, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_bool(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_var(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_var(data.clone())).span_err(self.span)
+    pub fn to_var(self, data: Arc<InterpreterData>) -> InterpreterResult<SourceStr, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_var(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_text(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_text(data.clone())).span_err(self.span)
+    pub fn to_text(self, data: Arc<InterpreterData>) -> InterpreterResult<SourceStr, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_text(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_list(self, data: Arc<InterpreterData>) -> Result<List, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_list(data.clone())).span_err(self.span)
+    pub fn to_list(self, data: Arc<InterpreterData>) -> InterpreterResult<List, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_list(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_map(self, data: Arc<InterpreterData>) -> Result<Map, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.to_map(data.clone())).span_err(self.span)
+    pub fn to_map(self, data: Arc<InterpreterData>) -> InterpreterResult<Map, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| v.to_map(data).map_err(move |e| e.span(self.span)))
     }
 
-    pub async fn to_number(self, data: Arc<InterpreterData>) -> Result<Argument, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        let number = await_result!(value.to_number(data.clone()));
-        let number = number.map(|v| Self::new(v, self.span));
-
-        number.span_err(self.span)
+    pub fn to_number(
+        self,
+        data: Arc<InterpreterData>,
+    ) -> InterpreterResult<Argument, SpannedError> {
+        match self.kind.into_value(self.span, data.clone()) {
+            InterpreterResult::Sync(value) => {
+                let value = try_result!(value);
+                value
+                    .to_number(data.clone())
+                    .map(move |v| Self::new(v, self.span))
+                    .map_err(move |e| e.span(self.span))
+            }
+            InterpreterResult::Async(pin) => InterpreterResult::Async(Box::pin(async move {
+                let value = pin.await?;
+                await_result!(
+                    value
+                        .to_number(data.clone())
+                        .map(move |v| Self::new(v, self.span))
+                )
+                .span_err(self.span)
+            })),
+        }
     }
 
-    pub async fn as_raw_checked(
+    pub fn as_raw_checked(
         self,
         valid_types: &'static [FslType],
         data: Arc<InterpreterData>,
-    ) -> Result<Value, SpannedError> {
-        let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        await_result!(value.as_raw_checked(valid_types, data.clone())).span_err(self.span)
+    ) -> InterpreterResult<Value, SpannedError> {
+        self.kind
+            .into_value(self.span, data.clone())
+            .and_then_result(move |v| {
+                v.as_raw_checked(valid_types, data)
+                    .map_err(move |e| e.span(self.span))
+            })
     }
 
     pub fn as_raw(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, SpannedError> {
