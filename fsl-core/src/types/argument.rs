@@ -99,12 +99,9 @@ impl Accessor {
                     .await
                 }
                 Err(_) => {
-                    let text = self
-                        .root
-                        .value
-                        .to_text(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.root.value;
+                    let text =
+                        await_result!(value.to_text(data.clone())).span_err(self.root.span)?;
                     match text.chars().nth(i) {
                         Some(ch) => Ok(Value::from(ch)),
                         None => Err(RuntimeError::IndexOutOfBounds.span(self.root.span)),
@@ -122,13 +119,9 @@ impl Accessor {
                     .await
                 }
                 Err(_) => {
-                    let root = self
-                        .root
-                        .value
-                        .clone()
-                        .to_list(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.root.value;
+                    let root =
+                        await_result!(value.to_list(data.clone())).span_err(self.root.span)?;
                     root.get_nested_clone(&indexer, span)
                 }
             },
@@ -143,12 +136,9 @@ impl Accessor {
                     .await
                 }
                 Err(_) => {
-                    let root = self
-                        .root
-                        .value
-                        .to_map(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.root.value;
+                    let root =
+                        await_result!(value.to_map(data.clone())).span_err(self.root.span)?;
                     root.get_nested_clone(&indexer, span)
                 }
             },
@@ -171,7 +161,7 @@ impl Accessor {
             Some(char) => {
                 let mut ch = Value::from(char);
                 let result = f(&mut ch, span).await?;
-                let replacement = ch.clone().to_text(data.clone()).await.span_err(span)?;
+                let replacement = await_result!(ch.clone().to_text(data.clone())).span_err(span)?;
                 string.replace_range(i..i + char.len_utf8(), &replacement);
                 *value = Value::Text(SourceStr::Owned(string));
                 Ok(result)
@@ -195,7 +185,7 @@ impl Accessor {
             Some(char) => {
                 let mut ch = Value::from(char);
                 let result = f(&mut ch, span).await?;
-                let replacement = ch.clone().to_text(data.clone()).await.span_err(span)?;
+                let replacement = await_result!(ch.clone().to_text(data.clone())).span_err(span)?;
                 string.replace_range(i..i + char.len_utf8(), &replacement);
                 Ok(result)
             }
@@ -227,12 +217,9 @@ impl Accessor {
                     .await
                 }
                 Err(_) => {
-                    let text = self
-                        .take_root()
-                        .value
-                        .to_text(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.take_root().value;
+                    let text =
+                        await_result!(value.to_text(data.clone())).span_err(self.root.span)?;
                     Self::modify_char(&mut self.root.value, text, i, self.root.span, data, f).await
                 }
             },
@@ -250,12 +237,9 @@ impl Accessor {
                     .await
                 }
                 Err(_) => {
-                    let mut root = self
-                        .take_root()
-                        .value
-                        .to_list(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.take_root().value;
+                    let mut root =
+                        await_result!(value.to_list(data.clone())).span_err(self.root.span)?;
                     let value = root.get_nested_mut(&indexer, span)?;
                     f(value, span).await
                 }
@@ -274,12 +258,9 @@ impl Accessor {
                     .await
                 }
                 Err(_) => {
-                    let mut root = self
-                        .take_root()
-                        .value
-                        .to_map(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.take_root().value;
+                    let mut root =
+                        await_result!(value.to_map(data.clone())).span_err(self.root.span)?;
                     let value = root.get_nested_mut(&indexer, span)?;
                     f(value, span).await
                 }
@@ -310,7 +291,7 @@ impl Accessor {
                 Err(_) => {
                     let root_span = self.root.span;
                     let text = std::mem::take(&mut self.root.value);
-                    let text = text.to_text(data.clone()).await.span_err(root_span)?;
+                    let text = await_result!(text.to_text(data.clone())).span_err(root_span)?;
                     let r = Self::with_char(&text, i, self.root.span, data, f).await?;
                     self.root.value = Value::Text(text);
                     Ok(r)
@@ -330,14 +311,9 @@ impl Accessor {
                     .await
                 }
                 Err(_) => {
-                    // list is arc so cloning is cheap
-                    let root = self
-                        .root
-                        .value
-                        .clone()
-                        .to_list(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.root.value.clone();
+                    let root =
+                        await_result!(value.to_list(data.clone())).span_err(self.root.span)?;
                     let value = root.get_nested(&indexer, span)?;
                     f(value, span).await
                 }
@@ -357,13 +333,9 @@ impl Accessor {
                 }
                 Err(_) => {
                     // map is arc so cloning is cheap
-                    let root = self
-                        .root
-                        .value
-                        .clone()
-                        .to_map(data.clone())
-                        .await
-                        .span_err(self.root.span)?;
+                    let value = self.root.value.clone();
+                    let root =
+                        await_result!(value.to_map(data.clone())).span_err(self.root.span)?;
                     let value = root.get_nested(&indexer, span)?;
                     f(value, span).await
                 }
@@ -389,11 +361,7 @@ impl Accessor {
                     let key = match &segment.value {
                         Value::Text(text) => Ok(text.clone()),
                         Value::Var(label) => Ok(label.clone()),
-                        _ => segment
-                            .value
-                            .clone()
-                            .to_text(data.clone())
-                            .await
+                        _ => await_result!(segment.value.clone().to_text(data.clone()))
                             .span_err(segment.span),
                     }?;
                     indexer.push(key);
@@ -772,37 +740,37 @@ impl Argument {
 
     pub async fn to_float(self, data: Arc<InterpreterData>) -> Result<f64, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        value.to_float(data.clone()).await.span_err(self.span)
+        await_result!(value.to_float(data.clone())).span_err(self.span)
     }
 
     pub async fn to_bool(self, data: Arc<InterpreterData>) -> Result<bool, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        value.to_bool(data.clone()).await.span_err(self.span)
+        await_result!(value.to_bool(data.clone())).span_err(self.span)
     }
 
     pub async fn to_var(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        value.to_var(data.clone()).await.span_err(self.span)
+        await_result!(value.to_var(data.clone())).span_err(self.span)
     }
 
     pub async fn to_text(self, data: Arc<InterpreterData>) -> Result<SourceStr, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        value.to_text(data.clone()).await.span_err(self.span)
+        await_result!(value.to_text(data.clone())).span_err(self.span)
     }
 
     pub async fn to_list(self, data: Arc<InterpreterData>) -> Result<List, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        value.to_list(data.clone()).await.span_err(self.span)
+        await_result!(value.to_list(data.clone())).span_err(self.span)
     }
 
     pub async fn to_map(self, data: Arc<InterpreterData>) -> Result<Map, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        value.to_map(data.clone()).await.span_err(self.span)
+        await_result!(value.to_map(data.clone())).span_err(self.span)
     }
 
     pub async fn to_number(self, data: Arc<InterpreterData>) -> Result<Argument, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        let number = value.to_number(data.clone()).await;
+        let number = await_result!(value.to_number(data.clone()));
         let number = number.map(|v| Self::new(v, self.span));
 
         number.span_err(self.span)
@@ -814,10 +782,7 @@ impl Argument {
         data: Arc<InterpreterData>,
     ) -> Result<Value, SpannedError> {
         let value = await_result!(self.kind.into_value(self.span, data.clone()))?;
-        value
-            .as_raw_checked(valid_types, data.clone())
-            .await
-            .span_err(self.span)
+        await_result!(value.as_raw_checked(valid_types, data.clone())).span_err(self.span)
     }
 
     pub fn as_raw(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, SpannedError> {

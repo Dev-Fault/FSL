@@ -1134,7 +1134,8 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .span_err(label_span)?
                         .unwrap();
 
-                    let replacement = character.to_text(data.clone()).await.span_err(label_span)?;
+                    let replacement =
+                        await_result!(character.to_text(data.clone())).span_err(label_span)?;
 
                     let i = (i as isize + offset) as usize;
                     text.replace_range(i..i + c.len_utf8(), &replacement);
@@ -1772,7 +1773,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
         Value::List(list) => {
             let iter = tokio_stream::iter(list.take());
             let list = iter
-                .then(|v| v.as_raw_checked(NOT_NONE, data.clone()))
+                .then(async |v| await_result!(v.as_raw_checked(NOT_NONE, data.clone())))
                 .collect::<Result<Vec<_>, _>>()
                 .await
                 .span_err(command.span)?;
