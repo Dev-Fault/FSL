@@ -267,7 +267,6 @@ impl Command {
                 for (i, pin) in async_ops {
                     let arg = &mut self.args[i];
                     let value = pin.await.span_err(self.span)?;
-                    dbg!(&value);
                     arg.replace_value(value);
                 }
                 Ok(self)
@@ -310,7 +309,6 @@ impl Command {
                         Some(arg) => {
                             arg.needs_resolving = resolve && arg.not_resolved();
                             self.needs_resolving = arg.needs_resolving | self.needs_resolving;
-                            dbg!(&arg);
                         }
                     }
                 }
@@ -378,7 +376,6 @@ impl Command {
                 }
             }
         }
-        dbg!(&self.needs_resolving);
         if self.args.len() > max_args {
             return Err(RuntimeError::WrongArgCount {
                 command_label: self.label().to_string(),
