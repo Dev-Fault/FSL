@@ -241,41 +241,6 @@ impl Command {
         self.needs_resolving
     }
 
-    pub(crate) fn resolve_args(
-        mut self,
-        data: Arc<InterpreterData>,
-    ) -> InterpreterResult<Self, SpannedError> {
-        let mut async_ops: Vec<_> = Vec::new();
-        for (i, arg) in self.args.iter_mut().enumerate() {
-            if arg.needs_resolving {
-                let value = arg.take_value();
-                let value = match value.as_raw(data.clone()) {
-                    InterpreterResult::Sync(value) => match value {
-                        Ok(value) => value,
-                        Err(e) => return InterpreterResult::Sync(Err(e.span(self.span))),
-                    },
-                    InterpreterResult::Async(pin) => {
-                        async_ops.push((i, pin));
-                        continue;
-                    }
-                };
-                arg.replace_value(value);
-            }
-        }
-        if async_ops.len() > 0 {
-            InterpreterResult::Async(Box::pin(async move {
-                for (i, pin) in async_ops {
-                    let arg = &mut self.args[i];
-                    let value = pin.await.span_err(self.span)?;
-                    arg.replace_value(value);
-                }
-                Ok(self)
-            }))
-        } else {
-            InterpreterResult::Sync(Ok(self))
-        }
-    }
-
     fn rules_count_check(&mut self, rules: &'static [ArgRule]) -> Result<(), SpannedError> {
         let mut max_args = 0;
         for rule in rules {
@@ -308,7 +273,7 @@ impl Command {
                         }
                         Some(arg) => {
                             arg.needs_resolving = resolve && arg.not_resolved();
-                            self.needs_resolving = arg.needs_resolving | self.needs_resolving;
+                            self.needs_resolving |= arg.needs_resolving;
                         }
                     }
                 }
@@ -335,10 +300,9 @@ impl Command {
                     } else {
                         for i in range.start..range.end {
                             if let ArgRule::Resolved(_) = rule {
-                                self.args[i].needs_resolving =
-                                    resolve && self.args[i].not_resolved();
-                                self.needs_resolving =
-                                    self.args[i].needs_resolving | self.needs_resolving;
+                                let arg = &mut self.args[i];
+                                arg.needs_resolving = resolve && arg.not_resolved();
+                                self.needs_resolving |= arg.needs_resolving;
                             }
                         }
                     }
@@ -357,9 +321,9 @@ impl Command {
                     max_args = usize::MAX;
                     for i in *p..self.args.len() {
                         if let ArgRule::Resolved(_) = rule {
-                            self.args[i].needs_resolving = resolve && self.args[i].not_resolved();
-                            self.needs_resolving =
-                                self.args[i].needs_resolving | self.needs_resolving;
+                            let arg = &mut self.args[i];
+                            arg.needs_resolving = resolve && arg.not_resolved();
+                            self.needs_resolving |= arg.needs_resolving;
                         }
                     }
                 }
@@ -371,7 +335,7 @@ impl Command {
                     };
                     if let Some(arg) = self.args.get_mut(*i) {
                         arg.needs_resolving = resolve && arg.not_resolved();
-                        self.needs_resolving = arg.needs_resolving | self.needs_resolving;
+                        self.needs_resolving |= arg.needs_resolving;
                     }
                 }
             }
@@ -440,6 +404,41 @@ impl Command {
         }
     }
 
+    pub(crate) fn resolve_args(
+        mut self,
+        data: Arc<InterpreterData>,
+    ) -> InterpreterResult<Self, SpannedError> {
+        let mut async_ops: Vec<_> = Vec::new();
+        for (i, arg) in self.args.iter_mut().enumerate() {
+            if arg.needs_resolving {
+                let value = arg.take_value();
+                let value = match value.as_raw(data.clone()) {
+                    InterpreterResult::Sync(value) => match value {
+                        Ok(value) => value,
+                        Err(e) => return InterpreterResult::Sync(Err(e.span(self.span))),
+                    },
+                    InterpreterResult::Async(pin) => {
+                        async_ops.push((i, pin));
+                        continue;
+                    }
+                };
+                arg.replace_value(value);
+            }
+        }
+        if async_ops.len() > 0 {
+            InterpreterResult::Async(Box::pin(async move {
+                for (i, pin) in async_ops {
+                    let arg = &mut self.args[i];
+                    let value = pin.await.span_err(self.span)?;
+                    arg.replace_value(value);
+                }
+                Ok(self)
+            }))
+        } else {
+            InterpreterResult::Sync(Ok(self))
+        }
+    }
+
     #[inline(always)]
     fn handle(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, SpannedError> {
         if data.should_execute() {
@@ -454,7 +453,7 @@ impl Command {
         if self.should_resolve_args() {
             match self.resolve_args(data.clone()) {
                 InterpreterResult::Sync(command) => {
-                    let command = crate::try_result!(command);
+                    let command = try_result!(command);
                     command.handle(data)
                 }
                 InterpreterResult::Async(pin) => InterpreterResult::Async(Box::pin(async move {
