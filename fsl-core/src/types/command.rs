@@ -267,6 +267,7 @@ impl Command {
                 for (i, pin) in async_ops {
                     let arg = &mut self.args[i];
                     let value = pin.await.span_err(self.span)?;
+                    dbg!(&value);
                     arg.replace_value(value);
                 }
                 Ok(self)
@@ -279,9 +280,16 @@ impl Command {
     fn rules_count_check(&mut self, rules: &'static [ArgRule]) -> Result<(), SpannedError> {
         let mut max_args = 0;
         for rule in rules {
+            let resolve;
             let pos = match rule {
-                ArgRule::Resolved(arg_pos) => arg_pos,
-                ArgRule::Unresolved(arg_pos) => arg_pos,
+                ArgRule::Resolved(arg_pos) => {
+                    resolve = true;
+                    arg_pos
+                }
+                ArgRule::Unresolved(arg_pos) => {
+                    resolve = false;
+                    arg_pos
+                }
             };
 
             match pos {
@@ -300,8 +308,9 @@ impl Command {
                             .span(self.span));
                         }
                         Some(arg) => {
-                            arg.needs_resolving = true && arg.not_resolved();
-                            self.needs_resolving = arg.needs_resolving | self.needs_resolving
+                            arg.needs_resolving = resolve && arg.not_resolved();
+                            self.needs_resolving = arg.needs_resolving | self.needs_resolving;
+                            dbg!(&arg);
                         }
                     }
                 }
@@ -328,9 +337,10 @@ impl Command {
                     } else {
                         for i in range.start..range.end {
                             if let ArgRule::Resolved(_) = rule {
-                                self.args[i].needs_resolving = true && self.args[i].not_resolved();
+                                self.args[i].needs_resolving =
+                                    resolve && self.args[i].not_resolved();
                                 self.needs_resolving =
-                                    self.args[i].needs_resolving | self.needs_resolving
+                                    self.args[i].needs_resolving | self.needs_resolving;
                             }
                         }
                     }
@@ -349,9 +359,9 @@ impl Command {
                     max_args = usize::MAX;
                     for i in *p..self.args.len() {
                         if let ArgRule::Resolved(_) = rule {
-                            self.args[i].needs_resolving = true && self.args[i].not_resolved();
+                            self.args[i].needs_resolving = resolve && self.args[i].not_resolved();
                             self.needs_resolving =
-                                self.args[i].needs_resolving | self.needs_resolving
+                                self.args[i].needs_resolving | self.needs_resolving;
                         }
                     }
                 }
@@ -362,12 +372,13 @@ impl Command {
                         max_args
                     };
                     if let Some(arg) = self.args.get_mut(*i) {
-                        arg.needs_resolving = true && arg.not_resolved();
-                        self.needs_resolving = arg.needs_resolving | self.needs_resolving
+                        arg.needs_resolving = resolve && arg.not_resolved();
+                        self.needs_resolving = arg.needs_resolving | self.needs_resolving;
                     }
                 }
             }
         }
+        dbg!(&self.needs_resolving);
         if self.args.len() > max_args {
             return Err(RuntimeError::WrongArgCount {
                 command_label: self.label().to_string(),
