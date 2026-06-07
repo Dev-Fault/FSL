@@ -576,6 +576,7 @@ impl ArgumentKind {
 pub struct Argument {
     pub kind: ArgumentKind,
     pub span: Span,
+    pub(crate) needs_resolving: bool,
 }
 
 impl PartialEq for Argument {
@@ -589,6 +590,7 @@ impl Argument {
         Self {
             kind: ArgumentKind::Value(value),
             span,
+            needs_resolving: false,
         }
     }
 
@@ -596,6 +598,7 @@ impl Argument {
         Self {
             kind: ArgumentKind::Accessor(path),
             span,
+            needs_resolving: false,
         }
     }
 
@@ -662,6 +665,19 @@ impl Argument {
             ArgumentKind::Accessor(accessor) => {
                 accessor.root.value = value;
             }
+        }
+    }
+
+    pub(crate) fn not_resolved(&self) -> bool {
+        match &self.kind {
+            ArgumentKind::Value(value) => match value {
+                Value::List(_) => true,
+                Value::Map(_) => true,
+                Value::Var(_) => true,
+                Value::Command(_) => true,
+                _ => false,
+            },
+            ArgumentKind::Accessor(_) => true,
         }
     }
 }

@@ -1561,7 +1561,6 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             }
             Value::List(list) => {
                 let to_push = await_result!(to_push.into_value(data.clone()))?;
-                dbg!(&to_push);
                 list.push(to_push);
                 Ok(())
             }
