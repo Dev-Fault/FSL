@@ -9,7 +9,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     DEF, DEF_RULES, FslInterpreter, InterpreterData, await_result,
-    data::{self, UserDeclaration},
+    data::UserDeclaration,
     def,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     execute_command, register_async, register_sync,
@@ -69,11 +69,11 @@ pub fn f_add(command: Command, _: Arc<InterpreterData>) -> Result<Value, Spanned
 pub fn register_std(interpreter: &mut FslInterpreter) {
     register_sync!(interpreter, F_ADD, F_ADD_RULES, f_add);
     register_sync!(interpreter, NO_OP, NO_OP_RULES, no_op);
-    register_async!(interpreter, ADD, MATH_RULES, add);
-    register_async!(interpreter, SUB, MATH_RULES, sub);
-    register_async!(interpreter, MUL, MATH_RULES, mul);
-    register_async!(interpreter, DIV, MATH_RULES, div);
-    register_async!(interpreter, MODULUS, MATH_RULES, modulus);
+    register_sync!(interpreter, ADD, MATH_RULES, add);
+    register_sync!(interpreter, SUB, MATH_RULES, sub);
+    register_sync!(interpreter, MUL, MATH_RULES, mul);
+    register_sync!(interpreter, DIV, MATH_RULES, div);
+    register_sync!(interpreter, MODULUS, MATH_RULES, modulus);
     register_async!(interpreter, CLAMP, CLAMP_RULES, clamp);
     register_async!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
     register_async!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
@@ -230,15 +230,15 @@ async fn contains_float(
 }
 
 pub const ADD: &str = "add";
-pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn add(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let mut args = command.take_args();
+    let args = command.take_args();
     let mut int: i64 = 0;
     let mut float: f64 = 0.0;
     let mut is_float: bool = false;
-    for arg in args {
+    for mut arg in args {
         let arg_span = arg.span;
-        let value = await_result!(arg.into_value(data.clone()))?;
+        let value = arg.take_value();
         match value {
             Value::Int(i) => {
                 int = int
@@ -274,11 +274,11 @@ pub async fn add(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const SUB: &str = "sub";
-pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn sub(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
 
-    let arg = args
+    let mut arg = args
         .pop_front()
         .ok_or(RuntimeError::WrongArgCount {
             command_label: SUB.to_string(),
@@ -288,7 +288,7 @@ pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         .span_err(command.span)?;
 
     let arg_span = arg.span;
-    let first = await_result!(arg.into_value(data.clone()))?;
+    let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
@@ -300,8 +300,9 @@ pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         _ => return Err(first.conversion_err(NUMBER).span(arg_span)),
     };
 
-    for arg in args {
-        let value = await_result!(arg.into_value(data.clone()))?;
+    for mut arg in args {
+        let arg_span = arg.span;
+        let value = arg.take_value();
         match value {
             Value::Int(i) => {
                 if !switched {
@@ -352,11 +353,11 @@ pub async fn sub(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     }
 }
 pub const MUL: &str = "mul";
-pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn mul(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
 
-    let arg = args
+    let mut arg = args
         .pop_front()
         .ok_or(RuntimeError::WrongArgCount {
             command_label: MUL.to_string(),
@@ -366,7 +367,7 @@ pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         .span_err(command.span)?;
 
     let arg_span = arg.span;
-    let first = await_result!(arg.into_value(data.clone()))?;
+    let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
@@ -410,9 +411,9 @@ pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         Ok(())
     };
 
-    for arg in args {
+    for mut arg in args {
         let span = arg.span;
-        let value = await_result!(arg.into_value(data.clone()))?;
+        let value = arg.take_value();
         match value {
             Value::Int(i) => handle_int(i, &mut int, &mut float, switched, span)?,
             Value::Float(f) => handle_float(f, int, &mut float, &mut is_float, &mut switched)?,
@@ -432,11 +433,11 @@ pub async fn mul(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const DIV: &str = "div";
-pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn div(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
 
-    let arg = args
+    let mut arg = args
         .pop_front()
         .ok_or(RuntimeError::WrongArgCount {
             command_label: DIV.to_string(),
@@ -446,7 +447,7 @@ pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         .span_err(command.span)?;
 
     let arg_span = arg.span;
-    let first = await_result!(arg.into_value(data.clone()))?;
+    let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
@@ -497,9 +498,9 @@ pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         Ok(())
     };
 
-    for arg in args {
+    for mut arg in args {
         let span = arg.span;
-        let value = await_result!(arg.into_value(data.clone()))?;
+        let value = arg.take_value();
         match value {
             Value::Int(i) => handle_int(i, &mut int, &mut float, switched, span)?,
             Value::Float(f) => {
@@ -523,11 +524,11 @@ pub async fn div(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const MODULUS: &str = "mod";
-pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn modulus(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
 
-    let arg = args
+    let mut arg = args
         .pop_front()
         .ok_or(RuntimeError::WrongArgCount {
             command_label: MODULUS.to_string(),
@@ -537,7 +538,7 @@ pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Val
         .span_err(command.span)?;
 
     let arg_span = arg.span;
-    let first = await_result!(arg.into_value(data.clone()))?;
+    let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
@@ -585,9 +586,9 @@ pub async fn modulus(command: Command, data: Arc<InterpreterData>) -> Result<Val
         Ok(())
     };
 
-    for arg in args {
+    for mut arg in args {
         let span = arg.span;
-        let value = await_result!(arg.into_value(data.clone()))?;
+        let value = arg.take_value();
         match value {
             Value::Int(i) => handle_int(i, &mut int, &mut float, switched, span)?,
             Value::Float(f) => {

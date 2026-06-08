@@ -1,15 +1,20 @@
 use core::fmt;
 use std::{collections::VecDeque, ops::Range, sync::Arc};
 
-use futures::{FutureExt, TryFutureExt, future::BoxFuture};
+use futures::{TryFutureExt, future::BoxFuture};
 
 use crate::{
     InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     source_str::SourceStr,
     span::Span,
-    types::{argument::Argument, value::Value},
+    types::{
+        argument::Argument,
+        value::{Value, ValueError},
+    },
 };
+
+use super::argument::ArgumentKind;
 
 pub type InterpreterFut = BoxFuture<'static, Result<Value, SpannedError>>;
 
@@ -422,17 +427,30 @@ impl Command {
         mut self,
         data: Arc<InterpreterData>,
     ) -> InterpreterResult<Self, SpannedError> {
+        enum PendingOp {
+            NeedsRaw(BoxFuture<'static, Result<Value, SpannedError>>),
+            AlreadyRaw(BoxFuture<'static, Result<Value, ValueError>>),
+        }
         let mut async_ops: Vec<_> = Vec::new();
         for (i, arg) in self.args.iter_mut().enumerate() {
             if arg.needs_resolving {
-                let value = arg.take_value();
+                let span = arg.span;
+                let kind = std::mem::take(&mut arg.kind);
+                let value = kind.into_value(span, data.clone());
+                let value = match value {
+                    InterpreterResult::Sync(value) => try_result!(value),
+                    InterpreterResult::Async(pin) => {
+                        async_ops.push((i, (PendingOp::NeedsRaw(pin))));
+                        continue;
+                    }
+                };
                 let value = match value.as_raw(data.clone()) {
                     InterpreterResult::Sync(value) => match value {
                         Ok(value) => value,
-                        Err(e) => return InterpreterResult::Sync(Err(e.span(self.span))),
+                        Err(e) => return InterpreterResult::Sync(Err(e.span(span))),
                     },
                     InterpreterResult::Async(pin) => {
-                        async_ops.push((i, pin));
+                        async_ops.push((i, (PendingOp::AlreadyRaw(pin))));
                         continue;
                     }
                 };
@@ -441,10 +459,21 @@ impl Command {
         }
         if async_ops.len() > 0 {
             InterpreterResult::Async(Box::pin(async move {
-                for (i, pin) in async_ops {
-                    let arg = &mut self.args[i];
-                    let value = pin.await.span_err(self.span)?;
-                    arg.replace_value(value);
+                for (i, op) in async_ops {
+                    let span = self.args[i].span;
+                    match op {
+                        PendingOp::NeedsRaw(pin) => {
+                            let value = pin.await?;
+                            let value = await_result!(value.as_raw(data.clone())).span_err(span)?;
+                            let arg = &mut self.args[i];
+                            arg.replace_value(value);
+                        }
+                        PendingOp::AlreadyRaw(pin) => {
+                            let arg = &mut self.args[i];
+                            let value = pin.await.span_err(span)?;
+                            arg.replace_value(value);
+                        }
+                    }
                 }
                 Ok(self)
             }))

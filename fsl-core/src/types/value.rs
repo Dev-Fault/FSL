@@ -1,12 +1,10 @@
-use std::{future::ready, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use async_recursion::async_recursion;
-use futures::future::Either;
 
 use crate::{
     InterpreterData, await_result,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    execute_command,
     source_str::SourceStr,
     span::Span,
     types::{
