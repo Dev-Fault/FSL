@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Deref, sync::Arc};
 
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use crate::{
     data::Limiter,
@@ -104,28 +104,23 @@ impl VarStore {
         self.data.push(Arc::new(RwLock::new(VarMap::new())));
     }
 
-    pub async fn pop(&mut self) {
+    pub fn pop(&mut self) {
         if matches!(*self.limiter, Limiter::Limit(_)) {
-            for var in self.data.last().unwrap().read().await.values() {
-                self.limiter.deallocate(var).await;
+            for var in self.data.last().unwrap().read().values() {
+                self.limiter.deallocate(var);
             }
         }
         self.data.pop();
     }
 
-    pub async fn with_mut<F, R>(
-        &self,
-        label: &SourceStr,
-        span: Span,
-        f: F,
-    ) -> Result<R, SpannedError>
+    pub fn with_mut<F, R>(&self, label: &SourceStr, span: Span, f: F) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
+        F: for<'a> FnOnce(&'a mut Value, Span) -> Result<R, SpannedError>,
     {
         for map in self.data.iter().rev() {
-            let mut map = map.write().await;
+            let mut map = map.write();
             if let Some(var) = map.get_mut(label) {
-                return f(var.inner_mut(label).span(span)?, span).await;
+                return f(var.inner_mut(label).span(span)?, span);
             }
         }
 
@@ -135,14 +130,14 @@ impl VarStore {
         .span(span))
     }
 
-    pub async fn with<F, R>(&self, label: &SourceStr, span: Span, f: F) -> Result<R, SpannedError>
+    pub fn with<F, R>(&self, label: &SourceStr, span: Span, f: F) -> Result<R, SpannedError>
     where
-        F: for<'a> AsyncFnOnce(&'a Value, Span) -> Result<R, SpannedError>,
+        F: for<'a> FnOnce(&'a Value, Span) -> Result<R, SpannedError>,
     {
         for map in self.data.iter().rev() {
-            let map = map.read().await;
+            let map = map.read();
             if let Some(var) = map.get(label) {
-                return f(var.inner(), span).await;
+                return f(var.inner(), span);
             }
         }
 
@@ -152,9 +147,9 @@ impl VarStore {
         .span(span))
     }
 
-    pub async fn get_clone(&self, label: &SourceStr) -> Result<Value, RuntimeError> {
+    pub fn get_clone(&self, label: &SourceStr) -> Result<Value, RuntimeError> {
         for map in self.data.iter().rev() {
-            if let Some(var) = map.read().await.get(label) {
+            if let Some(var) = map.read().get(label) {
                 return Ok(var.deref().clone());
             }
         }
@@ -163,9 +158,9 @@ impl VarStore {
         })
     }
 
-    pub async fn get_type(&self, label: &SourceStr) -> Result<FslType, RuntimeError> {
+    pub fn get_type(&self, label: &SourceStr) -> Result<FslType, RuntimeError> {
         for map in self.data.iter().rev() {
-            if let Some(var) = map.read().await.get(label) {
+            if let Some(var) = map.read().get(label) {
                 return Ok(var.type_of());
             }
         }
@@ -174,54 +169,49 @@ impl VarStore {
         })
     }
 
-    pub async fn store(&mut self, label: &SourceStr, new_var: Var) -> Result<(), RuntimeError> {
+    pub fn store(&mut self, label: &SourceStr, new_var: Var) -> Result<(), RuntimeError> {
         for map in self.data.iter_mut().rev() {
-            if let Some(var) = map.write().await.get_mut(label) {
+            if let Some(var) = map.write().get_mut(label) {
                 if var.is_const() {
                     return Err(RuntimeError::AttemptToOverwriteConst {
                         label: label.to_string(),
                     });
                 } else {
-                    self.limiter.deallocate(var).await;
-                    self.limiter.allocate(&new_var).await?;
+                    self.limiter.deallocate(var);
+                    self.limiter.allocate(&new_var)?;
                     *var = new_var;
                     return Ok(());
                 }
             }
         }
-        self.limiter.allocate(&new_var).await?;
+        self.limiter.allocate(&new_var)?;
         self.data
             .last_mut()
             .unwrap()
             .write()
-            .await
             .insert(label.clone(), new_var);
         Ok(())
     }
 
-    pub async fn insert(&mut self, label: &SourceStr, var: Var) -> Result<(), RuntimeError> {
-        let mut map = self.data.last_mut().unwrap().write().await;
+    pub fn insert(&mut self, label: &SourceStr, var: Var) -> Result<(), RuntimeError> {
+        let mut map = self.data.last_mut().unwrap().write();
         if let Some(Var::Const(_)) = map.get(label) {
             Err(RuntimeError::AttemptToOverwriteConst {
                 label: label.to_string(),
             })
         } else {
             if let Some(old_var) = map.get(label) {
-                self.limiter.deallocate(old_var).await;
+                self.limiter.deallocate(old_var);
             }
-            self.limiter.allocate(&var).await?;
+            self.limiter.allocate(&var)?;
             map.insert(label.clone(), var);
             Ok(())
         }
     }
 
-    pub async fn replace(
-        &mut self,
-        label: &SourceStr,
-        replacement: Value,
-    ) -> Result<(), RuntimeError> {
+    pub fn replace(&mut self, label: &SourceStr, replacement: Value) -> Result<(), RuntimeError> {
         for map in self.data.iter_mut().rev() {
-            let mut map = map.write().await;
+            let mut map = map.write();
             if let Some(var) = map.get_mut(label) {
                 match var {
                     Var::Const(_) => {
@@ -230,8 +220,8 @@ impl VarStore {
                         });
                     }
                     Var::Mut(value) => {
-                        self.limiter.deallocate(value).await;
-                        self.limiter.allocate(&replacement).await?;
+                        self.limiter.deallocate(value);
+                        self.limiter.allocate(&replacement)?;
                         *value = replacement;
                         return Ok(());
                     }
@@ -243,31 +233,31 @@ impl VarStore {
         })
     }
 
-    pub async fn remove(&mut self, label: &SourceStr) -> Result<Option<Value>, RuntimeError> {
+    pub fn remove(&mut self, label: &SourceStr) -> Result<Option<Value>, RuntimeError> {
         for map in self.data.iter_mut().rev() {
-            let mut map = map.write().await;
+            let mut map = map.write();
             if let Some(Var::Const(_)) = map.get(label) {
                 return Err(RuntimeError::AttemptToOverwriteConst {
                     label: label.to_string(),
                 });
             } else if let Some(var) = map.remove(label) {
-                self.limiter.deallocate(&var).await;
+                self.limiter.deallocate(&var);
                 return Ok(Some(var.take()));
             }
         }
         Ok(None)
     }
 
-    pub async fn take(&mut self, label: &SourceStr) -> Result<Value, RuntimeError> {
+    pub fn take(&mut self, label: &SourceStr) -> Result<Value, RuntimeError> {
         for map in self.data.iter_mut().rev() {
-            let mut map = map.write().await;
+            let mut map = map.write();
             if let Some(Var::Const(_)) = map.get(label) {
                 return Err(RuntimeError::AttemptToOverwriteConst {
                     label: label.to_string(),
                 });
             } else {
                 if let Some(var) = map.get_mut(label) {
-                    self.limiter.deallocate(var).await;
+                    self.limiter.deallocate(var);
                     return Ok(std::mem::take(var.inner_mut(label)?));
                 }
             }

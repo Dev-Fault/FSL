@@ -10,7 +10,8 @@ pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
 pub const DEFAULT_LOOP_LIMIT: usize = u16::MAX as usize;
 
 use bytes::Bytes;
-use tokio::sync::{Mutex, RwLock};
+use parking_lot::RwLock;
+use tokio::sync::Mutex;
 
 use crate::{
     error::RuntimeError,
@@ -138,12 +139,12 @@ impl Default for Limiter {
 }
 
 impl Limiter {
-    pub async fn allocate(&self, value: &Value) -> Result<(), RuntimeError> {
+    pub fn allocate(&self, value: &Value) -> Result<(), RuntimeError> {
         match self {
             Limiter::NoLimit => Ok(()),
             Limiter::Limit(memory_limit) => {
                 let mem = memory_limit.allocated.load(Ordering::Relaxed);
-                let size = value.mem_size().await?;
+                let size = value.mem_size()?;
                 if let Some(new_mem) = mem.checked_add(size)
                     && new_mem < memory_limit.limit
                 {
@@ -156,13 +157,13 @@ impl Limiter {
         }
     }
 
-    pub async fn deallocate(&self, value: &Value) {
+    pub fn deallocate(&self, value: &Value) {
         match self {
             Limiter::NoLimit => {}
             Limiter::Limit(memory_limit) => {
                 let mem = memory_limit.allocated.load(Ordering::Relaxed);
                 memory_limit.allocated.store(
-                    mem.saturating_sub(value.mem_size().await.unwrap_or(0)),
+                    mem.saturating_sub(value.mem_size().unwrap_or(0)),
                     Ordering::Relaxed,
                 );
             }
@@ -280,7 +281,7 @@ impl InterpreterData {
             limits: self.limits.clone(),
             total_loops: self.total_loops.clone(),
             output: self.output.clone(),
-            vars: Arc::new(RwLock::new(self.vars.read().await.clone())),
+            vars: Arc::new(RwLock::new(self.vars.read().clone())),
             def_store: self.def_store.clone(),
             ctx: Arc::new(ExecutionContext::default()),
         }

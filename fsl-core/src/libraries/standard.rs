@@ -22,7 +22,7 @@ use crate::{
         },
         list::List,
         map::FslMap,
-        value::Value,
+        value::{FromValue, Value},
     },
     vars::Var,
 };
@@ -186,11 +186,11 @@ pub async fn take_if_var(
         let label = arg.as_var_label(data.clone()).await?;
         let data_clone = data.clone();
         let var = {
-            let mut vars = data_clone.vars.write().await;
-            vars.take(&label).await.span(span)?
+            let mut vars = data_clone.vars.write();
+            vars.take(&label).span(span)?
         };
         arg.with_mut(data, {
-            async |value, _| {
+            |value, _| {
                 *value = var;
                 Ok(())
             }
@@ -210,8 +210,8 @@ pub async fn update_if_var(
 ) -> Result<Value, SpannedError> {
     match var {
         Some(label) => {
-            let mut vars = data.vars.write().await;
-            vars.store(&label, Var::Mut(value)).await.span(span)?;
+            let mut vars = data.vars.write();
+            vars.store(&label, Var::Mut(value)).span(span)?;
             Ok(Value::Var(label))
         }
         None => Ok(value),
@@ -746,9 +746,7 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     data.vars
         .write()
-        .await
         .store(&var, Var::Mut(arg))
-        .await
         .span(arg_span)?;
 
     Ok(Value::Var(var))
@@ -769,9 +767,7 @@ pub async fn assign(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 
     data.vars
         .write()
-        .await
         .store(&var, Var::Mut(arg))
-        .await
         .span(arg_span)?;
 
     Ok(Value::Var(var))
@@ -791,9 +787,7 @@ pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     data.vars
         .write()
-        .await
         .insert(&var, Var::Mut(arg))
-        .await
         .span(arg_span)?;
 
     Ok(Value::Var(var))
@@ -812,12 +806,7 @@ pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let arg = potential_future!(arg.as_raw_checked(ANY, data.clone())?);
     let var_label = &var;
 
-    data.vars
-        .write()
-        .await
-        .replace(var_label, arg)
-        .await
-        .span(arg_span)?;
+    data.vars.write().replace(var_label, arg).span(arg_span)?;
 
     Ok(Value::Var(var))
 }
@@ -837,9 +826,7 @@ pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Val
 
     data.vars
         .write()
-        .await
         .insert(var_label, Var::Const(arg))
-        .await
         .span(arg_span)?;
 
     Ok(Value::Var(var))
@@ -860,7 +847,7 @@ pub async fn take(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut command = command;
     let mut arg = command.take_args().pop_front().unwrap();
     let var = arg.as_var_label(data.clone()).await?;
-    match data.vars.write().await.remove(&var).await.span(arg.span)? {
+    match data.vars.write().remove(&var).span(arg.span)? {
         Some(value) => Ok(value),
         None => Ok(Value::None),
     }
@@ -921,14 +908,14 @@ pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let mut command = command;
     let args = command.take_args();
 
-    data.vars.write().await.push();
+    data.vars.write().push();
 
     let mut return_value = Value::None;
     for value in args {
         return_value = potential_future!(value.as_raw(data.clone())?);
     }
 
-    data.vars.write().await.pop().await;
+    data.vars.write().pop();
 
     Ok(return_value)
 }
@@ -1334,7 +1321,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let label_span = label.span;
     let label = potential_future!(label.to_var(data.clone())?);
 
-    data.vars.write().await.push();
+    data.vars.write().push();
     data.inc_loop_depth();
 
     let mut return_value = None;
@@ -1349,22 +1336,13 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                 for command in &args {
                     data.vars
                         .write()
-                        .await
                         .insert(&label, Var::Mut(Value::from(c.to_string())))
-                        .await
                         .span(label_span)?;
 
                     let command = command.clone().to_command(data.clone()).await?;
                     let command_value = execute_command!(command, data.clone())?;
 
-                    let character = data
-                        .vars
-                        .write()
-                        .await
-                        .remove(&label)
-                        .await
-                        .span(label_span)?
-                        .unwrap();
+                    let character = data.vars.write().remove(&label).span(label_span)?.unwrap();
 
                     let replacement =
                         potential_future!(character.to_text(data.clone()).span_future(label_span)?);
@@ -1395,22 +1373,13 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                 for command in &args {
                     data.vars
                         .write()
-                        .await
                         .insert(&label, Var::Mut(std::mem::take(element)))
-                        .await
                         .span(label_span)?;
 
                     let command = command.clone().to_command(data.clone()).await?;
                     let command_value = execute_command!(command, data.clone())?;
 
-                    *element = data
-                        .vars
-                        .write()
-                        .await
-                        .remove(&label)
-                        .await
-                        .span(label_span)?
-                        .unwrap();
+                    *element = data.vars.write().remove(&label).span(label_span)?.unwrap();
 
                     if data.get_return_flag() {
                         return_value = Some(command_value);
@@ -1432,7 +1401,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
         _ => unreachable!("as_raw should enforce array is List or Text"),
     };
 
-    data.vars.write().await.pop().await;
+    data.vars.write().pop();
     data.dec_loop_depth();
 
     match return_value {
@@ -1453,16 +1422,16 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let i = args.pop_front().unwrap();
 
     array
-        .with(data.clone(), async |value, span| match value {
+        .with(data.clone(), |value, span| match value {
             Value::Text(text) => {
-                let (i_span, i) = (i.span, potential_future!(i.to_usize(data.clone())?));
+                let (i_span, i) = (i.span, i.into_usize()?);
                 match text.chars().nth(i) {
                     Some(char) => Ok(char.into()),
                     None => Err(RuntimeError::IndexOutOfBounds.span(i_span)),
                 }
             }
             Value::List(list) => {
-                let (i_span, i) = (i.span, i.to_list_indexer(data.clone()).await?);
+                let (i_span, i) = (i.span, i.into_list_indexer()?);
                 list.get_nested_clone(&i, i_span)
             }
             _ => Err(value.conversion_err(INDEXABLE).span(span))?,
@@ -1480,18 +1449,18 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut args = command.take_args();
     if args.len() == 1 {
         let mut arg = args.pop_front().unwrap();
-        arg.with(data, async |value, _| Ok(value.clone())).await
+        arg.with(data, |value, _| Ok(value.clone())).await
     } else {
         let mut arg = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
-        arg.with(data.clone(), async |value, span| match value {
+        arg.with(data.clone(), |value, span| match value {
             Value::Map(map) => {
-                let (key_span, key) = (key.span, key.to_map_indexer(data.clone()).await?);
+                let (key_span, key) = (key.span, key.into_map_indexer()?);
                 let get = map.get_nested_clone(&key, key_span)?;
                 Ok(get)
             }
             Value::List(list) => {
-                let (i_span, i) = (key.span, key.to_list_indexer(data.clone()).await?);
+                let (i_span, i) = (key.span, key.into_list_indexer()?);
                 let get = list.get_nested_clone(&i, i_span)?;
                 Ok(get)
             }
@@ -1515,8 +1484,8 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         let mut old = args.pop_front().unwrap();
         let new = args.pop_front().unwrap();
 
-        old.with_mut(data.clone(), async |value, _| {
-            let new = potential_future!(new.into_value(data.clone()));
+        let new = potential_future!(new.into_value(data.clone()));
+        old.with_mut(data.clone(), |value, _| {
             *value = new;
             Ok(())
         })
@@ -1526,19 +1495,17 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     } else if args.len() == 3 {
         let mut arg = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
-        let to_set = args.pop_front().unwrap();
+        let mut to_set = args.pop_front().unwrap();
 
-        arg.with_mut(data.clone(), async |value, span| match value {
+        arg.with_mut(data.clone(), |value, span| match value {
             Value::Map(map) => {
-                let to_set = potential_future!(to_set.into_value(data.clone()));
-                let key = key.to_map_indexer(data.clone()).await?;
-                let to_set = map.set_nested(&key, to_set, span)?;
+                let key = key.into_map_indexer()?;
+                let to_set = map.set_nested(&key, to_set.take_value(), span)?;
                 Ok(to_set)
             }
             Value::List(list) => {
-                let to_set = potential_future!(to_set.into_value(data.clone()));
-                let key = key.to_list_indexer(data.clone()).await?;
-                let to_set = list.set_nested(&key, to_set, span)?;
+                let key = key.into_list_indexer()?;
+                let to_set = list.set_nested(&key, to_set.take_value(), span)?;
                 Ok(to_set)
             }
             _ => Err(value.conversion_err(&[FslType::Map]).span(span)),
@@ -1562,7 +1529,7 @@ pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut array = args.pop_front().unwrap();
 
     array
-        .with(data.clone(), async |value, span| match value {
+        .with(data.clone(), |value, span| match value {
             Value::Text(text) => Ok(Value::from(text.len())),
             Value::List(list) => Ok(Value::from(list.len())),
             _ => Err(value.conversion_err(INDEXABLE).span(span)),
@@ -1582,7 +1549,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     if args.len() == 1 {
         let arg = args.pop_front().unwrap();
         let (mut root, indexer) = arg.into_indexer(data.clone()).await?;
-        root.with_mut(data.clone(), async |value, span| match value {
+        root.with_mut(data.clone(), |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
                 let i = indexer.to_text_indexer().span(span)?;
@@ -1607,21 +1574,19 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         let mut collection = args.pop_front().unwrap();
         let indexer = args.pop_front().unwrap();
         collection
-            .with_mut(data.clone(), async |value, span| match value {
+            .with_mut(data.clone(), |value, span| match value {
                 Value::Text(source_str) => {
                     let mut text = std::mem::take(source_str).into_owned_string();
-                    let removed = text.remove(potential_future!(indexer.to_usize(data.clone())?));
+                    let removed = text.remove(indexer.into_usize()?);
                     *source_str = SourceStr::Owned(text);
                     Ok(Value::from(removed))
                 }
                 Value::List(list) => {
-                    let removed =
-                        list.remove_nested(&indexer.to_list_indexer(data.clone()).await?, span)?;
+                    let removed = list.remove_nested(&indexer.into_list_indexer()?, span)?;
                     Ok(removed)
                 }
                 Value::Map(map) => {
-                    let removed =
-                        map.remove_nested(&indexer.to_map_indexer(data.clone()).await?, span)?;
+                    let removed = map.remove_nested(&indexer.into_map_indexer()?, span)?;
                     Ok(removed)
                 }
                 _ => Err(value.conversion_err(&COLLECTION).span(span)),
@@ -1644,14 +1609,12 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let b_pos = args.pop_front().unwrap();
 
     array
-        .with_mut(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), |value, span| match value {
             Value::Text(text) => {
                 let text = std::mem::take(text).into_owned_string();
                 let mut chars: Vec<char> = text.chars().collect();
-                let (a_pos_span, a_pos) =
-                    (a_pos.span, potential_future!(a_pos.to_usize(data.clone())?));
-                let (b_pos_span, b_pos) =
-                    (b_pos.span, potential_future!(b_pos.to_usize(data.clone())?));
+                let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_usize()?);
+                let (b_pos_span, b_pos) = (b_pos.span, (b_pos.into_usize()?));
                 chars
                     .get(a_pos)
                     .ok_or(RuntimeError::IndexOutOfBounds.span(a_pos_span))?;
@@ -1663,8 +1626,8 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
                 Ok(())
             }
             Value::List(list) => {
-                let (a_pos_span, a_pos) = (a_pos.span, a_pos.to_list_indexer(data.clone()).await?);
-                let (b_pos_span, b_pos) = (b_pos.span, b_pos.to_list_indexer(data.clone()).await?);
+                let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_list_indexer()?);
+                let (b_pos_span, b_pos) = (b_pos.span, b_pos.into_list_indexer()?);
                 let mut tmp = std::mem::take(list.get_nested_mut(&a_pos, span)?);
                 let b = list.get_nested_mut(&b_pos, a_pos_span)?;
                 std::mem::swap(b, &mut tmp);
@@ -1690,16 +1653,13 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut args = command.take_args();
     let mut collection = args.pop_front().unwrap();
     let indexer = args.pop_front().unwrap();
-    let replacement = args.pop_front().unwrap();
+    let mut replacement = args.pop_front().unwrap();
     collection
-        .with_mut(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
-                let (i_span, i) = (
-                    indexer.span,
-                    potential_future!(indexer.to_usize(data.clone())?),
-                );
-                let replacement = potential_future!(replacement.to_text(data.clone())?);
+                let (i_span, i) = (indexer.span, (indexer.into_usize()?));
+                let replacement = replacement.into_str()?;
 
                 if !text.is_char_boundary(i) {
                     Err(RuntimeError::IndexOutOfBounds.span(i_span))
@@ -1714,15 +1674,15 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
                 }
             }
             Value::List(list) => {
-                let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
-                let replacement = potential_future!(replacement.into_value(data.clone()));
+                let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
+                let replacement = replacement.take_value();
                 let current = list.get_nested_mut(&i, i_span)?;
                 let old = std::mem::replace(current, replacement);
                 Ok(old)
             }
             Value::Map(map) => {
-                let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
-                let replacement = potential_future!(replacement.into_value(data.clone()));
+                let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
+                let replacement = replacement.take_value();
                 let current = map.get_nested_mut(&i, i_span)?;
                 let old = std::mem::replace(current, replacement);
                 Ok(old)
@@ -1743,16 +1703,13 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut args = command.take_args();
     let mut collection = args.pop_front().unwrap();
     let indexer = args.pop_front().unwrap();
-    let to_insert = args.pop_front().unwrap();
+    let mut to_insert = args.pop_front().unwrap();
     collection
-        .with_mut(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
-                let (i_span, i) = (
-                    indexer.span,
-                    potential_future!(indexer.to_usize(data.clone())?),
-                );
-                let to_insert = potential_future!(to_insert.to_text(data.clone())?);
+                let (i_span, i) = (indexer.span, (indexer.into_usize()?));
+                let to_insert = to_insert.into_str()?;
 
                 if !text.is_char_boundary(i) {
                     Err(RuntimeError::IndexOutOfBounds.span(i_span))
@@ -1763,14 +1720,14 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 }
             }
             Value::List(list) => {
-                let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
-                let to_insert = potential_future!(to_insert.into_value(data.clone()));
+                let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
+                let to_insert = to_insert.take_value();
                 list.insert_nested(&i, to_insert, i_span)?;
                 Ok(())
             }
             Value::Map(map) => {
-                let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
-                let to_insert = potential_future!(to_insert.into_value(data.clone()));
+                let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
+                let to_insert = to_insert.take_value();
                 map.insert_nested(&i, to_insert, i_span)?;
                 Ok(())
             }
@@ -1789,19 +1746,19 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
-    let to_push = args.pop_front().unwrap();
+    let mut to_push = args.pop_front().unwrap();
 
     array
-        .with_mut(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
-                let ch = potential_future!(to_push.to_text(data.clone())?);
+                let ch = to_push.into_str()?;
                 text.push_str(&ch);
                 *source_str = SourceStr::Owned(text);
                 Ok(())
             }
             Value::List(list) => {
-                let to_push = potential_future!(to_push.into_value(data.clone()));
+                let to_push = to_push.take_value();
                 list.push(to_push);
                 Ok(())
             }
@@ -1819,7 +1776,7 @@ pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut array = args.pop_front().unwrap();
 
     array
-        .with_mut(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
                 let popped = text.pop();
@@ -1956,7 +1913,7 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     };
 
     let value = arg
-        .with_mut(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), |value, span| match value {
             Value::Int(value) => {
                 *value += amount;
                 Ok(*value)
@@ -1984,7 +1941,7 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     };
 
     let value = arg
-        .with_mut(data.clone(), async |value, span| match value {
+        .with_mut(data.clone(), |value, span| match value {
             Value::Int(value) => {
                 *value -= amount;
                 Ok(*value)
@@ -2020,8 +1977,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
                 .span(collection_span)?
                 .take();
             Ok(Value::Bool(
-                item.with(data, async |value, _| Ok(list.contains(value)))
-                    .await?,
+                item.with(data, |value, _| Ok(list.contains(value))).await?,
             ))
         }
         Value::Map(map) => {
@@ -2446,7 +2402,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         .span(command.span));
     }
 
-    data.vars.write().await.push();
+    data.vars.write().push();
 
     let mut aliases: HashMap<SourceStr, SourceStr> = HashMap::new();
     let parameters = parameter_labels.len();
@@ -2463,9 +2419,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
                 let value = potential_future!(value.as_raw(data.clone()).span_future(arg_span)?);
                 data.vars
                     .write()
-                    .await
                     .insert(&parameter, Var::Mut(value))
-                    .await
                     .span(command.span)?;
             }
         }
@@ -2485,7 +2439,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
             break;
         }
     }
-    data.vars.write().await.pop().await;
+    data.vars.write().pop();
 
     data.pop_def();
 

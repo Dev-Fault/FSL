@@ -1,7 +1,5 @@
 use std::{pin::Pin, sync::Arc};
 
-use async_recursion::async_recursion;
-
 use crate::{
     InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
@@ -29,6 +27,64 @@ pub enum Value {
     Var(SourceStr),
     Command(Box<Command>),
     None,
+}
+
+pub trait FromValue<E> {
+    fn into_str(self) -> Result<SourceStr, E>;
+    fn into_usize(self) -> Result<usize, E>;
+    fn into_list_indexer(self) -> Result<Vec<usize>, E>;
+    fn into_map_indexer(self) -> Result<Vec<SourceStr>, E>;
+}
+
+impl FromValue<RuntimeError> for Value {
+    fn into_str(self) -> Result<SourceStr, RuntimeError> {
+        match self {
+            Value::Int(i) => Ok(SourceStr::Owned(i.to_string())),
+            Value::Float(f) => Ok(SourceStr::Owned(f.to_string())),
+            Value::Bool(b) => Ok(SourceStr::Owned(b.to_string())),
+            Value::Text(source_str) => Ok(source_str),
+            Value::Var(label) => Ok(label),
+            _ => Err(self.conversion_err(&[FslType::Text])),
+        }
+    }
+
+    fn into_usize(self) -> Result<usize, RuntimeError> {
+        if let Self::Int(i) = self {
+            Ok(i as usize)
+        } else {
+            Err(self.conversion_err(&[FslType::Text]))
+        }
+    }
+
+    fn into_list_indexer(self) -> Result<Vec<usize>, RuntimeError> {
+        match self {
+            Value::Int(i) => Ok(vec![i as usize]),
+            Value::List(values) => {
+                let values = values.take();
+                let mut indices = Vec::with_capacity(values.len());
+                for value in values {
+                    indices.push(value.into_usize()?);
+                }
+                Ok(indices)
+            }
+            _ => Err(self.conversion_err(&[FslType::Int, FslType::List])),
+        }
+    }
+
+    fn into_map_indexer(self) -> Result<Vec<SourceStr>, RuntimeError> {
+        match self {
+            Value::Text(source_str) => Ok(vec![source_str]),
+            Value::List(values) => {
+                let values = values.take();
+                let mut indices = Vec::with_capacity(values.len());
+                for value in values {
+                    indices.push(value.into_str()?);
+                }
+                Ok(indices)
+            }
+            _ => Err(self.conversion_err(&[FslType::Int, FslType::List])),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,7 +135,7 @@ impl Value {
         }
     }
 
-    pub async fn to_inner_type(&self, data: Arc<InterpreterData>) -> Result<FslType, RuntimeError> {
+    pub fn to_inner_type(&self, data: Arc<InterpreterData>) -> Result<FslType, RuntimeError> {
         Ok(match self {
             Value::Int(_) => FslType::Int,
             Value::Float(_) => FslType::Float,
@@ -87,7 +143,7 @@ impl Value {
             Value::Bool(_) => FslType::Bool,
             Value::List(_) => FslType::List,
             Value::Map(_) => FslType::Map,
-            Value::Var(label) => data.vars.read().await.get_type(label).await?,
+            Value::Var(label) => data.vars.read().get_type(label)?,
             Value::Command(_) => FslType::Command,
             Value::None => FslType::None,
         })
@@ -104,8 +160,7 @@ impl Value {
         self.to_type() == fsl_type
     }
 
-    #[async_recursion]
-    pub async fn mem_size(&self) -> Result<usize, RuntimeError> {
+    pub fn mem_size(&self) -> Result<usize, RuntimeError> {
         match &self {
             Value::Int(_) => Ok(size_of::<Value>()),
             Value::Float(_) => Ok(size_of::<Value>()),
@@ -117,7 +172,7 @@ impl Value {
                 let mut size: usize = size_of::<Value>();
                 for element in list.iter() {
                     size = size
-                        .checked_add(element.mem_size().await?)
+                        .checked_add(element.mem_size()?)
                         .ok_or(RuntimeError::Overflow)?;
                 }
                 Ok(size)
@@ -129,7 +184,7 @@ impl Value {
                     let value = key_value_pair.1;
                     size = size.checked_add(key.len()).ok_or(RuntimeError::Overflow)?;
                     size = size
-                        .checked_add(value.mem_size().await?)
+                        .checked_add(value.mem_size()?)
                         .ok_or(RuntimeError::Overflow)?;
                 }
                 Ok(size)
@@ -138,7 +193,7 @@ impl Value {
                 .checked_add(var.len())
                 .ok_or(RuntimeError::Overflow),
             Value::Command(command) => size_of::<Value>()
-                .checked_add(command.mem_size().await?)
+                .checked_add(command.mem_size()?)
                 .ok_or(RuntimeError::Overflow),
             Value::None => Ok(size_of::<Value>()),
         }
@@ -245,10 +300,10 @@ impl Value {
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|v| v.to_int(data)),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let value = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(value.to_int(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.to_int(data)
+            }
         }
     }
 
@@ -271,10 +326,10 @@ impl Value {
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_float(data)),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let value = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(value.to_float(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.to_float(data)
+            }
         }
     }
 
@@ -294,10 +349,10 @@ impl Value {
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_bool(data)),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let value = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(value.to_bool(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.to_bool(data)
+            }
         }
     }
 
@@ -341,10 +396,10 @@ impl Value {
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_text(data)),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let value = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(value.to_text(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.to_text(data)
+            }
         }
     }
 
@@ -363,10 +418,10 @@ impl Value {
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_list(data)),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let value = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(value.to_list(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.to_list(data)
+            }
         }
     }
 
@@ -385,10 +440,10 @@ impl Value {
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_map(data)),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let value = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(value.to_map(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.to_map(data)
+            }
         }
     }
 
@@ -413,10 +468,10 @@ impl Value {
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_number(data)),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let value = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(value.to_number(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.to_number(data)
+            }
         }
     }
 
@@ -479,12 +534,10 @@ impl Value {
                     Err(self.conversion_err(valid_types).into())
                 }
             }
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let var = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(
-                    var.as_raw_checked(valid_types, data.clone())?
-                ))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.as_raw_checked(valid_types, data)
+            }
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.as_raw(data)),
@@ -517,10 +570,10 @@ impl Value {
                 let map = potential_future!(result);
                 Ok(Value::Map(map))
             }))),
-            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let var = data.vars.read().await.get_clone(&label).await?;
-                Ok(potential_future!(var.as_raw(data.clone())?))
-            }))),
+            Value::Var(label) => {
+                let value = data.vars.read().get_clone(&label)?;
+                value.as_raw(data)
+            }
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.as_raw(data)),

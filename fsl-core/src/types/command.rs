@@ -213,11 +213,11 @@ pub struct Command {
 impl Eq for Command {}
 
 impl Command {
-    pub async fn mem_size(&self) -> Result<usize, RuntimeError> {
+    pub fn mem_size(&self) -> Result<usize, RuntimeError> {
         let mut size = size_of::<Command>();
         for arg in &self.args {
             size = size
-                .checked_add(arg.mem_size().await?)
+                .checked_add(arg.mem_size()?)
                 .ok_or(RuntimeError::Overflow)?;
         }
         Ok(size)
