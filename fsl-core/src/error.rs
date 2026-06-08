@@ -378,11 +378,11 @@ impl ToSpannedError for RuntimeError {
 }
 
 pub trait SpanError<T> {
-    fn span_err(self, span: Span) -> Result<T, SpannedError>;
+    fn span(self, span: Span) -> Result<T, SpannedError>;
 }
 
 impl<T, E: ToSpannedError> SpanError<T> for Result<T, E> {
-    fn span_err(self, span: Span) -> Result<T, SpannedError> {
+    fn span(self, span: Span) -> Result<T, SpannedError> {
         self.map_err(|e| e.span(span))
     }
 }

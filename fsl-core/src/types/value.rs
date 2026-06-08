@@ -3,8 +3,9 @@ use std::{pin::Pin, sync::Arc};
 use async_recursion::async_recursion;
 
 use crate::{
-    InterpreterData, await_result,
+    InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
+    potential_future,
     source_str::SourceStr,
     span::Span,
     types::{
@@ -246,7 +247,7 @@ impl Value {
                 .map_result(|v| v.to_int(data)),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_int(data.clone())?)
+                Ok(potential_future!(value.to_int(data.clone())?))
             }))),
         }
     }
@@ -272,7 +273,7 @@ impl Value {
                 .map_result(|r| r.to_float(data)),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_float(data.clone())?)
+                Ok(potential_future!(value.to_float(data.clone())?))
             }))),
         }
     }
@@ -295,7 +296,7 @@ impl Value {
                 .map_result(|r| r.to_bool(data)),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_bool(data.clone())?)
+                Ok(potential_future!(value.to_bool(data.clone())?))
             }))),
         }
     }
@@ -342,7 +343,7 @@ impl Value {
                 .map_result(|r| r.to_text(data)),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_text(data.clone())?)
+                Ok(potential_future!(value.to_text(data.clone())?))
             }))),
         }
     }
@@ -364,7 +365,7 @@ impl Value {
                 .map_result(|r| r.to_list(data)),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_list(data.clone())?)
+                Ok(potential_future!(value.to_list(data.clone())?))
             }))),
         }
     }
@@ -386,7 +387,7 @@ impl Value {
                 .map_result(|r| r.to_map(data)),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_map(data.clone())?)
+                Ok(potential_future!(value.to_map(data.clone())?))
             }))),
         }
     }
@@ -414,7 +415,7 @@ impl Value {
                 .map_result(|r| r.to_number(data)),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_number(data.clone())?)
+                Ok(potential_future!(value.to_number(data.clone())?))
             }))),
         }
     }
@@ -460,7 +461,7 @@ impl Value {
                 if valid_types.contains(&self.to_type()) {
                     Ok(PotentialFuture::Async(Box::pin(async move {
                         let result = self.to_list(data.clone())?;
-                        let list = await_result!(result)?;
+                        let list = potential_future!(result);
                         Ok(Value::List(list))
                     })))
                 } else {
@@ -471,7 +472,7 @@ impl Value {
                 if valid_types.contains(&self.to_type()) {
                     Ok(PotentialFuture::Async(Box::pin(async move {
                         let result = self.to_map(data.clone())?;
-                        let map = await_result!(result)?;
+                        let map = potential_future!(result);
                         Ok(Value::Map(map))
                     })))
                 } else {
@@ -480,7 +481,9 @@ impl Value {
             }
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let var = data.vars.read().await.get_clone(&label).await?;
-                await_result!(var.as_raw_checked(valid_types, data.clone())?)
+                Ok(potential_future!(
+                    var.as_raw_checked(valid_types, data.clone())?
+                ))
             }))),
             Value::Command(command) => command
                 .execute(data.clone())?
@@ -506,17 +509,17 @@ impl Value {
             Value::Text(_) => Ok(PotentialFuture::Sync(self)),
             Value::List(_) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let result = self.to_list(data.clone())?;
-                let list = await_result!(result)?;
+                let list = potential_future!(result);
                 Ok(Value::List(list))
             }))),
             Value::Map(_) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let result = self.to_map(data.clone())?;
-                let map = await_result!(result)?;
+                let map = potential_future!(result);
                 Ok(Value::Map(map))
             }))),
             Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let var = data.vars.read().await.get_clone(&label).await?;
-                await_result!(var.as_raw(data.clone())?)
+                Ok(potential_future!(var.as_raw(data.clone())?))
             }))),
             Value::Command(command) => command
                 .execute(data.clone())?
@@ -531,18 +534,18 @@ impl Value {
         data: Arc<InterpreterData>,
     ) -> ValueResult<Vec<usize>, ValueError> {
         Box::pin(async move {
-            let accesor = await_result!(self.as_raw_checked(LIST_KEY, data.clone())?)?;
+            let accesor = potential_future!(self.as_raw_checked(LIST_KEY, data.clone())?);
 
             match accesor {
                 Value::List(values) => {
                     let values = values.resolve(data.clone()).await?.take();
                     let mut indices = Vec::with_capacity(values.len());
                     for value in values {
-                        indices.push(await_result!(value.to_usize(data.clone())?)?);
+                        indices.push(potential_future!(value.to_usize(data.clone())?));
                     }
                     Ok(indices)
                 }
-                _ => Ok(vec![await_result!(accesor.to_usize(data.clone())?)?]),
+                _ => Ok(vec![potential_future!(accesor.to_usize(data.clone())?)]),
             }
         })
     }
@@ -552,18 +555,18 @@ impl Value {
         data: Arc<InterpreterData>,
     ) -> ValueResult<Vec<SourceStr>, ValueError> {
         Box::pin(async move {
-            let accesor = await_result!(self.as_raw_checked(MAP_KEY, data.clone())?)?;
+            let accesor = potential_future!(self.as_raw_checked(MAP_KEY, data.clone())?);
 
             match accesor {
                 Value::List(values) => {
                     let values = values.resolve(data.clone()).await?.take();
                     let mut indices = Vec::with_capacity(values.len());
                     for value in values {
-                        indices.push(await_result!(value.to_text(data.clone())?)?);
+                        indices.push(potential_future!(value.to_text(data.clone())?));
                     }
                     Ok(indices)
                 }
-                _ => Ok(vec![(await_result!(accesor.to_text(data.clone())?)?)]),
+                _ => Ok(vec![potential_future!(accesor.to_text(data.clone())?)]),
             }
         })
     }

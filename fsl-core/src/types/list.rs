@@ -86,36 +86,36 @@ impl List {
 
     pub fn get_nested_clone(&self, indices: &[usize], span: Span) -> Result<Value, SpannedError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).span_err(span),
+            [] => Err(RuntimeError::MissingIndex).span(span),
             [i] => {
                 let result = self.get(*i).cloned();
                 match result {
                     Some(value) => Ok(value),
-                    None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                    None => Err(RuntimeError::IndexOutOfBounds).span(span),
                 }
             }
             [i, rest @ ..] => match self.get(*i) {
                 Some(Value::List(inner_list)) => inner_list.get_nested_clone(rest, span),
-                Some(_) => Err(RuntimeError::NotIndexable).span_err(span),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                Some(_) => Err(RuntimeError::NotIndexable).span(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
         }
     }
 
     pub fn get_nested(&self, indices: &[usize], span: Span) -> Result<&Value, SpannedError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).span_err(span),
+            [] => Err(RuntimeError::MissingIndex).span(span),
             [i] => {
                 let result = self.get(*i);
                 match result {
                     Some(value) => Ok(value),
-                    None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                    None => Err(RuntimeError::IndexOutOfBounds).span(span),
                 }
             }
             [i, rest @ ..] => match self.get(*i) {
                 Some(Value::List(inner_list)) => inner_list.get_nested(rest, span),
-                Some(_) => Err(RuntimeError::NotIndexable).span_err(span),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                Some(_) => Err(RuntimeError::NotIndexable).span(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
         }
     }
@@ -126,15 +126,15 @@ impl List {
         span: Span,
     ) -> Result<&mut Value, SpannedError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).span_err(span),
+            [] => Err(RuntimeError::MissingIndex).span(span),
             [i] => match self.get_mut(*i) {
                 Some(i) => Ok(i),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
             [i, rest @ ..] => match self.get_mut(*i) {
                 Some(Value::List(inner_list)) => inner_list.get_nested_mut(rest, span),
-                Some(_) => Err(RuntimeError::NotIndexable).span_err(span),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                Some(_) => Err(RuntimeError::NotIndexable).span(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
         }
     }
@@ -146,34 +146,34 @@ impl List {
         span: Span,
     ) -> Result<Value, SpannedError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).span_err(span),
+            [] => Err(RuntimeError::MissingIndex).span(span),
             [i] => match self.get_mut(*i) {
                 Some(i) => {
                     let old = std::mem::take(i);
                     *i = value;
                     Ok(old)
                 }
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
             [i, rest @ ..] => match self.get_mut(*i) {
                 Some(Value::List(inner_list)) => inner_list.set_nested(rest, value, span),
-                Some(_) => Err(RuntimeError::NotIndexable).span_err(span),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                Some(_) => Err(RuntimeError::NotIndexable).span(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
         }
     }
 
     pub fn remove_nested(&mut self, indices: &[usize], span: Span) -> Result<Value, SpannedError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).span_err(span),
+            [] => Err(RuntimeError::MissingIndex).span(span),
             [i] => match self.get(*i) {
                 Some(_) => Ok(self.remove(*i)),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
             [i, rest @ ..] => match self.get_mut(*i) {
                 Some(Value::List(inner_list)) => inner_list.remove_nested(rest, span),
-                Some(_) => Err(RuntimeError::NotIndexable).span_err(span),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                Some(_) => Err(RuntimeError::NotIndexable).span(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
         }
     }
@@ -185,21 +185,21 @@ impl List {
         span: Span,
     ) -> Result<(), SpannedError> {
         match indices {
-            [] => Err(RuntimeError::MissingIndex).span_err(span),
+            [] => Err(RuntimeError::MissingIndex).span(span),
             [i] => {
                 if *i <= self.len() {
                     self.insert(*i, value_to_insert);
                     Ok(())
                 } else {
-                    Err(RuntimeError::IndexOutOfBounds).span_err(span)
+                    Err(RuntimeError::IndexOutOfBounds).span(span)
                 }
             }
             [i, rest @ ..] => match self.get_mut(*i) {
                 Some(Value::List(inner_list)) => {
                     inner_list.insert_nested(rest, value_to_insert, span)
                 }
-                Some(_) => Err(RuntimeError::NotIndexable).span_err(span),
-                None => Err(RuntimeError::IndexOutOfBounds).span_err(span),
+                Some(_) => Err(RuntimeError::NotIndexable).span(span),
+                None => Err(RuntimeError::IndexOutOfBounds).span(span),
             },
         }
     }

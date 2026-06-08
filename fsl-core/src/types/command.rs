@@ -71,13 +71,13 @@ impl<T: 'static, E: 'static> PotentialFuture<T, E> {
 pub type PotentialFutureResult<T, E> = Result<PotentialFuture<T, E>, E>;
 
 pub trait SpannedPotentialFutureResult<T> {
-    fn spanned(self, span: Span) -> PotentialFutureResult<T, SpannedError>;
+    fn span_future(self, span: Span) -> PotentialFutureResult<T, SpannedError>;
 }
 
 impl<T: 'static, E: ToSpannedError + 'static> SpannedPotentialFutureResult<T>
     for PotentialFutureResult<T, E>
 {
-    fn spanned(self, span: Span) -> PotentialFutureResult<T, SpannedError> {
+    fn span_future(self, span: Span) -> PotentialFutureResult<T, SpannedError> {
         match self {
             Ok(pf) => Ok(pf.map_err(move |e| e.span(span))),
             Err(_) => self
@@ -90,21 +90,14 @@ impl<T: 'static, E: ToSpannedError + 'static> SpannedPotentialFutureResult<T>
 #[macro_export]
 macro_rules! execute_command {
     ($command:expr, $data:expr) => {{
-        match $command.execute($data)? {
-            $crate::types::command::PotentialFuture::Sync(value) => Ok(value),
-            $crate::types::command::PotentialFuture::Async(pin) => pin.await,
+        match $command.execute($data) {
+            Ok(o) => match o {
+                $crate::types::command::PotentialFuture::Sync(t) => Ok(t),
+                $crate::types::command::PotentialFuture::Async(pin) => pin.await,
+            },
+            Err(e) => Err(e),
         }
     }};
-}
-
-#[macro_export]
-macro_rules! await_result {
-    ($expr:expr) => {
-        match $expr {
-            $crate::types::command::PotentialFuture::Sync(value) => Ok(value),
-            $crate::types::command::PotentialFuture::Async(pin) => pin.await,
-        }
-    };
 }
 
 #[macro_export]
@@ -475,7 +468,7 @@ impl Command {
                         continue;
                     }
                 };
-                let value = match value.as_raw(data.clone()).span_err(arg.span)? {
+                let value = match value.as_raw(data.clone()).span(arg.span)? {
                     PotentialFuture::Sync(value) => value,
                     PotentialFuture::Async(pin) => {
                         async_ops.push((i, (PendingOp::AlreadyRaw(pin))));
@@ -492,14 +485,14 @@ impl Command {
                     match op {
                         PendingOp::NeedsRaw(pin) => {
                             let value = pin.await?;
-                            let value = await_result!(value.as_raw(data.clone()).span_err(span)?)
-                                .span_err(span)?;
+                            let value =
+                                potential_future!(value.as_raw(data.clone()).span_future(span)?);
                             let arg = &mut self.args[i];
                             arg.replace_value(value);
                         }
                         PendingOp::AlreadyRaw(pin) => {
                             let arg = &mut self.args[i];
-                            let value = pin.await.span_err(span)?;
+                            let value = pin.await.span(span)?;
                             arg.replace_value(value);
                         }
                     }
@@ -530,7 +523,7 @@ impl Command {
                 }
                 PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
                     let command = pin.await?;
-                    await_result!(command.handle(data)?)
+                    Ok(potential_future!(command.handle(data)?))
                 }))),
             }
         } else {

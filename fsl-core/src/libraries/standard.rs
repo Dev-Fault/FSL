@@ -7,7 +7,7 @@ use std::{
 use rand::seq::SliceRandom;
 
 use crate::{
-    DEF, DEF_RULES, FslInterpreter, InterpreterData, await_result,
+    DEF, DEF_RULES, FslInterpreter, InterpreterData,
     data::UserDeclaration,
     def,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
@@ -43,13 +43,13 @@ pub fn f_add(command: Command, _: Arc<InterpreterData>) -> Result<Value, Spanned
                 int = int
                     .checked_add(i)
                     .ok_or(RuntimeError::Overflow)
-                    .span_err(arg.span)?;
+                    .span(arg.span)?;
             }
             Value::Float(f) => {
                 float += f;
                 is_float = true;
             }
-            Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(arg.span)? {
+            Value::Text(str) => match FslInterpreter::parse_number(&*str).span(arg.span)? {
                 Value::Int(i) => int += i,
                 Value::Float(f) => {
                     float += f;
@@ -187,7 +187,7 @@ pub async fn take_if_var(
         let data_clone = data.clone();
         let var = {
             let mut vars = data_clone.vars.write().await;
-            vars.take(&label).await.span_err(span)?
+            vars.take(&label).await.span(span)?
         };
         arg.with_mut(data, {
             async |value, _| {
@@ -211,7 +211,7 @@ pub async fn update_if_var(
     match var {
         Some(label) => {
             let mut vars = data.vars.write().await;
-            vars.store(&label, Var::Mut(value)).await.span_err(span)?;
+            vars.store(&label, Var::Mut(value)).await.span(span)?;
             Ok(Value::Var(label))
         }
         None => Ok(value),
@@ -245,18 +245,18 @@ pub fn add(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
                 int = int
                     .checked_add(i)
                     .ok_or(RuntimeError::Overflow)
-                    .span_err(arg_span)?;
+                    .span(arg_span)?;
             }
             Value::Float(f) => {
                 float += f;
                 is_float = true;
             }
-            Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(arg_span)? {
+            Value::Text(str) => match FslInterpreter::parse_number(&*str).span(arg_span)? {
                 Value::Int(i) => {
                     int = int
                         .checked_add(i)
                         .ok_or(RuntimeError::Overflow)
-                        .span_err(arg_span)?;
+                        .span(arg_span)?;
                 }
                 Value::Float(f) => {
                     float += f;
@@ -286,14 +286,14 @@ pub fn sub(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
             expected: ExpectedArgs::AtLeast(1),
             got: 0,
         })
-        .span_err(command.span)?;
+        .span(command.span)?;
 
     let arg_span = arg.span;
     let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
-        Value::Text(ref s) => match FslInterpreter::parse_number(s).span_err(arg_span)? {
+        Value::Text(ref s) => match FslInterpreter::parse_number(s).span(arg_span)? {
             Value::Int(i) => (i, 0.0, false, false),
             Value::Float(f) => (0, f, true, true),
             _ => unreachable!(),
@@ -310,7 +310,7 @@ pub fn sub(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
                     int = int
                         .checked_sub(i)
                         .ok_or(RuntimeError::Overflow)
-                        .span_err(arg_span)?;
+                        .span(arg_span)?;
                 } else {
                     float -= i as f64;
                 }
@@ -323,13 +323,13 @@ pub fn sub(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
                 is_float = true;
                 switched = true;
             }
-            Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(arg_span)? {
+            Value::Text(str) => match FslInterpreter::parse_number(&*str).span(arg_span)? {
                 Value::Int(i) => {
                     if !switched {
                         int = int
                             .checked_sub(i)
                             .ok_or(RuntimeError::Overflow)
-                            .span_err(arg_span)?;
+                            .span(arg_span)?;
                     } else {
                         float -= i as f64;
                     }
@@ -365,14 +365,14 @@ pub fn mul(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
             expected: ExpectedArgs::AtLeast(1),
             got: 0,
         })
-        .span_err(command.span)?;
+        .span(command.span)?;
 
     let arg_span = arg.span;
     let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
-        Value::Text(ref s) => match FslInterpreter::parse_number(s).span_err(arg_span)? {
+        Value::Text(ref s) => match FslInterpreter::parse_number(s).span(arg_span)? {
             Value::Int(i) => (i, 0.0, false, false),
             Value::Float(f) => (0, f, true, true),
             _ => unreachable!(),
@@ -390,7 +390,7 @@ pub fn mul(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
             *int = int
                 .checked_mul(i)
                 .ok_or(RuntimeError::Overflow)
-                .span_err(span)?;
+                .span(span)?;
         } else {
             *float *= i as f64;
         }
@@ -418,7 +418,7 @@ pub fn mul(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
         match value {
             Value::Int(i) => handle_int(i, &mut int, &mut float, switched, span)?,
             Value::Float(f) => handle_float(f, int, &mut float, &mut is_float, &mut switched)?,
-            Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(span)? {
+            Value::Text(str) => match FslInterpreter::parse_number(&*str).span(span)? {
                 Value::Int(i) => handle_int(i, &mut int, &mut float, switched, span)?,
                 Value::Float(f) => handle_float(f, int, &mut float, &mut is_float, &mut switched)?,
                 _ => unreachable!(),
@@ -445,14 +445,14 @@ pub fn div(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
             expected: ExpectedArgs::AtLeast(1),
             got: 0,
         })
-        .span_err(command.span)?;
+        .span(command.span)?;
 
     let arg_span = arg.span;
     let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
-        Value::Text(ref s) => match FslInterpreter::parse_number(s).span_err(arg_span)? {
+        Value::Text(ref s) => match FslInterpreter::parse_number(s).span(arg_span)? {
             Value::Int(i) => (i, 0.0, false, false),
             Value::Float(f) => (0, f, true, true),
             _ => unreachable!(),
@@ -473,7 +473,7 @@ pub fn div(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
             *int = int
                 .checked_div(i)
                 .ok_or(RuntimeError::Overflow)
-                .span_err(span)?;
+                .span(span)?;
         } else {
             *float /= i as f64;
         }
@@ -507,7 +507,7 @@ pub fn div(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedEr
             Value::Float(f) => {
                 handle_float(f, int, &mut float, &mut is_float, &mut switched, span)?
             }
-            Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(span)? {
+            Value::Text(str) => match FslInterpreter::parse_number(&*str).span(span)? {
                 Value::Int(i) => handle_int(i, &mut int, &mut float, switched, span)?,
                 Value::Float(f) => {
                     handle_float(f, int, &mut float, &mut is_float, &mut switched, span)?
@@ -536,14 +536,14 @@ pub fn modulus(command: Command, _: Arc<InterpreterData>) -> Result<Value, Spann
             expected: ExpectedArgs::AtLeast(1),
             got: 0,
         })
-        .span_err(command.span)?;
+        .span(command.span)?;
 
     let arg_span = arg.span;
     let first = arg.take_value();
     let (mut int, mut float, mut is_float, mut switched) = match first {
         Value::Int(i) => (i, 0.0, false, false),
         Value::Float(f) => (0, f, true, true),
-        Value::Text(ref s) => match FslInterpreter::parse_number(s).span_err(arg_span)? {
+        Value::Text(ref s) => match FslInterpreter::parse_number(s).span(arg_span)? {
             Value::Int(i) => (i, 0.0, false, false),
             Value::Float(f) => (0, f, true, true),
             _ => unreachable!(),
@@ -595,7 +595,7 @@ pub fn modulus(command: Command, _: Arc<InterpreterData>) -> Result<Value, Spann
             Value::Float(f) => {
                 handle_float(f, int, &mut float, &mut is_float, &mut switched, span)?
             }
-            Value::Text(str) => match FslInterpreter::parse_number(&*str).span_err(span)? {
+            Value::Text(str) => match FslInterpreter::parse_number(&*str).span(span)? {
                 Value::Int(i) => handle_int(i, &mut int, &mut float, switched, span)?,
                 Value::Float(f) => {
                     handle_float(f, int, &mut float, &mut is_float, &mut switched, span)?
@@ -622,7 +622,7 @@ pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let min = args.pop_front().unwrap();
     let max = args.pop_front().unwrap();
 
-    match await_result!(to_clamp.into_value(data.clone()))? {
+    match potential_future!(to_clamp.into_value(data.clone())) {
         Value::Int(to_clamp) => {
             let min = potential_future!(min.to_int(data.clone())?);
             let max = potential_future!(max.to_int(data.clone())?);
@@ -658,7 +658,7 @@ pub async fn clamp_min(
     let to_clamp = potential_future!(args.pop_front().unwrap().to_number(data.clone())?);
     let min = args.pop_front().unwrap();
 
-    match await_result!(to_clamp.into_value(data.clone()))? {
+    match potential_future!(to_clamp.into_value(data.clone())) {
         Value::Int(to_clamp) => {
             let min = potential_future!(min.to_int(data.clone())?);
 
@@ -692,7 +692,7 @@ pub async fn clamp_max(
     let to_clamp = potential_future!(args.pop_front().unwrap().to_number(data.clone())?);
     let max = args.pop_front().unwrap();
 
-    match await_result!(to_clamp.into_value(data.clone()))? {
+    match potential_future!(to_clamp.into_value(data.clone())) {
         Value::Int(to_clamp) => {
             let max = potential_future!(max.to_int(data.clone())?);
 
@@ -749,7 +749,7 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
         .await
         .store(&var, Var::Mut(arg))
         .await
-        .span_err(arg_span)?;
+        .span(arg_span)?;
 
     Ok(Value::Var(var))
 }
@@ -772,7 +772,7 @@ pub async fn assign(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         .await
         .store(&var, Var::Mut(arg))
         .await
-        .span_err(arg_span)?;
+        .span(arg_span)?;
 
     Ok(Value::Var(var))
 }
@@ -794,7 +794,7 @@ pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value
         .await
         .insert(&var, Var::Mut(arg))
         .await
-        .span_err(arg_span)?;
+        .span(arg_span)?;
 
     Ok(Value::Var(var))
 }
@@ -817,7 +817,7 @@ pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         .await
         .replace(var_label, arg)
         .await
-        .span_err(arg_span)?;
+        .span(arg_span)?;
 
     Ok(Value::Var(var))
 }
@@ -840,7 +840,7 @@ pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Val
         .await
         .insert(var_label, Var::Const(arg))
         .await
-        .span_err(arg_span)?;
+        .span(arg_span)?;
 
     Ok(Value::Var(var))
 }
@@ -860,14 +860,7 @@ pub async fn take(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut command = command;
     let mut arg = command.take_args().pop_front().unwrap();
     let var = arg.as_var_label(data.clone()).await?;
-    match data
-        .vars
-        .write()
-        .await
-        .remove(&var)
-        .await
-        .span_err(arg.span)?
-    {
+    match data.vars.write().await.remove(&var).await.span(arg.span)? {
         Some(value) => Ok(value),
         None => Ok(Value::None),
     }
@@ -962,9 +955,7 @@ pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, S
             .as_raw_checked(ANY, data.clone())?
     );
 
-    Ok(Value::Bool(
-        a.equal(&b, data.clone()).span_err(command.span)?,
-    ))
+    Ok(Value::Bool(a.equal(&b, data.clone()).span(command.span)?))
 }
 
 pub const SOFT_EQ_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
@@ -984,7 +975,7 @@ pub async fn soft_eq(command: Command, data: Arc<InterpreterData>) -> Result<Val
     );
 
     Ok(Value::Bool(
-        a.soft_equal(&b, data.clone()).span_err(command.span)?,
+        a.soft_equal(&b, data.clone()).span(command.span)?,
     ))
 }
 
@@ -1222,7 +1213,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             let arg = case.pop_front_arg().unwrap();
             let arg = potential_future!(arg.as_raw(data.clone())?);
 
-            if arg.equal(&expression, data.clone()).span_err(case_span)? {
+            if arg.equal(&expression, data.clone()).span(case_span)? {
                 return execute_command!(case, data);
             } else {
                 continue;
@@ -1283,7 +1274,7 @@ pub async fn while_command(
                 continue 'outer;
             }
         }
-        data.inc_total_loops().span_err(command.span)?;
+        data.inc_total_loops().span(command.span)?;
     }
 
     data.dec_loop_depth();
@@ -1319,7 +1310,7 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
                 continue 'outer;
             }
         }
-        data.inc_total_loops().span_err(command.span)?;
+        data.inc_total_loops().span(command.span)?;
     }
 
     data.dec_loop_depth();
@@ -1361,7 +1352,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .await
                         .insert(&label, Var::Mut(Value::from(c.to_string())))
                         .await
-                        .span_err(label_span)?;
+                        .span(label_span)?;
 
                     let command = command.clone().to_command(data.clone()).await?;
                     let command_value = execute_command!(command, data.clone())?;
@@ -1372,11 +1363,11 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .await
                         .remove(&label)
                         .await
-                        .span_err(label_span)?
+                        .span(label_span)?
                         .unwrap();
 
                     let replacement =
-                        potential_future!(character.to_text(data.clone()).spanned(label_span)?);
+                        potential_future!(character.to_text(data.clone()).span_future(label_span)?);
 
                     let i = (i as isize + offset) as usize;
                     text.replace_range(i..i + c.len_utf8(), &replacement);
@@ -1394,7 +1385,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                     }
                 }
 
-                data.inc_total_loops().span_err(command.span)?;
+                data.inc_total_loops().span(command.span)?;
             }
 
             update_if_var(var, Value::from(text), data.clone(), array_span).await?
@@ -1407,7 +1398,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .await
                         .insert(&label, Var::Mut(std::mem::take(element)))
                         .await
-                        .span_err(label_span)?;
+                        .span(label_span)?;
 
                     let command = command.clone().to_command(data.clone()).await?;
                     let command_value = execute_command!(command, data.clone())?;
@@ -1418,7 +1409,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .await
                         .remove(&label)
                         .await
-                        .span_err(label_span)?
+                        .span(label_span)?
                         .unwrap();
 
                     if data.get_return_flag() {
@@ -1433,7 +1424,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                     }
                 }
 
-                data.inc_total_loops().span_err(command.span)?;
+                data.inc_total_loops().span(command.span)?;
             }
 
             update_if_var(var, Value::List(list), data.clone(), array_span).await?
@@ -1525,13 +1516,13 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         let new = args.pop_front().unwrap();
 
         old.with_mut(data.clone(), async |value, _| {
-            let new = await_result!(new.into_value(data.clone()))?;
+            let new = potential_future!(new.into_value(data.clone()));
             *value = new;
             Ok(())
         })
         .await?;
 
-        Ok(await_result!(old.into_value(data))?)
+        Ok(potential_future!(old.into_value(data)))
     } else if args.len() == 3 {
         let mut arg = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
@@ -1539,13 +1530,13 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
         arg.with_mut(data.clone(), async |value, span| match value {
             Value::Map(map) => {
-                let to_set = await_result!(to_set.into_value(data.clone()))?;
+                let to_set = potential_future!(to_set.into_value(data.clone()));
                 let key = key.to_map_indexer(data.clone()).await?;
                 let to_set = map.set_nested(&key, to_set, span)?;
                 Ok(to_set)
             }
             Value::List(list) => {
-                let to_set = await_result!(to_set.into_value(data.clone()))?;
+                let to_set = potential_future!(to_set.into_value(data.clone()));
                 let key = key.to_list_indexer(data.clone()).await?;
                 let to_set = list.set_nested(&key, to_set, span)?;
                 Ok(to_set)
@@ -1594,18 +1585,18 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         root.with_mut(data.clone(), async |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
-                let i = indexer.to_text_indexer().span_err(span)?;
+                let i = indexer.to_text_indexer().span(span)?;
                 let removed = text.remove(i);
                 *source_str = SourceStr::Owned(text);
                 Ok(Value::from(removed))
             }
             Value::List(list) => {
-                let indexer = indexer.to_list_indexer().span_err(span)?;
+                let indexer = indexer.to_list_indexer().span(span)?;
                 let removed = list.remove_nested(&indexer, span)?;
                 Ok(removed)
             }
             Value::Map(map) => {
-                let indexer = indexer.to_map_indexer().span_err(span)?;
+                let indexer = indexer.to_map_indexer().span(span)?;
                 let removed = map.remove_nested(&indexer, span)?;
                 Ok(removed)
             }
@@ -1724,14 +1715,14 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
             }
             Value::List(list) => {
                 let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
-                let replacement = await_result!(replacement.into_value(data.clone()))?;
+                let replacement = potential_future!(replacement.into_value(data.clone()));
                 let current = list.get_nested_mut(&i, i_span)?;
                 let old = std::mem::replace(current, replacement);
                 Ok(old)
             }
             Value::Map(map) => {
                 let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
-                let replacement = await_result!(replacement.into_value(data.clone()))?;
+                let replacement = potential_future!(replacement.into_value(data.clone()));
                 let current = map.get_nested_mut(&i, i_span)?;
                 let old = std::mem::replace(current, replacement);
                 Ok(old)
@@ -1773,13 +1764,13 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             }
             Value::List(list) => {
                 let (i_span, i) = (indexer.span, indexer.to_list_indexer(data.clone()).await?);
-                let to_insert = await_result!(to_insert.into_value(data.clone()))?;
+                let to_insert = potential_future!(to_insert.into_value(data.clone()));
                 list.insert_nested(&i, to_insert, i_span)?;
                 Ok(())
             }
             Value::Map(map) => {
                 let (i_span, i) = (indexer.span, indexer.to_map_indexer(data.clone()).await?);
-                let to_insert = await_result!(to_insert.into_value(data.clone()))?;
+                let to_insert = potential_future!(to_insert.into_value(data.clone()));
                 map.insert_nested(&i, to_insert, i_span)?;
                 Ok(())
             }
@@ -1810,7 +1801,7 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
                 Ok(())
             }
             Value::List(list) => {
-                let to_push = await_result!(to_push.into_value(data.clone()))?;
+                let to_push = potential_future!(to_push.into_value(data.clone()));
                 list.push(to_push);
                 Ok(())
             }
@@ -1897,12 +1888,12 @@ pub async fn slice_replace(
         potential_future!(
             std::mem::take(&mut range[0])
                 .to_usize(data.clone())
-                .spanned(command.span)?
+                .span_future(command.span)?
         ),
         potential_future!(
             std::mem::take(&mut range[1])
                 .to_usize(data.clone())
-                .spanned(command.span)?
+                .span_future(command.span)?
         ),
     );
 
@@ -2026,7 +2017,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
             let list = list
                 .resolve(data.clone())
                 .await
-                .span_err(collection_span)?
+                .span(collection_span)?
                 .take();
             Ok(Value::Bool(
                 item.with(data, async |value, _| Ok(list.contains(value)))
@@ -2463,19 +2454,19 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         let arg = args.pop_front().unwrap();
         let arg_span = arg.span;
         let parameter = parameter_labels.pop_front().unwrap();
-        let value = await_result!(arg.into_value(data.clone()))?;
+        let value = potential_future!(arg.into_value(data.clone()));
         match value {
             Value::Var(var) => {
                 aliases.insert(parameter, var);
             }
             _ => {
-                let value = potential_future!(value.as_raw(data.clone()).spanned(arg_span)?);
+                let value = potential_future!(value.as_raw(data.clone()).span_future(arg_span)?);
                 data.vars
                     .write()
                     .await
                     .insert(&parameter, Var::Mut(value))
                     .await
-                    .span_err(command.span)?;
+                    .span(command.span)?;
             }
         }
     }

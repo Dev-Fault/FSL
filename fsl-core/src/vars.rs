@@ -125,7 +125,7 @@ impl VarStore {
         for map in self.data.iter().rev() {
             let mut map = map.write().await;
             if let Some(var) = map.get_mut(label) {
-                return f(var.inner_mut(label).span_err(span)?, span).await;
+                return f(var.inner_mut(label).span(span)?, span).await;
             }
         }
 

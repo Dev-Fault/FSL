@@ -388,26 +388,11 @@ impl FslInterpreter {
         let result = Self::process_expression(data.clone(), defs, expression).await;
         match result {
             Ok(value) => match value {
-                Value::Command(command) => {
-                    let result = command.execute(data.clone());
-                    let err = match result {
-                        Ok(pf) => {
-                            let result = await_result!(pf);
-                            match result {
-                                Ok(_) => {
-                                    return Ok(());
-                                }
-                                Err(e) => e,
-                            }
-                        }
-                        Err(e) => e,
-                    };
-                    if err.exited_program() {
-                        Err(InterpreterError::Exit)
-                    } else {
-                        Err(err.into_interpreter_error(data))
-                    }
-                }
+                Value::Command(command) => match execute_command!(command, data.clone()) {
+                    Ok(_) => Ok(()),
+                    Err(e) if e.exited_program() => Err(InterpreterError::Exit),
+                    Err(e) => Err(e.into_interpreter_error(data)),
+                },
                 _ => {
                     unreachable!("parse expression should always return a command")
                 }
@@ -512,7 +497,7 @@ impl FslInterpreter {
             match arg.kind {
                 ArgKind::Number(number) => {
                     let number = Self::parse_number(number)
-                        .span_err(span)
+                        .span(span)
                         .into_interpreter_error(data.clone())?;
                     Ok(Argument::new(number, span))
                 }
@@ -534,10 +519,12 @@ impl FslInterpreter {
                     let mut list: Vec<Value> = Vec::with_capacity(list_arg.data.len());
                     for arg in list_arg.data {
                         let parsed_arg = Self::process_arg(data.clone(), &defs, arg).await?;
-                        list.push(
-                            await_result!(parsed_arg.into_value(data.clone()))
-                                .into_interpreter_error(data.clone())?,
-                        );
+                        let data_clone = data.clone();
+                        list.push(potential_future!(
+                            parsed_arg
+                                .into_value(data.clone())
+                                .map_err(move |e| e.into_interpreter_error(data_clone))
+                        ));
                     }
                     Ok(Argument::new(Value::from(list), span))
                 }
@@ -546,14 +533,15 @@ impl FslInterpreter {
                     let mut value_map = HashMap::with_capacity(map.data.len());
 
                     for (key, value) in map.data {
+                        let data_clone = data.clone();
                         value_map.insert(
                             SourceStr::Borrowed(data.source.slice(Span::from(&key))),
-                            await_result!(
+                            potential_future!(
                                 Self::process_arg(data.clone(), &defs, value)
                                     .await?
                                     .into_value(data.clone())
-                            )
-                            .into_interpreter_error(data.clone())?,
+                                    .map_err(move |e| e.into_interpreter_error(data_clone))
+                            ),
                         );
                     }
 
@@ -568,21 +556,25 @@ impl FslInterpreter {
                     let root = Self::process_arg(data.clone(), &defs, *path.root).await?;
                     let mut segments = Vec::with_capacity(path.segments.len());
                     for arg in path.segments {
+                        let data_clone = data.clone();
                         let segment_span = Span::from(&arg.token);
-                        let key = await_result!(
+                        let key = potential_future!(
                             Self::process_arg(data.clone(), &defs, arg)
                                 .await?
                                 .into_value(data.clone())
-                        )
-                        .into_interpreter_error(data.clone())?;
+                                .map_err(move |e| e.into_interpreter_error(data_clone))
+                        );
                         let segment = AccessorSegment::new(key, segment_span);
                         segments.push(segment);
                     }
 
                     let root_span = root.span;
+                    let data_clone = data.clone();
                     let root = AccessorSegment::new(
-                        await_result!(root.into_value(data.clone()))
-                            .into_interpreter_error(data.clone())?,
+                        potential_future!(
+                            root.into_value(data.clone())
+                                .map_err(move |e| e.into_interpreter_error(data_clone))
+                        ),
                         root_span,
                     );
                     let accessor = Accessor::new(root, segments);
@@ -608,7 +600,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     for (i, mut arg) in args.into_iter().enumerate() {
         let span = arg.span;
         let kind = arg.to_type(data.clone()).await?;
-        match await_result!(arg.into_value(data.clone()))? {
+        match potential_future!(arg.into_value(data.clone())) {
             Value::Var(label) => {
                 if encountered_command {
                     return Err(RuntimeError::ParametersOutOfOrder.span(command.span));
@@ -638,7 +630,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         .with_mut_def(&label, &call_stack, |decl| {
             decl.define(UserDefintion::new(parameters, commands));
         })
-        .span_err(label_span)?;
+        .span(label_span)?;
     Ok(Value::None)
 }
 

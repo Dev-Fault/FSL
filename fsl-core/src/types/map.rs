@@ -107,7 +107,7 @@ impl Map {
 
     pub fn remove_nested(&mut self, keys: &[SourceStr], span: Span) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span),
+            [] => Err(RuntimeError::MissingKey).span(span),
             [key] => {
                 let return_value = self.remove(key);
                 Ok(return_value.unwrap_or(Value::None))
@@ -133,7 +133,7 @@ impl Map {
         span: Span,
     ) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span),
+            [] => Err(RuntimeError::MissingKey).span(span),
             [key] => {
                 let return_value = self.insert(key.clone(), value);
                 Ok(return_value.unwrap_or(Value::None))
@@ -154,7 +154,7 @@ impl Map {
 
     pub fn get_nested_clone(&self, keys: &[SourceStr], span: Span) -> Result<Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span),
+            [] => Err(RuntimeError::MissingKey).span(span),
             [key] => match self.get(key).cloned() {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
@@ -178,7 +178,7 @@ impl Map {
 
     pub fn get_nested(&self, keys: &[SourceStr], span: Span) -> Result<&Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span),
+            [] => Err(RuntimeError::MissingKey).span(span),
             [key] => match self.get(key) {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
@@ -206,7 +206,7 @@ impl Map {
         span: Span,
     ) -> Result<&mut Value, SpannedError> {
         match keys {
-            [] => Err(RuntimeError::MissingKey).span_err(span),
+            [] => Err(RuntimeError::MissingKey).span(span),
             [key] => match self.get_mut(key) {
                 Some(value) => Ok(value),
                 None => Err(RuntimeError::NonExistantKey {
