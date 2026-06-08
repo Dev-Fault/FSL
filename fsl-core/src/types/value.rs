@@ -7,7 +7,7 @@ use crate::{
     source_str::SourceStr,
     span::Span,
     types::{
-        FslType, LIST_KEY, MAP_KEY,
+        LIST_KEY, MAP_KEY, ValueType,
         argument::Argument,
         command::{Command, PotentialFuture, PotentialFutureResult},
         list::List,
@@ -32,6 +32,10 @@ pub enum Value {
 pub trait FromValue<E> {
     fn into_str(self) -> Result<SourceStr, E>;
     fn into_usize(self) -> Result<usize, E>;
+    fn into_list(self) -> Result<List, E>;
+    fn into_map(self) -> Result<Map, E>;
+    fn into_var(self) -> Result<SourceStr, E>;
+    fn into_command(self) -> Result<Box<Command>, E>;
     fn into_list_indexer(self) -> Result<Vec<usize>, E>;
     fn into_map_indexer(self) -> Result<Vec<SourceStr>, E>;
 }
@@ -44,7 +48,7 @@ impl FromValue<RuntimeError> for Value {
             Value::Bool(b) => Ok(SourceStr::Owned(b.to_string())),
             Value::Text(source_str) => Ok(source_str),
             Value::Var(label) => Ok(label),
-            _ => Err(self.conversion_err(&[FslType::Text])),
+            _ => Err(self.conversion_err(&[ValueType::Text])),
         }
     }
 
@@ -52,7 +56,7 @@ impl FromValue<RuntimeError> for Value {
         if let Self::Int(i) = self {
             Ok(i as usize)
         } else {
-            Err(self.conversion_err(&[FslType::Text]))
+            Err(self.conversion_err(&[ValueType::Int]))
         }
     }
 
@@ -67,7 +71,7 @@ impl FromValue<RuntimeError> for Value {
                 }
                 Ok(indices)
             }
-            _ => Err(self.conversion_err(&[FslType::Int, FslType::List])),
+            _ => Err(self.conversion_err(&[ValueType::Int, ValueType::List])),
         }
     }
 
@@ -82,7 +86,39 @@ impl FromValue<RuntimeError> for Value {
                 }
                 Ok(indices)
             }
-            _ => Err(self.conversion_err(&[FslType::Int, FslType::List])),
+            _ => Err(self.conversion_err(&[ValueType::Int, ValueType::List])),
+        }
+    }
+
+    fn into_list(self) -> Result<List, RuntimeError> {
+        if let Self::List(list) = self {
+            Ok(list)
+        } else {
+            Err(self.conversion_err(&[ValueType::List]))
+        }
+    }
+
+    fn into_map(self) -> Result<Map, RuntimeError> {
+        if let Self::Map(map) = self {
+            Ok(map)
+        } else {
+            Err(self.conversion_err(&[ValueType::List]))
+        }
+    }
+
+    fn into_var(self) -> Result<SourceStr, RuntimeError> {
+        if let Self::Var(label) = self {
+            Ok(label)
+        } else {
+            Err(self.conversion_err(&[ValueType::List]))
+        }
+    }
+
+    fn into_command(self) -> Result<Box<Command>, RuntimeError> {
+        if let Self::Command(command) = self {
+            Ok(command)
+        } else {
+            Err(self.conversion_err(&[ValueType::List]))
         }
     }
 }
@@ -121,31 +157,31 @@ impl Default for Value {
 }
 
 impl Value {
-    pub fn to_type(&self) -> FslType {
+    pub fn to_type(&self) -> ValueType {
         match self {
-            Value::Int(_) => FslType::Int,
-            Value::Float(_) => FslType::Float,
-            Value::Text(_) => FslType::Text,
-            Value::Bool(_) => FslType::Bool,
-            Value::List(_) => FslType::List,
-            Value::Map(_) => FslType::Map,
-            Value::Var(_) => FslType::Var,
-            Value::Command(_) => FslType::Command,
-            Value::None => FslType::None,
+            Value::Int(_) => ValueType::Int,
+            Value::Float(_) => ValueType::Float,
+            Value::Text(_) => ValueType::Text,
+            Value::Bool(_) => ValueType::Bool,
+            Value::List(_) => ValueType::List,
+            Value::Map(_) => ValueType::Map,
+            Value::Var(_) => ValueType::Var,
+            Value::Command(_) => ValueType::Command,
+            Value::None => ValueType::None,
         }
     }
 
-    pub fn to_inner_type(&self, data: Arc<InterpreterData>) -> Result<FslType, RuntimeError> {
+    pub fn to_inner_type(&self, data: Arc<InterpreterData>) -> Result<ValueType, RuntimeError> {
         Ok(match self {
-            Value::Int(_) => FslType::Int,
-            Value::Float(_) => FslType::Float,
-            Value::Text(_) => FslType::Text,
-            Value::Bool(_) => FslType::Bool,
-            Value::List(_) => FslType::List,
-            Value::Map(_) => FslType::Map,
+            Value::Int(_) => ValueType::Int,
+            Value::Float(_) => ValueType::Float,
+            Value::Text(_) => ValueType::Text,
+            Value::Bool(_) => ValueType::Bool,
+            Value::List(_) => ValueType::List,
+            Value::Map(_) => ValueType::Map,
             Value::Var(label) => data.vars.read().get_type(label)?,
-            Value::Command(_) => FslType::Command,
-            Value::None => FslType::None,
+            Value::Command(_) => ValueType::Command,
+            Value::None => ValueType::None,
         })
     }
 
@@ -156,8 +192,23 @@ impl Value {
         }
     }
 
-    pub fn is_type(&self, fsl_type: FslType) -> bool {
+    pub fn is_type(&self, fsl_type: ValueType) -> bool {
         self.to_type() == fsl_type
+    }
+
+    pub fn is_literal(&self) -> bool {
+        match self {
+            Value::Var(_) => false,
+            Value::Command(_) => false,
+            Value::List(_) => false,
+            Value::Map(_) => false,
+
+            Value::Int(_) => true,
+            Value::Float(_) => true,
+            Value::Bool(_) => true,
+            Value::Text(_) => true,
+            Value::None => true,
+        }
     }
 
     pub fn mem_size(&self) -> Result<usize, RuntimeError> {
@@ -209,18 +260,18 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => Ok(*a == *b),
             (Value::Text(a), Value::Int(b)) => Ok(a
                 .parse::<i64>()
-                .map_err(|_| self.conversion_err_to_type(FslType::Int))?
+                .map_err(|_| self.conversion_err_to_type(ValueType::Int))?
                 == *b),
             (Value::Int(a), Value::Text(b)) => Ok(*a
                 == b.parse::<i64>()
-                    .map_err(|_| self.conversion_err_to_type(FslType::Int))?),
+                    .map_err(|_| self.conversion_err_to_type(ValueType::Int))?),
             (Value::Text(a), Value::Float(b)) => Ok(a
                 .parse::<f64>()
-                .map_err(|_| self.conversion_err_to_type(FslType::Float))?
+                .map_err(|_| self.conversion_err_to_type(ValueType::Float))?
                 == *b),
             (Value::Float(a), Value::Text(b)) => Ok(*a
                 == b.parse::<f64>()
-                    .map_err(|_| self.conversion_err_to_type(FslType::Float))?),
+                    .map_err(|_| self.conversion_err_to_type(ValueType::Float))?),
             (Value::List(a), Value::List(b)) => Ok(a == b),
             (Value::Map(a), Value::Map(b)) => Ok(a == b),
             (Value::None, Value::None) => Ok(true),
@@ -249,18 +300,18 @@ impl Value {
             (Value::Text(a), Value::Text(b)) => Ok(*a == *b),
             (Value::Text(a), Value::Int(b)) => Ok(a
                 .parse::<i64>()
-                .map_err(|_| self.conversion_err_to_type(FslType::Int))?
+                .map_err(|_| self.conversion_err_to_type(ValueType::Int))?
                 == *b),
             (Value::Int(a), Value::Text(b)) => Ok(*a
                 == b.parse::<i64>()
-                    .map_err(|_| self.conversion_err_to_type(FslType::Int))?),
+                    .map_err(|_| self.conversion_err_to_type(ValueType::Int))?),
             (Value::Text(a), Value::Float(b)) => Ok(a
                 .parse::<f64>()
-                .map_err(|_| self.conversion_err_to_type(FslType::Float))?
+                .map_err(|_| self.conversion_err_to_type(ValueType::Float))?
                 == *b),
             (Value::Float(a), Value::Text(b)) => Ok(*a
                 == b.parse::<f64>()
-                    .map_err(|_| self.conversion_err_to_type(FslType::Float))?),
+                    .map_err(|_| self.conversion_err_to_type(ValueType::Float))?),
             (Value::List(a), Value::List(b)) => {
                 if a == b {
                     return Ok(true);
@@ -286,7 +337,7 @@ impl Value {
     }
 
     pub fn to_int(self, data: Arc<InterpreterData>) -> PotentialFutureResult<i64, ValueError> {
-        let to_type = FslType::Int;
+        let to_type = ValueType::Int;
         match self {
             Value::Int(value) => Ok(PotentialFuture::Sync(value)),
             Value::Float(value) => Ok(PotentialFuture::Sync(value as i64)),
@@ -312,7 +363,7 @@ impl Value {
     }
 
     pub fn to_float(self, data: Arc<InterpreterData>) -> PotentialFutureResult<f64, ValueError> {
-        let to_type = FslType::Int;
+        let to_type = ValueType::Int;
         match self {
             Value::Int(value) => Ok(PotentialFuture::Sync(value as f64)),
             Value::Float(value) => Ok(PotentialFuture::Sync(value)),
@@ -334,7 +385,7 @@ impl Value {
     }
 
     pub fn to_bool(self, data: Arc<InterpreterData>) -> PotentialFutureResult<bool, ValueError> {
-        let to_type = FslType::Bool;
+        let to_type = ValueType::Bool;
         match self {
             Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
             Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
@@ -360,7 +411,7 @@ impl Value {
         self,
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<SourceStr, ValueError> {
-        let to_type = FslType::Var;
+        let to_type = ValueType::Var;
         match self {
             Value::Int(_)
             | Value::Float(_)
@@ -380,7 +431,7 @@ impl Value {
         self,
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<SourceStr, ValueError> {
-        let to_type = FslType::Text;
+        let to_type = ValueType::Text;
         match self {
             Value::Int(value) => Ok(PotentialFuture::Sync(value.to_string().into())),
             Value::Float(value) => Ok(PotentialFuture::Sync(value.to_string().into())),
@@ -404,7 +455,7 @@ impl Value {
     }
 
     pub fn to_list(self, data: Arc<InterpreterData>) -> PotentialFutureResult<List, ValueError> {
-        let to_type = FslType::Var;
+        let to_type = ValueType::Var;
         match self {
             Value::Int(_)
             | Value::Float(_)
@@ -426,7 +477,7 @@ impl Value {
     }
 
     pub fn to_map(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Map, ValueError> {
-        let to_type = FslType::Var;
+        let to_type = ValueType::Var;
         match self {
             Value::Int(_)
             | Value::Float(_)
@@ -448,7 +499,7 @@ impl Value {
     }
 
     pub fn to_number(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, ValueError> {
-        let to_type = FslType::Int;
+        let to_type = ValueType::Int;
         match self {
             Value::Int(_) => Ok(PotentialFuture::Sync(self)),
             Value::Float(_) => Ok(PotentialFuture::Sync(self)),
@@ -480,7 +531,7 @@ impl Value {
     /// Expensive, use as_base if list/map inner values do not need to be reduced
     pub fn as_raw_checked(
         self,
-        valid_types: &'static [FslType],
+        valid_types: &'static [ValueType],
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<Value, ValueError> {
         match self {
@@ -630,7 +681,7 @@ impl Value {
         } else {
             Err(RuntimeError::InvalidConversion {
                 from: self.to_string(),
-                to: vec![FslType::Command],
+                to: vec![ValueType::Command],
             }
             .into())
         }
@@ -650,7 +701,7 @@ impl Value {
     pub fn as_command_label(&self) -> Result<SourceStr, ValueError> {
         match self {
             Value::Command(command) => Ok(command.label()),
-            _ => Err(self.conversion_err_to_type(FslType::Command).into()),
+            _ => Err(self.conversion_err_to_type(ValueType::Command).into()),
         }
     }
 
@@ -664,14 +715,14 @@ impl Value {
         Self::Command(Box::new(command))
     }
 
-    fn conversion_err_to_type(&self, to: FslType) -> RuntimeError {
+    fn conversion_err_to_type(&self, to: ValueType) -> RuntimeError {
         RuntimeError::InvalidConversion {
             from: self.to_string(),
             to: vec![to],
         }
     }
 
-    pub fn conversion_err(&self, to: &[FslType]) -> RuntimeError {
+    pub fn conversion_err(&self, to: &[ValueType]) -> RuntimeError {
         RuntimeError::InvalidConversion {
             from: self.to_string(),
             to: to.to_vec(),

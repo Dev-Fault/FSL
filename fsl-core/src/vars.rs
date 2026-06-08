@@ -7,7 +7,7 @@ use crate::{
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     source_str::SourceStr,
     span::Span,
-    types::{FslType, value::Value},
+    types::{ValueType, value::Value},
 };
 
 const MEGABYTE: usize = 1024 * 1024;
@@ -50,7 +50,7 @@ impl Var {
         }
     }
 
-    pub fn type_of(&self) -> FslType {
+    pub fn type_of(&self) -> ValueType {
         match self {
             Var::Const(value) => value.to_type(),
             Var::Mut(value) => value.to_type(),
@@ -158,7 +158,7 @@ impl VarStore {
         })
     }
 
-    pub fn get_type(&self, label: &SourceStr) -> Result<FslType, RuntimeError> {
+    pub fn get_type(&self, label: &SourceStr) -> Result<ValueType, RuntimeError> {
         for map in self.data.iter().rev() {
             if let Some(var) = map.read().get(label) {
                 return Ok(var.type_of());

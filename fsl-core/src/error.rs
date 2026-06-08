@@ -6,7 +6,7 @@ use crate::{
     data::InterpreterData,
     parser::ParseError,
     span::Span,
-    types::{FslType, command::ExpectedArgs},
+    types::{ValueType, command::ExpectedArgs},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,8 +144,8 @@ pub enum RuntimeError {
     WrongArgType {
         command_label: String,
         arg_number: usize,
-        fsl_type: FslType,
-        expected: &'static [FslType],
+        fsl_type: ValueType,
+        expected: &'static [ValueType],
     },
     MissingArg {
         command_label: String,
@@ -184,7 +184,7 @@ pub enum RuntimeError {
         label: String,
     },
     InvalidVarValue {
-        invalid_value: FslType,
+        invalid_value: ValueType,
     },
     // Type
     NotAVar {
@@ -195,7 +195,7 @@ pub enum RuntimeError {
     },
     FailedParse {
         value: String,
-        valid_types: Vec<FslType>,
+        valid_types: Vec<ValueType>,
     },
     InvalidComparison {
         a: String,
@@ -203,7 +203,7 @@ pub enum RuntimeError {
     },
     InvalidConversion {
         from: String,
-        to: Vec<FslType>,
+        to: Vec<ValueType>,
     },
     // Index
     IndexOutOfBounds,
@@ -216,8 +216,8 @@ pub enum RuntimeError {
         key: String,
     },
     InvalidIndex {
-        being_indexed: FslType,
-        should_be: FslType,
+        being_indexed: ValueType,
+        should_be: ValueType,
     },
     // Limits
     LoopLimitReached,

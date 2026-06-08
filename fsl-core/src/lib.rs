@@ -25,9 +25,12 @@ use crate::{
     source_str::SourceStr,
     span::Span,
     types::{
-        FslType,
+        ValueType,
         argument::{Accessor, AccessorSegment, Argument},
-        command::{Command, CommandDef, CommandSignature, ExpectedArgs, Handler},
+        command::{
+            Command, CommandDef, CommandSignature, ExpectedArgs, Handler,
+            SpannedPotentialFutureResult,
+        },
         value::Value,
     },
 };
@@ -418,7 +421,7 @@ impl FslInterpreter {
             }
 
             command
-                .set_args(args)
+                .set_args(args, data.clone())
                 .into_interpreter_error(data.clone())?;
 
             Ok(Value::from_command(command))
@@ -445,7 +448,7 @@ impl FslInterpreter {
                 }
 
                 command
-                    .set_args(args)
+                    .set_args(args, data.clone())
                     .into_interpreter_error(data.clone())?;
 
                 Ok(Value::Command(Box::new(command)))
@@ -465,7 +468,7 @@ impl FslInterpreter {
                 Ok(value) => Ok(Value::Float(value)),
                 Err(_) => Err(RuntimeError::FailedParse {
                     value: number.to_string(),
-                    valid_types: vec![FslType::Float],
+                    valid_types: vec![ValueType::Float],
                 }),
             }
         } else if let Ok(value) = number.parse::<i64>() {
@@ -475,7 +478,7 @@ impl FslInterpreter {
         } else {
             Err(RuntimeError::FailedParse {
                 value: number.to_string(),
-                valid_types: vec![FslType::Int, FslType::Int],
+                valid_types: vec![ValueType::Int, ValueType::Int],
             })
         }
     }
@@ -553,7 +556,7 @@ impl FslInterpreter {
                     Ok(Argument::new(value, span))
                 }
                 ArgKind::Path(path) => {
-                    let root = Self::process_arg(data.clone(), &defs, *path.root).await?;
+                    let mut root = Self::process_arg(data.clone(), &defs, *path.root).await?;
                     let mut segments = Vec::with_capacity(path.segments.len());
                     for arg in path.segments {
                         let data_clone = data.clone();
@@ -592,7 +595,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut args = command.take_args();
     let mut label = args.pop_front().unwrap();
     let label_span = label.span;
-    let label = label.as_var_label(data.clone()).await?;
+    let label = label.as_var_label(data.clone())?;
     let mut parameters: VecDeque<SourceStr> = VecDeque::new();
     let mut commands: Vec<Command> = Vec::new();
 
@@ -616,7 +619,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
                     command_label: command.label().to_string(),
                     arg_number: i,
                     fsl_type: kind,
-                    expected: &[FslType::Var, FslType::Command],
+                    expected: &[ValueType::Var, ValueType::Command],
                 }
                 .span(span));
             }

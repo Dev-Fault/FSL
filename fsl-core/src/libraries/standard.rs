@@ -15,7 +15,7 @@ use crate::{
     source_str::SourceStr,
     span::Span,
     types::{
-        ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, NO_ARGS, NUMBER,
+        ANY, COLLECTION, INDEXABLE, MATH_RULES, NO_ARGS, NUMBER, ValueType,
         argument::Argument,
         command::{
             ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs, SpannedPotentialFutureResult,
@@ -29,7 +29,7 @@ use crate::{
 
 pub const F_ADD: &str = "f_add";
 pub const F_ADD_RULES: &CommandSignature =
-    &CommandSignature::Rules(&[ArgRule::Resolved(ArgPos::AnyFrom(0))]);
+    &CommandSignature::Rules(&[ArgRule::Literal(ArgPos::AnyFrom(0))]);
 pub fn f_add(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
@@ -84,7 +84,7 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_async!(interpreter, CONST, CONST_RULES, r#const);
     register_async!(interpreter, LOCAL, LOCAL_RULES, local);
     register_async!(interpreter, UPDATE, UPDATE_RULES, update);
-    register_async!(interpreter, GET, GET_RULES, get);
+    register_sync!(interpreter, GET, GET_RULES, get);
     register_async!(interpreter, SET, SET_RULES, set);
     register_async!(interpreter, CLONE, CLONE_RULES, clone);
     register_async!(interpreter, TAKE, TAKE_RULES, take);
@@ -110,14 +110,14 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_async!(interpreter, WHILE_LOOP, WHILE_RULES, while_command);
     register_async!(interpreter, REPEAT, REPEAT_RULES, repeat);
     register_async!(interpreter, FOR_EACH, FOR_EACH_RULES, for_each);
-    register_async!(interpreter, INDEX, INDEX_RULES, index);
-    register_async!(interpreter, LENGTH, LENGTH_RULES, length);
-    register_async!(interpreter, SWAP, SWAP_RULES, swap);
-    register_async!(interpreter, INSERT, INSERT_RULES, insert);
+    register_sync!(interpreter, INDEX, INDEX_RULES, index);
+    register_sync!(interpreter, LENGTH, LENGTH_RULES, length);
+    register_sync!(interpreter, SWAP, SWAP_RULES, swap);
+    register_sync!(interpreter, INSERT, INSERT_RULES, insert);
     register_async!(interpreter, REMOVE, REMOVE_RULES, remove);
-    register_async!(interpreter, PUSH, PUSH_RULES, push);
-    register_async!(interpreter, POP, POP_RULES, pop);
-    register_async!(interpreter, REPLACE, REPLACE_RULES, replace);
+    register_sync!(interpreter, PUSH, PUSH_RULES, push);
+    register_sync!(interpreter, POP, POP_RULES, pop);
+    register_sync!(interpreter, REPLACE, REPLACE_RULES, replace);
     register_async!(
         interpreter,
         SLICE_REPLACE,
@@ -182,8 +182,8 @@ pub async fn take_if_var(
     data: Arc<InterpreterData>,
     span: Span,
 ) -> Result<Option<SourceStr>, SpannedError> {
-    if arg.is_type(FslType::Var, data.clone()).await? {
-        let label = arg.as_var_label(data.clone()).await?;
+    if arg.is_type(ValueType::Var, data.clone())? {
+        let label = arg.as_var_label(data.clone())?;
         let data_clone = data.clone();
         let var = {
             let mut vars = data_clone.vars.write();
@@ -194,8 +194,7 @@ pub async fn take_if_var(
                 *value = var;
                 Ok(())
             }
-        })
-        .await?;
+        })?;
         Ok(Some(label))
     } else {
         Ok(None)
@@ -223,7 +222,7 @@ async fn contains_float(
     data: Arc<InterpreterData>,
 ) -> Result<bool, SpannedError> {
     for value in values {
-        if value.is_type(FslType::Float, data.clone()).await? {
+        if value.is_type(ValueType::Float, data.clone())? {
             return Ok(true);
         }
     }
@@ -846,7 +845,7 @@ pub const TAKE: &str = "take";
 pub async fn take(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut arg = command.take_args().pop_front().unwrap();
-    let var = arg.as_var_label(data.clone()).await?;
+    let var = arg.as_var_label(data.clone())?;
     match data.vars.write().remove(&var).span(arg.span)? {
         Some(value) => Ok(value),
         None => Ok(Value::None),
@@ -1106,7 +1105,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
     let command_count = args.len();
     for mut command in args {
-        let label = command.as_command_label(data.clone()).await.unwrap();
+        let label = command.as_command_label(data.clone()).unwrap();
         match &*label {
             THEN => {
                 if then_command.is_some() {
@@ -1181,7 +1180,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut cases: VecDeque<Argument> = VecDeque::new();
     let mut fallback: VecDeque<Argument> = VecDeque::new();
     for mut command in commands.into_iter() {
-        let label = command.as_command_label(data.clone()).await?;
+        let label = command.as_command_label(data.clone())?;
         match &*label {
             CASE => cases.push_back(command),
             FALLBACK => fallback.push_back(command),
@@ -1315,7 +1314,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let array_span = array.span;
     let var = take_if_var(&mut array, data.clone(), array_span).await?;
     let array =
-        potential_future!(array.as_raw_checked(&[FslType::List, FslType::Text], data.clone())?);
+        potential_future!(array.as_raw_checked(&[ValueType::List, ValueType::Text], data.clone())?);
 
     let label = args.pop_front().unwrap();
     let label_span = label.span;
@@ -1411,45 +1410,43 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
 }
 
 pub const INDEX_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::Index(1)),
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
 ]);
 pub const INDEX: &str = "index";
-pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
     let i = args.pop_front().unwrap();
 
-    array
-        .with(data.clone(), |value, span| match value {
-            Value::Text(text) => {
-                let (i_span, i) = (i.span, i.into_usize()?);
-                match text.chars().nth(i) {
-                    Some(char) => Ok(char.into()),
-                    None => Err(RuntimeError::IndexOutOfBounds.span(i_span)),
-                }
+    array.with(data.clone(), |value, span| match value {
+        Value::Text(text) => {
+            let (i_span, i) = (i.span, i.into_usize()?);
+            match text.chars().nth(i) {
+                Some(char) => Ok(char.into()),
+                None => Err(RuntimeError::IndexOutOfBounds.span(i_span)),
             }
-            Value::List(list) => {
-                let (i_span, i) = (i.span, i.into_list_indexer()?);
-                list.get_nested_clone(&i, i_span)
-            }
-            _ => Err(value.conversion_err(INDEXABLE).span(span))?,
-        })
-        .await
+        }
+        Value::List(list) => {
+            let (i_span, i) = (i.span, i.into_list_indexer()?);
+            list.get_nested_clone(&i, i_span)
+        }
+        _ => Err(value.conversion_err(INDEXABLE).span(span))?,
+    })
 }
 
 pub const GET_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::OptionalIndex(1)),
+    ArgRule::Literal(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::OptionalIndex(1)),
 ]);
 pub const GET: &str = "get";
-pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     if args.len() == 1 {
         let mut arg = args.pop_front().unwrap();
-        arg.with(data, |value, _| Ok(value.clone())).await
+        arg.with(data, |value, _| Ok(value.clone()))
     } else {
         let mut arg = args.pop_front().unwrap();
         let key = args.pop_front().unwrap();
@@ -1464,16 +1461,15 @@ pub async fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
                 let get = list.get_nested_clone(&i, i_span)?;
                 Ok(get)
             }
-            _ => Err(value.conversion_err(&[FslType::Map]).span(span)),
+            _ => Err(value.conversion_err(&[ValueType::Map]).span(span)),
         })
-        .await
     }
 }
 
 pub const SET_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::OptionalIndex(1)),
-    ArgRule::Resolved(ArgPos::OptionalIndex(2)),
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::OptionalIndex(1)),
+    ArgRule::Literal(ArgPos::OptionalIndex(2)),
 ]);
 pub const SET: &str = "set";
 pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
@@ -1488,8 +1484,7 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         old.with_mut(data.clone(), |value, _| {
             *value = new;
             Ok(())
-        })
-        .await?;
+        })?;
 
         Ok(potential_future!(old.into_value(data)))
     } else if args.len() == 3 {
@@ -1508,9 +1503,8 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
                 let to_set = list.set_nested(&key, to_set.take_value(), span)?;
                 Ok(to_set)
             }
-            _ => Err(value.conversion_err(&[FslType::Map]).span(span)),
+            _ => Err(value.conversion_err(&[ValueType::Map]).span(span)),
         })
-        .await
     } else {
         Err(RuntimeError::WrongArgCount {
             command_label: command.label().to_string(),
@@ -1521,25 +1515,24 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     }
 }
 
-pub const LENGTH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const LENGTH_RULES: &CommandSignature =
+    &CommandSignature::Rules(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const LENGTH: &str = "length";
-pub async fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
 
-    array
-        .with(data.clone(), |value, span| match value {
-            Value::Text(text) => Ok(Value::from(text.len())),
-            Value::List(list) => Ok(Value::from(list.len())),
-            _ => Err(value.conversion_err(INDEXABLE).span(span)),
-        })
-        .await
+    array.with(data.clone(), |value, span| match value {
+        Value::Text(text) => Ok(Value::from(text.len())),
+        Value::List(list) => Ok(Value::from(list.len())),
+        _ => Err(value.conversion_err(INDEXABLE).span(span)),
+    })
 }
 
 pub const REMOVE_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::OptionalIndex(1)),
+    ArgRule::Raw(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::OptionalIndex(1)),
 ]);
 pub const REMOVE: &str = "remove";
 pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
@@ -1569,228 +1562,216 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             }
             _ => Err(value.conversion_err(&COLLECTION).span(span)),
         })
-        .await
     } else {
         let mut collection = args.pop_front().unwrap();
         let indexer = args.pop_front().unwrap();
-        collection
-            .with_mut(data.clone(), |value, span| match value {
-                Value::Text(source_str) => {
-                    let mut text = std::mem::take(source_str).into_owned_string();
-                    let removed = text.remove(indexer.into_usize()?);
-                    *source_str = SourceStr::Owned(text);
-                    Ok(Value::from(removed))
-                }
-                Value::List(list) => {
-                    let removed = list.remove_nested(&indexer.into_list_indexer()?, span)?;
-                    Ok(removed)
-                }
-                Value::Map(map) => {
-                    let removed = map.remove_nested(&indexer.into_map_indexer()?, span)?;
-                    Ok(removed)
-                }
-                _ => Err(value.conversion_err(&COLLECTION).span(span)),
-            })
-            .await
+        collection.with_mut(data.clone(), |value, span| match value {
+            Value::Text(source_str) => {
+                let mut text = std::mem::take(source_str).into_owned_string();
+                let removed = text.remove(indexer.into_usize()?);
+                *source_str = SourceStr::Owned(text);
+                Ok(Value::from(removed))
+            }
+            Value::List(list) => {
+                let removed = list.remove_nested(&indexer.into_list_indexer()?, span)?;
+                Ok(removed)
+            }
+            Value::Map(map) => {
+                let removed = map.remove_nested(&indexer.into_map_indexer()?, span)?;
+                Ok(removed)
+            }
+            _ => Err(value.conversion_err(&COLLECTION).span(span)),
+        })
     }
 }
 
 pub const SWAP_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::Index(1)),
-    ArgRule::Resolved(ArgPos::Index(2)),
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+    ArgRule::Literal(ArgPos::Index(2)),
 ]);
 pub const SWAP: &str = "swap";
-pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
     let a_pos = args.pop_front().unwrap();
     let b_pos = args.pop_front().unwrap();
 
-    array
-        .with_mut(data.clone(), |value, span| match value {
-            Value::Text(text) => {
-                let text = std::mem::take(text).into_owned_string();
-                let mut chars: Vec<char> = text.chars().collect();
-                let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_usize()?);
-                let (b_pos_span, b_pos) = (b_pos.span, (b_pos.into_usize()?));
-                chars
-                    .get(a_pos)
-                    .ok_or(RuntimeError::IndexOutOfBounds.span(a_pos_span))?;
-                chars
-                    .get(b_pos)
-                    .ok_or(RuntimeError::IndexOutOfBounds.span(b_pos_span))?;
-                chars.swap(a_pos, b_pos);
-                *value = Value::from(chars.into_iter().collect::<String>());
-                Ok(())
-            }
-            Value::List(list) => {
-                let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_list_indexer()?);
-                let (b_pos_span, b_pos) = (b_pos.span, b_pos.into_list_indexer()?);
-                let mut tmp = std::mem::take(list.get_nested_mut(&a_pos, span)?);
-                let b = list.get_nested_mut(&b_pos, a_pos_span)?;
-                std::mem::swap(b, &mut tmp);
-                let a = list.get_nested_mut(&a_pos, b_pos_span)?;
-                std::mem::swap(a, &mut tmp);
-                Ok(())
-            }
-            _ => Err(value.conversion_err(INDEXABLE).span(span)),
-        })
-        .await?;
+    array.with_mut(data.clone(), |value, span| match value {
+        Value::Text(text) => {
+            let text = std::mem::take(text).into_owned_string();
+            let mut chars: Vec<char> = text.chars().collect();
+            let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_usize()?);
+            let (b_pos_span, b_pos) = (b_pos.span, (b_pos.into_usize()?));
+            chars
+                .get(a_pos)
+                .ok_or(RuntimeError::IndexOutOfBounds.span(a_pos_span))?;
+            chars
+                .get(b_pos)
+                .ok_or(RuntimeError::IndexOutOfBounds.span(b_pos_span))?;
+            chars.swap(a_pos, b_pos);
+            *value = Value::from(chars.into_iter().collect::<String>());
+            Ok(())
+        }
+        Value::List(list) => {
+            let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_list_indexer()?);
+            let (b_pos_span, b_pos) = (b_pos.span, b_pos.into_list_indexer()?);
+            let mut tmp = std::mem::take(list.get_nested_mut(&a_pos, span)?);
+            let b = list.get_nested_mut(&b_pos, a_pos_span)?;
+            std::mem::swap(b, &mut tmp);
+            let a = list.get_nested_mut(&a_pos, b_pos_span)?;
+            std::mem::swap(a, &mut tmp);
+            Ok(())
+        }
+        _ => Err(value.conversion_err(INDEXABLE).span(span)),
+    })?;
 
     Ok(array.take_value())
 }
 
 pub const REPLACE_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::Index(1)),
-    ArgRule::Resolved(ArgPos::Index(2)),
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+    ArgRule::Literal(ArgPos::Index(2)),
 ]);
 pub const REPLACE: &str = "replace";
-pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut collection = args.pop_front().unwrap();
     let indexer = args.pop_front().unwrap();
     let mut replacement = args.pop_front().unwrap();
-    collection
-        .with_mut(data.clone(), |value, span| match value {
-            Value::Text(source_str) => {
-                let mut text = std::mem::take(source_str).into_owned_string();
-                let (i_span, i) = (indexer.span, (indexer.into_usize()?));
-                let replacement = replacement.into_str()?;
+    collection.with_mut(data.clone(), |value, span| match value {
+        Value::Text(source_str) => {
+            let mut text = std::mem::take(source_str).into_owned_string();
+            let (i_span, i) = (indexer.span, (indexer.into_usize()?));
+            let replacement = replacement.into_str()?;
 
-                if !text.is_char_boundary(i) {
-                    Err(RuntimeError::IndexOutOfBounds.span(i_span))
-                } else {
-                    let old_ch = text[i..]
-                        .chars()
-                        .next()
-                        .ok_or(RuntimeError::IndexOutOfBounds.span(i_span))?;
-                    text.replace_range(i..i + old_ch.len_utf8(), &replacement);
-                    *source_str = SourceStr::Owned(text);
-                    Ok(Value::from(old_ch))
-                }
+            if !text.is_char_boundary(i) {
+                Err(RuntimeError::IndexOutOfBounds.span(i_span))
+            } else {
+                let old_ch = text[i..]
+                    .chars()
+                    .next()
+                    .ok_or(RuntimeError::IndexOutOfBounds.span(i_span))?;
+                text.replace_range(i..i + old_ch.len_utf8(), &replacement);
+                *source_str = SourceStr::Owned(text);
+                Ok(Value::from(old_ch))
             }
-            Value::List(list) => {
-                let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
-                let replacement = replacement.take_value();
-                let current = list.get_nested_mut(&i, i_span)?;
-                let old = std::mem::replace(current, replacement);
-                Ok(old)
-            }
-            Value::Map(map) => {
-                let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
-                let replacement = replacement.take_value();
-                let current = map.get_nested_mut(&i, i_span)?;
-                let old = std::mem::replace(current, replacement);
-                Ok(old)
-            }
-            _ => Err(value.conversion_err(COLLECTION).span(span)),
-        })
-        .await
+        }
+        Value::List(list) => {
+            let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
+            let replacement = replacement.take_value();
+            let current = list.get_nested_mut(&i, i_span)?;
+            let old = std::mem::replace(current, replacement);
+            Ok(old)
+        }
+        Value::Map(map) => {
+            let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
+            let replacement = replacement.take_value();
+            let current = map.get_nested_mut(&i, i_span)?;
+            let old = std::mem::replace(current, replacement);
+            Ok(old)
+        }
+        _ => Err(value.conversion_err(COLLECTION).span(span)),
+    })
 }
 
 pub const INSERT_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::Index(1)),
-    ArgRule::Resolved(ArgPos::Index(2)),
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+    ArgRule::Literal(ArgPos::Index(2)),
 ]);
 pub const INSERT: &str = "insert";
-pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut collection = args.pop_front().unwrap();
     let indexer = args.pop_front().unwrap();
     let mut to_insert = args.pop_front().unwrap();
-    collection
-        .with_mut(data.clone(), |value, span| match value {
-            Value::Text(source_str) => {
-                let mut text = std::mem::take(source_str).into_owned_string();
-                let (i_span, i) = (indexer.span, (indexer.into_usize()?));
-                let to_insert = to_insert.into_str()?;
+    collection.with_mut(data.clone(), |value, span| match value {
+        Value::Text(source_str) => {
+            let mut text = std::mem::take(source_str).into_owned_string();
+            let (i_span, i) = (indexer.span, (indexer.into_usize()?));
+            let to_insert = to_insert.into_str()?;
 
-                if !text.is_char_boundary(i) {
-                    Err(RuntimeError::IndexOutOfBounds.span(i_span))
-                } else {
-                    text.insert_str(i, &to_insert.into_owned_string());
-                    *source_str = SourceStr::Owned(text);
-                    Ok(())
-                }
-            }
-            Value::List(list) => {
-                let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
-                let to_insert = to_insert.take_value();
-                list.insert_nested(&i, to_insert, i_span)?;
+            if !text.is_char_boundary(i) {
+                Err(RuntimeError::IndexOutOfBounds.span(i_span))
+            } else {
+                text.insert_str(i, &to_insert.into_owned_string());
+                *source_str = SourceStr::Owned(text);
                 Ok(())
             }
-            Value::Map(map) => {
-                let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
-                let to_insert = to_insert.take_value();
-                map.insert_nested(&i, to_insert, i_span)?;
-                Ok(())
-            }
-            _ => Err(value.conversion_err(COLLECTION).span(span)),
-        })
-        .await?;
+        }
+        Value::List(list) => {
+            let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
+            let to_insert = to_insert.take_value();
+            list.insert_nested(&i, to_insert, i_span)?;
+            Ok(())
+        }
+        Value::Map(map) => {
+            let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
+            let to_insert = to_insert.take_value();
+            map.insert_nested(&i, to_insert, i_span)?;
+            Ok(())
+        }
+        _ => Err(value.conversion_err(COLLECTION).span(span)),
+    })?;
     Ok(collection.take_value())
 }
 
 pub const PUSH_RULES: &CommandSignature = &CommandSignature::Rules(&[
-    ArgRule::Unresolved(ArgPos::Index(0)),
-    ArgRule::Resolved(ArgPos::Index(1)),
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
 ]);
 pub const PUSH: &str = "push";
-pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
     let mut to_push = args.pop_front().unwrap();
 
-    array
-        .with_mut(data.clone(), |value, span| match value {
-            Value::Text(source_str) => {
-                let mut text = std::mem::take(source_str).into_owned_string();
-                let ch = to_push.into_str()?;
-                text.push_str(&ch);
-                *source_str = SourceStr::Owned(text);
-                Ok(())
-            }
-            Value::List(list) => {
-                let to_push = to_push.take_value();
-                list.push(to_push);
-                Ok(())
-            }
-            _ => Err(value.conversion_err(INDEXABLE).span(span)),
-        })
-        .await?;
+    array.with_mut(data.clone(), |value, span| match value {
+        Value::Text(source_str) => {
+            let mut text = std::mem::take(source_str).into_owned_string();
+            let ch = to_push.into_str()?;
+            text.push_str(&ch);
+            *source_str = SourceStr::Owned(text);
+            Ok(())
+        }
+        Value::List(list) => {
+            let to_push = to_push.take_value();
+            list.push(to_push);
+            Ok(())
+        }
+        _ => Err(value.conversion_err(INDEXABLE).span(span)),
+    })?;
     Ok(array.take_value())
 }
 
-pub const POP_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const POP_RULES: &CommandSignature =
+    &CommandSignature::Rules(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const POP: &str = "pop";
-pub async fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut array = args.pop_front().unwrap();
 
-    array
-        .with_mut(data.clone(), |value, span| match value {
-            Value::Text(source_str) => {
-                let mut text = std::mem::take(source_str).into_owned_string();
-                let popped = text.pop();
-                *source_str = SourceStr::Owned(text);
-                Ok(popped.map(Value::from).unwrap_or(Value::None))
-            }
-            Value::List(list) => {
-                let popped = list.pop();
-                Ok(popped.unwrap_or(Value::None))
-            }
+    array.with_mut(data.clone(), |value, span| match value {
+        Value::Text(source_str) => {
+            let mut text = std::mem::take(source_str).into_owned_string();
+            let popped = text.pop();
+            *source_str = SourceStr::Owned(text);
+            Ok(popped.map(Value::from).unwrap_or(Value::None))
+        }
+        Value::List(list) => {
+            let popped = list.pop();
+            Ok(popped.unwrap_or(Value::None))
+        }
 
-            _ => Err(value.conversion_err(INDEXABLE).span(span)),
-        })
-        .await
+        _ => Err(value.conversion_err(INDEXABLE).span(span)),
+    })
 }
 
 pub const SEARCH_REPLACE_RULES: &CommandSignature =
@@ -1880,7 +1861,7 @@ pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let value_loc = array.span;
     let var = take_if_var(&mut array, data.clone(), value_loc).await?;
     let array =
-        potential_future!(array.as_raw_checked(&[FslType::List, FslType::Text], data.clone())?);
+        potential_future!(array.as_raw_checked(&[ValueType::List, ValueType::Text], data.clone())?);
 
     match array {
         Value::Text(text) => {
@@ -1912,16 +1893,14 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         1
     };
 
-    let value = arg
-        .with_mut(data.clone(), |value, span| match value {
-            Value::Int(value) => {
-                *value += amount;
-                Ok(*value)
-            }
-            _ => Err(value.conversion_err(&[FslType::Int]).span(span)),
-        })
-        .await?;
-    match arg.as_var_label(data).await {
+    let value = arg.with_mut(data.clone(), |value, span| match value {
+        Value::Int(value) => {
+            *value += amount;
+            Ok(*value)
+        }
+        _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
+    })?;
+    match arg.as_var_label(data) {
         Ok(label) => Ok(Value::Var(label)),
         Err(_) => Ok(Value::from(value)),
     }
@@ -1940,16 +1919,14 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         1
     };
 
-    let value = arg
-        .with_mut(data.clone(), |value, span| match value {
-            Value::Int(value) => {
-                *value -= amount;
-                Ok(*value)
-            }
-            _ => Err(value.conversion_err(&[FslType::Int]).span(span)),
-        })
-        .await?;
-    match arg.as_var_label(data).await {
+    let value = arg.with_mut(data.clone(), |value, span| match value {
+        Value::Int(value) => {
+            *value -= amount;
+            Ok(*value)
+        }
+        _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
+    })?;
+    match arg.as_var_label(data) {
         Ok(label) => Ok(Value::Var(label)),
         Err(_) => Ok(Value::from(value)),
     }
@@ -1977,7 +1954,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
                 .span(collection_span)?
                 .take();
             Ok(Value::Bool(
-                item.with(data, |value, _| Ok(list.contains(value))).await?,
+                item.with(data, |value, _| Ok(list.contains(value)))?,
             ))
         }
         Value::Map(map) => {
@@ -2124,7 +2101,7 @@ pub async fn is_number(
     let arg = args.pop_front().unwrap();
     let value = potential_future!(arg.as_raw(data)?);
     Ok(Value::Bool(
-        value.is_type(FslType::Int) | value.is_type(FslType::Float),
+        value.is_type(ValueType::Int) | value.is_type(ValueType::Float),
     ))
 }
 
@@ -2135,7 +2112,7 @@ pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
     let value = potential_future!(arg.as_raw(data)?);
-    Ok(Value::Bool(value.is_type(FslType::None)))
+    Ok(Value::Bool(value.is_type(ValueType::None)))
 }
 
 pub const IS_ALPHA_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
@@ -2379,7 +2356,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut command = command;
     let mut args = command.take_args();
 
-    let command_label = args.pop_front().unwrap().as_var_label(data.clone()).await?;
+    let command_label = args.pop_front().unwrap().as_var_label(data.clone())?;
 
     data.push_def(command_label.clone());
 

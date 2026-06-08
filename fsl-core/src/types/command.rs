@@ -9,7 +9,8 @@ use crate::{
     source_str::SourceStr,
     span::Span,
     types::{
-        argument::Argument,
+        ValueType,
+        argument::{Argument, ArgumentKind},
         value::{Value, ValueError},
     },
 };
@@ -43,7 +44,7 @@ impl<T: 'static, E: 'static> PotentialFuture<T, E> {
         match self {
             PotentialFuture::Sync(t) => PotentialFuture::Sync(t),
             PotentialFuture::Async(t) => {
-                PotentialFuture::Async(Box::pin(async move { t.await.map_err(f) }))
+                PotentialFuture::Async(Box::pin(async { t.await.map_err(f) }))
             }
         }
     }
@@ -110,18 +111,6 @@ macro_rules! potential_future {
     };
 }
 
-#[macro_export]
-macro_rules! try_result {
-    ($result:expr ) => {{
-        match $result {
-            Ok(result) => result,
-            Err(e) => {
-                return PotentialFuture::Sync(Err(e));
-            }
-        }
-    }};
-}
-
 #[derive(Clone)]
 pub enum Handler {
     SyncStatic(fn(Command, Arc<InterpreterData>) -> Result<Value, SpannedError>),
@@ -153,9 +142,11 @@ pub enum ArgPos {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
-pub enum ArgRule {
-    Resolved(ArgPos),
-    Unresolved(ArgPos),
+pub enum ArgRule<T: std::fmt::Debug> {
+    Literal(T),
+    Raw(T),
+    Mutable(T),
+    Command(T),
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -168,7 +159,7 @@ pub enum ExpectedArgs {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum CommandSignature {
-    Rules(&'static [ArgRule]),
+    Rules(&'static [ArgRule<ArgPos>]),
     Count(ExpectedArgs),
     AnyArgs,
 }
@@ -258,9 +249,13 @@ impl Command {
         self.signature
     }
 
-    pub fn set_args(&mut self, args: VecDeque<Argument>) -> Result<(), SpannedError> {
+    pub fn set_args(
+        &mut self,
+        args: VecDeque<Argument>,
+        data: Arc<InterpreterData>,
+    ) -> Result<(), SpannedError> {
         self.args = args;
-        self.validate_args()?;
+        self.validate_args(data)?;
         Ok(())
     }
 
@@ -284,19 +279,49 @@ impl Command {
         self.needs_resolving
     }
 
-    fn rules_count_check(&mut self, rules: &'static [ArgRule]) -> Result<(), SpannedError> {
+    /// Tags argument with rule and returns if the argument will need resolving or not
+    fn tag_arg<T: std::fmt::Debug>(
+        rule: &ArgRule<T>,
+        arg: &mut Argument,
+        data: Arc<InterpreterData>,
+    ) -> Result<(), SpannedError> {
+        match rule {
+            ArgRule::Literal(_) => {
+                // Don't resolve already literal values
+                if let ArgumentKind::Value(value) = &arg.kind {
+                    if value.is_literal() {
+                        return Ok(());
+                    }
+                }
+                arg.resolve_to = ArgRule::Literal(());
+            }
+            ArgRule::Raw(_) => arg.resolve_to = ArgRule::Raw(()),
+            ArgRule::Mutable(_) => {
+                if !arg.is_type(ValueType::Var, data)? {
+                    arg.resolve_to = ArgRule::Mutable(());
+                }
+            }
+            ArgRule::Command(_) => {
+                if !arg.is_type(ValueType::Command, data)? {
+                    arg.resolve_to = ArgRule::Command(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn rules_count_check(
+        &mut self,
+        rules: &'static [ArgRule<ArgPos>],
+        data: Arc<InterpreterData>,
+    ) -> Result<(), SpannedError> {
         let mut max_args = 0;
         for rule in rules {
-            let resolve;
             let pos = match rule {
-                ArgRule::Resolved(arg_pos) => {
-                    resolve = true;
-                    arg_pos
-                }
-                ArgRule::Unresolved(arg_pos) => {
-                    resolve = false;
-                    arg_pos
-                }
+                ArgRule::Literal(arg_pos) => arg_pos,
+                ArgRule::Raw(arg_pos) => arg_pos,
+                ArgRule::Mutable(arg_pos) => arg_pos,
+                ArgRule::Command(arg_pos) => arg_pos,
             };
 
             match pos {
@@ -315,8 +340,8 @@ impl Command {
                             .span(self.span));
                         }
                         Some(arg) => {
-                            arg.needs_resolving = resolve && arg.not_resolved();
-                            self.needs_resolving |= arg.needs_resolving;
+                            Self::tag_arg(rule, arg, data.clone())?;
+                            self.needs_resolving |= !matches!(arg.resolve_to, ArgRule::Raw(_));
                         }
                     }
                 }
@@ -342,11 +367,9 @@ impl Command {
                         .span(self.span));
                     } else {
                         for i in range.start..range.end {
-                            if let ArgRule::Resolved(_) = rule {
-                                let arg = &mut self.args[i];
-                                arg.needs_resolving = resolve && arg.not_resolved();
-                                self.needs_resolving |= arg.needs_resolving;
-                            }
+                            let arg = &mut self.args[i];
+                            Self::tag_arg(rule, arg, data.clone())?;
+                            self.needs_resolving |= !matches!(arg.resolve_to, ArgRule::Raw(_));
                         }
                     }
                 }
@@ -363,11 +386,9 @@ impl Command {
                 ArgPos::AnyFrom(p) => {
                     max_args = usize::MAX;
                     for i in *p..self.args.len() {
-                        if let ArgRule::Resolved(_) = rule {
-                            let arg = &mut self.args[i];
-                            arg.needs_resolving = resolve && arg.not_resolved();
-                            self.needs_resolving |= arg.needs_resolving;
-                        }
+                        let arg = &mut self.args[i];
+                        Self::tag_arg(rule, arg, data.clone())?;
+                        self.needs_resolving |= !matches!(arg.resolve_to, ArgRule::Raw(_));
                     }
                 }
                 ArgPos::OptionalIndex(i) => {
@@ -377,8 +398,8 @@ impl Command {
                         max_args
                     };
                     if let Some(arg) = self.args.get_mut(*i) {
-                        arg.needs_resolving = resolve && arg.not_resolved();
-                        self.needs_resolving |= arg.needs_resolving;
+                        Self::tag_arg(rule, arg, data.clone())?;
+                        self.needs_resolving |= !matches!(arg.resolve_to, ArgRule::Raw(_));
                     }
                 }
             }
@@ -394,9 +415,9 @@ impl Command {
         Ok(())
     }
 
-    pub fn validate_args(&mut self) -> Result<(), SpannedError> {
+    pub fn validate_args(&mut self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
         match self.signature {
-            CommandSignature::Rules(rules) => self.rules_count_check(rules),
+            CommandSignature::Rules(rules) => self.rules_count_check(rules, data),
             CommandSignature::Count(expected) => match expected {
                 ExpectedArgs::None => {
                     if !self.args.is_empty() {
@@ -454,28 +475,63 @@ impl Command {
         enum PendingOp {
             NeedsRaw(BoxFuture<'static, Result<Value, SpannedError>>),
             AlreadyRaw(BoxFuture<'static, Result<Value, ValueError>>),
+            PossibleCommand(BoxFuture<'static, Result<Value, SpannedError>>),
+            CommandResult(BoxFuture<'static, PotentialFutureResult<Value, SpannedError>>),
         }
         let mut async_ops: Vec<_> = Vec::new();
         for (i, arg) in self.args.iter_mut().enumerate() {
-            if arg.needs_resolving {
-                let span = arg.span;
-                let kind = std::mem::take(&mut arg.kind);
-                let value = kind.into_value(span, data.clone());
-                let value = match value {
-                    PotentialFuture::Sync(value) => value,
-                    PotentialFuture::Async(pin) => {
-                        async_ops.push((i, (PendingOp::NeedsRaw(pin))));
+            match arg.resolve_to {
+                ArgRule::Literal(_) => {
+                    let span = arg.span;
+                    let kind = std::mem::take(&mut arg.kind);
+                    let value = kind.into_value(span, data.clone());
+                    let value = match value {
+                        PotentialFuture::Sync(value) => value,
+                        PotentialFuture::Async(pin) => {
+                            async_ops.push((i, (PendingOp::NeedsRaw(pin))));
+                            continue;
+                        }
+                    };
+                    let value = match value.as_raw(data.clone()).span(arg.span)? {
+                        PotentialFuture::Sync(value) => value,
+                        PotentialFuture::Async(pin) => {
+                            async_ops.push((i, (PendingOp::AlreadyRaw(pin))));
+                            continue;
+                        }
+                    };
+                    arg.replace_value(value);
+                }
+                ArgRule::Raw(_) => {
+                    continue;
+                }
+                ArgRule::Mutable(_) => {
+                    let span = arg.span;
+                    if let ArgumentKind::Accessor(_) = arg.kind {
                         continue;
                     }
-                };
-                let value = match value.as_raw(data.clone()).span(arg.span)? {
-                    PotentialFuture::Sync(value) => value,
-                    PotentialFuture::Async(pin) => {
-                        async_ops.push((i, (PendingOp::AlreadyRaw(pin))));
+                    let kind = std::mem::take(&mut arg.kind);
+                    let value = kind.into_value(span, data.clone());
+                    let value = match value {
+                        PotentialFuture::Sync(value) => value,
+                        PotentialFuture::Async(pin) => {
+                            async_ops.push((i, (PendingOp::PossibleCommand(pin))));
+                            continue;
+                        }
+                    };
+                    if value.is_type(ValueType::Command) {
+                        let data_clone = data.clone();
+                        async_ops.push((
+                            i,
+                            PendingOp::CommandResult(Box::pin(async move {
+                                let command = value.to_command(data_clone.clone()).span(span)?;
+                                Ok(command.execute(data_clone)?)
+                            })),
+                        ));
                         continue;
                     }
-                };
-                arg.replace_value(value);
+                    arg.replace_value(value);
+                }
+                ArgRule::Command(_) => todo!(),
             }
         }
         if async_ops.len() > 0 {
@@ -493,6 +549,22 @@ impl Command {
                         PendingOp::AlreadyRaw(pin) => {
                             let arg = &mut self.args[i];
                             let value = pin.await.span(span)?;
+                            arg.replace_value(value);
+                        }
+                        PendingOp::PossibleCommand(pin) => {
+                            let arg = &mut self.args[i];
+                            let value = pin.await?;
+                            if value.is_type(ValueType::Command) {
+                                let command = value.to_command(data.clone()).span(span)?;
+                                let value = execute_command!(command, data.clone())?;
+                                arg.replace_value(value);
+                            } else {
+                                arg.replace_value(value);
+                            }
+                        }
+                        PendingOp::CommandResult(pin) => {
+                            let arg = &mut self.args[i];
+                            let value = potential_future!(pin.await?);
                             arg.replace_value(value);
                         }
                     }

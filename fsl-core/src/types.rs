@@ -9,116 +9,134 @@ pub mod list;
 pub mod map;
 pub mod value;
 
-pub const ANY: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
-    FslType::Var,
-    FslType::Command,
-    FslType::None,
+pub const ANY: &[ValueType] = &[
+    ValueType::Int,
+    ValueType::Float,
+    ValueType::Bool,
+    ValueType::Text,
+    ValueType::List,
+    ValueType::Map,
+    ValueType::Var,
+    ValueType::Command,
+    ValueType::None,
 ];
 
-pub const NOT_NONE: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
-    FslType::Var,
-    FslType::Command,
+pub const NOT_NONE: &[ValueType] = &[
+    ValueType::Int,
+    ValueType::Float,
+    ValueType::Bool,
+    ValueType::Text,
+    ValueType::List,
+    ValueType::Map,
+    ValueType::Var,
+    ValueType::Command,
 ];
 
-pub const STORABLE: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
-    FslType::Var,
-    FslType::Command,
+pub const STORABLE: &[ValueType] = &[
+    ValueType::Int,
+    ValueType::Float,
+    ValueType::Bool,
+    ValueType::Text,
+    ValueType::List,
+    ValueType::Map,
+    ValueType::Var,
+    ValueType::Command,
 ];
 
-pub const LITERAL: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Bool,
-    FslType::Text,
-    FslType::List,
-    FslType::Map,
+pub const LITERAL: &[ValueType] = &[
+    ValueType::Int,
+    ValueType::Float,
+    ValueType::Bool,
+    ValueType::Text,
+    ValueType::List,
+    ValueType::Map,
 ];
 
-pub const MAYBE_NUMBER: &[FslType] = &[
-    FslType::Int,
-    FslType::Float,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
+pub const MAYBE_NUMBER: &[ValueType] = &[
+    ValueType::Int,
+    ValueType::Float,
+    ValueType::Command,
+    ValueType::Var,
+    ValueType::Text,
 ];
 
-pub const NUMBER: &[FslType] = &[FslType::Int, FslType::Float, FslType::Text];
+pub const NUMBER: &[ValueType] = &[ValueType::Int, ValueType::Float, ValueType::Text];
 
-pub const MAYBE_INT: &[FslType] = &[FslType::Int, FslType::Command, FslType::Var, FslType::Text];
-
-pub const MAYBE_KEY: &[FslType] = &[
-    FslType::List,
-    FslType::Int,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
+pub const MAYBE_INT: &[ValueType] = &[
+    ValueType::Int,
+    ValueType::Command,
+    ValueType::Var,
+    ValueType::Text,
 ];
 
-pub const KEY: &[FslType] = &[FslType::List, FslType::Int, FslType::Text];
-
-pub const MAYBE_LIST_KEY: &[FslType] = &[
-    FslType::List,
-    FslType::Int,
-    FslType::Command,
-    FslType::Var,
-    FslType::Text,
+pub const MAYBE_KEY: &[ValueType] = &[
+    ValueType::List,
+    ValueType::Int,
+    ValueType::Command,
+    ValueType::Var,
+    ValueType::Text,
 ];
 
-pub const LIST_KEY: &[FslType] = &[FslType::List, FslType::Int, FslType::Text];
+pub const KEY: &[ValueType] = &[ValueType::List, ValueType::Int, ValueType::Text];
 
-pub const MAYBE_MAP_KEY: &[FslType] =
-    &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
-
-pub const MAP_KEY: &[FslType] = &[FslType::List, FslType::Text];
-
-pub const MAYBE_INDEXABLE: &[FslType] =
-    &[FslType::List, FslType::Command, FslType::Var, FslType::Text];
-
-pub const INDEXABLE: &[FslType] = &[FslType::List, FslType::Text];
-
-pub const MAYBE_LIST: &[FslType] = &[FslType::List, FslType::Command, FslType::Var];
-
-pub const MAYBE_MAP: &[FslType] = &[FslType::Map, FslType::Command, FslType::Var];
-
-pub const MAYBE_COLLECTION: &[FslType] = &[
-    FslType::Map,
-    FslType::List,
-    FslType::Text,
-    FslType::Command,
-    FslType::Var,
+pub const MAYBE_LIST_KEY: &[ValueType] = &[
+    ValueType::List,
+    ValueType::Int,
+    ValueType::Command,
+    ValueType::Var,
+    ValueType::Text,
 ];
 
-pub const COLLECTION: &[FslType] = &[FslType::Map, FslType::List, FslType::Text];
+pub const LIST_KEY: &[ValueType] = &[ValueType::List, ValueType::Int, ValueType::Text];
 
-pub const MAYBE_TEXT: &[FslType] = &[FslType::Command, FslType::Var, FslType::Text];
+pub const MAYBE_MAP_KEY: &[ValueType] = &[
+    ValueType::List,
+    ValueType::Command,
+    ValueType::Var,
+    ValueType::Text,
+];
 
-pub const MAYBE_BOOL: &[FslType] = &[FslType::Bool, FslType::Command, FslType::Var, FslType::Text];
+pub const MAP_KEY: &[ValueType] = &[ValueType::List, ValueType::Text];
+
+pub const MAYBE_INDEXABLE: &[ValueType] = &[
+    ValueType::List,
+    ValueType::Command,
+    ValueType::Var,
+    ValueType::Text,
+];
+
+pub const INDEXABLE: &[ValueType] = &[ValueType::List, ValueType::Text];
+
+pub const MAYBE_LIST: &[ValueType] = &[ValueType::List, ValueType::Command, ValueType::Var];
+
+pub const MAYBE_MAP: &[ValueType] = &[ValueType::Map, ValueType::Command, ValueType::Var];
+
+pub const MAYBE_COLLECTION: &[ValueType] = &[
+    ValueType::Map,
+    ValueType::List,
+    ValueType::Text,
+    ValueType::Command,
+    ValueType::Var,
+];
+
+pub const COLLECTION: &[ValueType] = &[ValueType::Map, ValueType::List, ValueType::Text];
+
+pub const MAYBE_TEXT: &[ValueType] = &[ValueType::Command, ValueType::Var, ValueType::Text];
+
+pub const MAYBE_BOOL: &[ValueType] = &[
+    ValueType::Bool,
+    ValueType::Command,
+    ValueType::Var,
+    ValueType::Text,
+];
 
 pub const NO_ARGS: &CommandSignature = &CommandSignature::Count(ExpectedArgs::None);
 
 pub const MATH_RULES: &CommandSignature =
-    &CommandSignature::Rules(&[ArgRule::Resolved(ArgPos::AnyFrom(0))]);
+    &CommandSignature::Rules(&[ArgRule::Literal(ArgPos::AnyFrom(0))]);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FslType {
+pub enum ValueType {
     Int,
     Float,
     Bool,
@@ -130,47 +148,47 @@ pub enum FslType {
     None,
 }
 
-impl std::fmt::Display for FslType {
+impl std::fmt::Display for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
-            FslType::Int => "int",
-            FslType::Float => "float",
-            FslType::Text => "text",
-            FslType::Bool => "bool",
-            FslType::List => "list",
-            FslType::Map => "map",
-            FslType::Var => "var",
-            FslType::Command => "command",
-            FslType::None => "none",
+            ValueType::Int => "int",
+            ValueType::Float => "float",
+            ValueType::Text => "text",
+            ValueType::Bool => "bool",
+            ValueType::List => "list",
+            ValueType::Map => "map",
+            ValueType::Var => "var",
+            ValueType::Command => "command",
+            ValueType::None => "none",
         }
         .to_string();
         write!(f, "{}", text)
     }
 }
 
-impl FslType {
+impl ValueType {
     pub fn as_str(&self) -> &str {
         match self {
-            FslType::Int => "int",
-            FslType::Float => "float",
-            FslType::Text => "text",
-            FslType::Bool => "bool",
-            FslType::List => "list",
-            FslType::Map => "map",
-            FslType::Var => "var",
-            FslType::Command => "command",
-            FslType::None => "none",
+            ValueType::Int => "int",
+            ValueType::Float => "float",
+            ValueType::Text => "text",
+            ValueType::Bool => "bool",
+            ValueType::List => "list",
+            ValueType::Map => "map",
+            ValueType::Var => "var",
+            ValueType::Command => "command",
+            ValueType::None => "none",
         }
     }
 
-    pub fn gen_conversion_err_to_type(&self, to: FslType) -> RuntimeError {
+    pub fn gen_conversion_err_to_type(&self, to: ValueType) -> RuntimeError {
         RuntimeError::InvalidConversion {
             from: self.to_string(),
             to: vec![to],
         }
     }
 
-    pub fn gen_conversion_err_to_types(&self, to: &[FslType]) -> RuntimeError {
+    pub fn gen_conversion_err_to_types(&self, to: &[ValueType]) -> RuntimeError {
         RuntimeError::InvalidConversion {
             from: self.to_string(),
             to: to.to_vec(),
