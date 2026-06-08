@@ -10,7 +10,7 @@ use crate::{
     types::{
         FslType, LIST_KEY, MAP_KEY,
         argument::Argument,
-        command::{Command, InterpreterResult},
+        command::{Command, PotentialFuture, PotentialFutureResult},
         list::List,
         map::{FslMap, Map},
     },
@@ -229,83 +229,81 @@ impl Value {
         }
     }
 
-    pub fn to_int(self, data: Arc<InterpreterData>) -> InterpreterResult<i64, ValueError> {
+    pub fn to_int(self, data: Arc<InterpreterData>) -> PotentialFutureResult<i64, ValueError> {
         let to_type = FslType::Int;
         match self {
-            Value::Int(value) => InterpreterResult::Sync(Ok(value)),
-            Value::Float(value) => InterpreterResult::Sync(Ok(value as i64)),
+            Value::Int(value) => Ok(PotentialFuture::Sync(value)),
+            Value::Float(value) => Ok(PotentialFuture::Sync(value as i64)),
             Value::Text(ref value) => match value.trim().parse::<i64>() {
-                Ok(value) => InterpreterResult::Sync(Ok(value)),
-                Err(_) => InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into())),
+                Ok(value) => Ok(PotentialFuture::Sync(value)),
+                Err(_) => Err(self.conversion_err_to_type(to_type).into()),
             },
             Value::Bool(_) | Value::List(_) | Value::Map(_) | Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
+                Err(self.conversion_err_to_type(to_type).into())
             }
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_int(data)),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+                .execute(data.clone())?
+                .map_result(|v| v.to_int(data)),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_int(data.clone()))
-            })),
+                await_result!(value.to_int(data.clone())?)
+            }))),
         }
     }
 
-    pub fn to_usize(self, data: Arc<InterpreterData>) -> InterpreterResult<usize, ValueError> {
-        self.to_int(data)
-            .and_then_result(|v| InterpreterResult::Sync(Ok(v as usize)))
+    pub fn to_usize(self, data: Arc<InterpreterData>) -> PotentialFutureResult<usize, ValueError> {
+        Ok(self.to_int(data)?.map(|i| i as usize))
     }
 
-    pub fn to_float(self, data: Arc<InterpreterData>) -> InterpreterResult<f64, ValueError> {
+    pub fn to_float(self, data: Arc<InterpreterData>) -> PotentialFutureResult<f64, ValueError> {
         let to_type = FslType::Int;
         match self {
-            Value::Int(value) => InterpreterResult::Sync(Ok(value as f64)),
-            Value::Float(value) => InterpreterResult::Sync(Ok(value)),
+            Value::Int(value) => Ok(PotentialFuture::Sync(value as f64)),
+            Value::Float(value) => Ok(PotentialFuture::Sync(value)),
             Value::Text(ref value) => match value.trim().parse::<f64>() {
-                Ok(value) => InterpreterResult::Sync(Ok(value)),
-                Err(_) => InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into())),
+                Ok(value) => Ok(PotentialFuture::Sync(value)),
+                Err(_) => Err(self.conversion_err_to_type(to_type).into()),
             },
             Value::Bool(_) | Value::List(_) | Value::Map(_) | Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
+                Err(self.conversion_err_to_type(to_type).into())
             }
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_float(data)),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+                .execute(data.clone())?
+                .map_result(|r| r.to_float(data)),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_float(data.clone()))
-            })),
+                await_result!(value.to_float(data.clone())?)
+            }))),
         }
     }
 
-    pub fn to_bool(self, data: Arc<InterpreterData>) -> InterpreterResult<bool, ValueError> {
+    pub fn to_bool(self, data: Arc<InterpreterData>) -> PotentialFutureResult<bool, ValueError> {
         let to_type = FslType::Bool;
         match self {
-            Value::Int(_) => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
-            }
-            Value::Float(_) => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
-            }
+            Value::Int(_) => Err(self.conversion_err_to_type(to_type).into()),
+            Value::Float(_) => Err(self.conversion_err_to_type(to_type).into()),
             Value::Text(ref value) => match value.trim().parse::<bool>() {
-                Ok(value) => InterpreterResult::Sync(Ok(value)),
-                Err(_) => InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into())),
+                Ok(value) => Ok(PotentialFuture::Sync(value)),
+                Err(_) => Err(self.conversion_err_to_type(to_type).into()),
             },
-            Value::Bool(value) => InterpreterResult::Sync(Ok(value)),
+            Value::Bool(value) => Ok(PotentialFuture::Sync(value)),
             Value::List(_) | Value::Map(_) | Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
+                Err(self.conversion_err_to_type(to_type).into())
             }
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_bool(data)),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+                .execute(data.clone())?
+                .map_result(|r| r.to_bool(data)),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_bool(data.clone()))
-            })),
+                await_result!(value.to_bool(data.clone())?)
+            }))),
         }
     }
 
-    pub fn to_var(self, data: Arc<InterpreterData>) -> InterpreterResult<SourceStr, ValueError> {
+    pub fn to_var(
+        self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<SourceStr, ValueError> {
         let to_type = FslType::Var;
         match self {
             Value::Int(_)
@@ -314,43 +312,42 @@ impl Value {
             | Value::Bool(_)
             | Value::List(_)
             | Value::Map(_)
-            | Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
-            }
+            | Value::None => Err(self.conversion_err_to_type(to_type).into()),
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_var(data)),
-            Value::Var(label) => InterpreterResult::Sync(Ok(label)),
+                .execute(data.clone())?
+                .map_result(|r| r.to_var(data)),
+            Value::Var(label) => Ok(PotentialFuture::Sync(label)),
         }
     }
 
-    pub fn to_text(self, data: Arc<InterpreterData>) -> InterpreterResult<SourceStr, ValueError> {
+    pub fn to_text(
+        self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<SourceStr, ValueError> {
         let to_type = FslType::Text;
         match self {
-            Value::Int(value) => InterpreterResult::Sync(Ok(value.to_string().into())),
-            Value::Float(value) => InterpreterResult::Sync(Ok(value.to_string().into())),
-            Value::Text(value) => InterpreterResult::Sync(Ok(value)),
-            Value::Bool(value) => InterpreterResult::Sync(Ok(value.to_string().into())),
-            Value::List(value) => InterpreterResult::Async(Box::pin(async move {
+            Value::Int(value) => Ok(PotentialFuture::Sync(value.to_string().into())),
+            Value::Float(value) => Ok(PotentialFuture::Sync(value.to_string().into())),
+            Value::Text(value) => Ok(PotentialFuture::Sync(value)),
+            Value::Bool(value) => Ok(PotentialFuture::Sync(value.to_string().into())),
+            Value::List(value) => Ok(PotentialFuture::Async(Box::pin(async move {
                 Ok(value.resolve(data).await?.to_string().into())
-            })),
-            Value::Map(value) => InterpreterResult::Async(Box::pin(async move {
+            }))),
+            Value::Map(value) => Ok(PotentialFuture::Async(Box::pin(async move {
                 Ok(value.resolve(data).await?.to_string().into())
-            })),
-            Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
-            }
+            }))),
+            Value::None => Err(self.conversion_err_to_type(to_type).into()),
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_text(data)),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+                .execute(data.clone())?
+                .map_result(|r| r.to_text(data)),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_text(data.clone()))
-            })),
+                await_result!(value.to_text(data.clone())?)
+            }))),
         }
     }
 
-    pub fn to_list(self, data: Arc<InterpreterData>) -> InterpreterResult<List, ValueError> {
+    pub fn to_list(self, data: Arc<InterpreterData>) -> PotentialFutureResult<List, ValueError> {
         let to_type = FslType::Var;
         match self {
             Value::Int(_)
@@ -358,23 +355,21 @@ impl Value {
             | Value::Text(_)
             | Value::Bool(_)
             | Value::Map(_)
-            | Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
-            }
-            Value::List(list) => {
-                InterpreterResult::Async(Box::pin(async move { Ok(list.resolve(data).await?) }))
-            }
+            | Value::None => Err(self.conversion_err_to_type(to_type).into()),
+            Value::List(list) => Ok(PotentialFuture::Async(Box::pin(async move {
+                Ok(list.resolve(data).await?)
+            }))),
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_list(data)),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+                .execute(data.clone())?
+                .map_result(|r| r.to_list(data)),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_list(data.clone()))
-            })),
+                await_result!(value.to_list(data.clone())?)
+            }))),
         }
     }
 
-    pub fn to_map(self, data: Arc<InterpreterData>) -> InterpreterResult<Map, ValueError> {
+    pub fn to_map(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Map, ValueError> {
         let to_type = FslType::Var;
         match self {
             Value::Int(_)
@@ -382,49 +377,45 @@ impl Value {
             | Value::Text(_)
             | Value::Bool(_)
             | Value::List(_)
-            | Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
-            }
-            Value::Map(map) => {
-                InterpreterResult::Async(Box::pin(async move { Ok(map.resolve(data).await?) }))
-            }
+            | Value::None => Err(self.conversion_err_to_type(to_type).into()),
+            Value::Map(map) => Ok(PotentialFuture::Async(Box::pin(async move {
+                Ok(map.resolve(data).await?)
+            }))),
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_map(data)),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+                .execute(data.clone())?
+                .map_result(|r| r.to_map(data)),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_map(data.clone()))
-            })),
+                await_result!(value.to_map(data.clone())?)
+            }))),
         }
     }
 
-    pub fn to_number(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, ValueError> {
+    pub fn to_number(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, ValueError> {
         let to_type = FslType::Int;
         match self {
-            Value::Int(_) => InterpreterResult::Sync(Ok(self)),
-            Value::Float(_) => InterpreterResult::Sync(Ok(self)),
+            Value::Int(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Float(_) => Ok(PotentialFuture::Sync(self)),
             Value::Text(ref value) => {
                 match (value.trim().parse::<i64>(), value.trim().parse::<f64>()) {
                     (Ok(_), Ok(_)) | (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
-                        return InterpreterResult::Sync(Ok(self));
+                        return Ok(PotentialFuture::Sync(self));
                     }
                     (Err(_), Err(_)) => {
-                        return InterpreterResult::Sync(Err(self
-                            .conversion_err_to_type(to_type)
-                            .into()));
+                        return Err(self.conversion_err_to_type(to_type).into());
                     }
                 }
             }
             Value::Bool(_) | Value::List(_) | Value::Map(_) | Value::None => {
-                InterpreterResult::Sync(Err(self.conversion_err_to_type(to_type).into()))
+                Err(self.conversion_err_to_type(to_type).into())
             }
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.to_number(data)),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+                .execute(data.clone())?
+                .map_result(|r| r.to_number(data)),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let value = data.vars.read().await.get_clone(&label).await?;
-                await_result!(value.to_number(data.clone()))
-            })),
+                await_result!(value.to_number(data.clone())?)
+            }))),
         }
     }
 
@@ -435,88 +426,102 @@ impl Value {
         self,
         valid_types: &'static [FslType],
         data: Arc<InterpreterData>,
-    ) -> InterpreterResult<Value, ValueError> {
+    ) -> PotentialFutureResult<Value, ValueError> {
         match self {
             Value::Int(_) => {
                 if valid_types.contains(&self.to_type()) {
-                    InterpreterResult::Sync(Ok(self))
+                    Ok(PotentialFuture::Sync(self))
                 } else {
-                    InterpreterResult::Sync(Err(self.conversion_err(valid_types).into()))
+                    Err(self.conversion_err(valid_types).into())
                 }
             }
             Value::Float(_) => {
                 if valid_types.contains(&self.to_type()) {
-                    InterpreterResult::Sync(Ok(self))
+                    Ok(PotentialFuture::Sync(self))
                 } else {
-                    InterpreterResult::Sync(Err(self.conversion_err(valid_types).into()))
+                    Err(self.conversion_err(valid_types).into())
                 }
             }
             Value::Bool(_) => {
                 if valid_types.contains(&self.to_type()) {
-                    InterpreterResult::Sync(Ok(self))
+                    Ok(PotentialFuture::Sync(self))
                 } else {
-                    InterpreterResult::Sync(Err(self.conversion_err(valid_types).into()))
+                    Err(self.conversion_err(valid_types).into())
                 }
             }
             Value::Text(_) => {
                 if valid_types.contains(&self.to_type()) {
-                    InterpreterResult::Sync(Ok(self))
+                    Ok(PotentialFuture::Sync(self))
                 } else {
-                    InterpreterResult::Sync(Err(self.conversion_err(valid_types).into()))
+                    Err(self.conversion_err(valid_types).into())
                 }
             }
             Value::List(_) => {
                 if valid_types.contains(&self.to_type()) {
-                    InterpreterResult::Async(Box::pin(async move {
-                        Ok(Value::List(await_result!(self.to_list(data.clone()))?))
-                    }))
+                    Ok(PotentialFuture::Async(Box::pin(async move {
+                        let result = self.to_list(data.clone())?;
+                        let list = await_result!(result)?;
+                        Ok(Value::List(list))
+                    })))
                 } else {
-                    InterpreterResult::Sync(Err(self.conversion_err(valid_types).into()))
+                    Err(self.conversion_err(valid_types).into())
                 }
             }
             Value::Map(_) => {
                 if valid_types.contains(&self.to_type()) {
-                    InterpreterResult::Async(Box::pin(async move {
-                        Ok(Value::Map(await_result!(self.to_map(data.clone()))?))
-                    }))
+                    Ok(PotentialFuture::Async(Box::pin(async move {
+                        let result = self.to_map(data.clone())?;
+                        let map = await_result!(result)?;
+                        Ok(Value::Map(map))
+                    })))
                 } else {
-                    InterpreterResult::Sync(Err(self.conversion_err(valid_types).into()))
+                    Err(self.conversion_err(valid_types).into())
                 }
             }
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let var = data.vars.read().await.get_clone(&label).await?;
-                await_result!(var.as_raw(data.clone()))
-            })),
+                await_result!(var.as_raw_checked(valid_types, data.clone())?)
+            }))),
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.as_raw(data)),
-            Value::None => InterpreterResult::Sync(Ok(self)),
+                .execute(data.clone())?
+                .map_result(|r| r.as_raw(data)),
+            Value::None => {
+                if valid_types.contains(&self.to_type()) {
+                    Ok(PotentialFuture::Sync(self))
+                } else {
+                    Err(self.conversion_err(valid_types).into())
+                }
+            }
         }
     }
 
     /// Reduces value to base type
     /// Recursively reduces inner values of lists and maps to their most base type
     /// Expensive, use as_base if list/map inner values do not need to be reduced
-    pub fn as_raw(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, ValueError> {
+    pub fn as_raw(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, ValueError> {
         match self {
-            Value::Int(_) => InterpreterResult::Sync(Ok(self)),
-            Value::Float(_) => InterpreterResult::Sync(Ok(self)),
-            Value::Bool(_) => InterpreterResult::Sync(Ok(self)),
-            Value::Text(_) => InterpreterResult::Sync(Ok(self)),
-            Value::List(_) => InterpreterResult::Async(Box::pin(async move {
-                Ok(Value::List(await_result!(self.to_list(data.clone()))?))
-            })),
-            Value::Map(_) => InterpreterResult::Async(Box::pin(async move {
-                Ok(Value::Map(await_result!(self.to_map(data.clone()))?))
-            })),
-            Value::Var(label) => InterpreterResult::Async(Box::pin(async move {
+            Value::Int(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Float(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Bool(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Text(_) => Ok(PotentialFuture::Sync(self)),
+            Value::List(_) => Ok(PotentialFuture::Async(Box::pin(async move {
+                let result = self.to_list(data.clone())?;
+                let list = await_result!(result)?;
+                Ok(Value::List(list))
+            }))),
+            Value::Map(_) => Ok(PotentialFuture::Async(Box::pin(async move {
+                let result = self.to_map(data.clone())?;
+                let map = await_result!(result)?;
+                Ok(Value::Map(map))
+            }))),
+            Value::Var(label) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let var = data.vars.read().await.get_clone(&label).await?;
-                await_result!(var.as_raw(data.clone()))
-            })),
+                await_result!(var.as_raw(data.clone())?)
+            }))),
             Value::Command(command) => command
-                .execute(data.clone())
-                .and_then_result(|r| r.as_raw(data)),
-            Value::None => InterpreterResult::Sync(Ok(self)),
+                .execute(data.clone())?
+                .map_result(|r| r.as_raw(data)),
+            Value::None => Ok(PotentialFuture::Sync(self)),
         }
     }
 
@@ -526,18 +531,18 @@ impl Value {
         data: Arc<InterpreterData>,
     ) -> ValueResult<Vec<usize>, ValueError> {
         Box::pin(async move {
-            let accesor = await_result!(self.as_raw_checked(LIST_KEY, data.clone()))?;
+            let accesor = await_result!(self.as_raw_checked(LIST_KEY, data.clone())?)?;
 
             match accesor {
                 Value::List(values) => {
                     let values = values.resolve(data.clone()).await?.take();
                     let mut indices = Vec::with_capacity(values.len());
                     for value in values {
-                        indices.push(await_result!(value.to_usize(data.clone()))?);
+                        indices.push(await_result!(value.to_usize(data.clone())?)?);
                     }
                     Ok(indices)
                 }
-                _ => Ok(vec![await_result!(accesor.to_usize(data.clone()))?]),
+                _ => Ok(vec![await_result!(accesor.to_usize(data.clone())?)?]),
             }
         })
     }
@@ -547,18 +552,18 @@ impl Value {
         data: Arc<InterpreterData>,
     ) -> ValueResult<Vec<SourceStr>, ValueError> {
         Box::pin(async move {
-            let accesor = await_result!(self.as_raw_checked(MAP_KEY, data.clone()))?;
+            let accesor = await_result!(self.as_raw_checked(MAP_KEY, data.clone())?)?;
 
             match accesor {
                 Value::List(values) => {
                     let values = values.resolve(data.clone()).await?.take();
                     let mut indices = Vec::with_capacity(values.len());
                     for value in values {
-                        indices.push(await_result!(value.to_text(data.clone()))?);
+                        indices.push(await_result!(value.to_text(data.clone())?)?);
                     }
                     Ok(indices)
                 }
-                _ => Ok(vec![(await_result!(accesor.to_text(data.clone()))?)]),
+                _ => Ok(vec![(await_result!(accesor.to_text(data.clone())?)?)]),
             }
         })
     }

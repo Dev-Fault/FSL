@@ -1,7 +1,7 @@
 use core::fmt;
 use std::{collections::VecDeque, ops::Range, sync::Arc};
 
-use futures::{TryFutureExt, future::BoxFuture};
+use futures::future::BoxFuture;
 
 use crate::{
     InterpreterData,
@@ -14,74 +14,105 @@ use crate::{
     },
 };
 
-use super::argument::ArgumentKind;
-
 pub type InterpreterFut = BoxFuture<'static, Result<Value, SpannedError>>;
 
 pub type InterpreterFn = Arc<dyn Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync>;
 
-pub enum InterpreterResult<T, E> {
-    Sync(Result<T, E>),
+pub enum PotentialFuture<T, E> {
+    Sync(T),
     Async(BoxFuture<'static, Result<T, E>>),
 }
 
-impl<T, E> InterpreterResult<T, E> {
-    pub fn map_err<F, O>(self, op: O) -> InterpreterResult<T, F>
+impl<T: 'static, E: 'static> PotentialFuture<T, E> {
+    pub fn map<F, T2>(self, f: F) -> PotentialFuture<T2, E>
     where
-        O: FnOnce(E) -> F + Send + 'static,
-        E: 'static,
-        T: 'static,
+        F: FnOnce(T) -> T2 + Send + 'static,
     {
         match self {
-            InterpreterResult::Sync(r) => InterpreterResult::Sync(r.map_err(op)),
-            InterpreterResult::Async(pin) => {
-                InterpreterResult::Async(Box::pin(async { pin.map_err(op).await }))
+            PotentialFuture::Sync(t) => PotentialFuture::Sync(f(t)),
+            PotentialFuture::Async(t) => {
+                PotentialFuture::Async(Box::pin(async move { Ok(f(t.await?)) }))
             }
         }
     }
 
-    pub fn map<F, O>(self, op: O) -> InterpreterResult<F, E>
+    pub fn map_err<F, E2>(self, f: F) -> PotentialFuture<T, E2>
     where
-        O: FnOnce(T) -> F + Send + 'static,
-        E: 'static,
-        T: 'static,
+        F: FnOnce(E) -> E2 + Send + 'static,
     {
         match self {
-            InterpreterResult::Sync(r) => InterpreterResult::Sync(r.map(op)),
-            InterpreterResult::Async(pin) => {
-                InterpreterResult::Async(Box::pin(async { pin.await.map(op) }))
+            PotentialFuture::Sync(t) => PotentialFuture::Sync(t),
+            PotentialFuture::Async(t) => {
+                PotentialFuture::Async(Box::pin(async move { t.await.map_err(f) }))
             }
+        }
+    }
+
+    pub fn map_result<F, T2, E2>(self, f: F) -> PotentialFutureResult<T2, E2>
+    where
+        F: FnOnce(T) -> PotentialFutureResult<T2, E2> + Send + 'static,
+        T: Send + 'static,
+        E: Into<E2> + Send + 'static,
+        E2: Send + 'static,
+        T2: Send + 'static,
+    {
+        match self {
+            PotentialFuture::Sync(t) => f(t),
+            PotentialFuture::Async(t) => Ok(PotentialFuture::Async(Box::pin(async move {
+                match f(t.await.map_err(|e| e.into())?)? {
+                    PotentialFuture::Sync(value) => Ok(value),
+                    PotentialFuture::Async(pin) => pin.await,
+                }
+            }))),
         }
     }
 }
 
-impl<T, E> InterpreterResult<T, E> {
-    pub fn and_then_result<U, E2>(
-        self,
-        f: impl FnOnce(T) -> InterpreterResult<U, E2> + Send + 'static,
-    ) -> InterpreterResult<U, E2>
-    where
-        E: Into<E2> + 'static + Send,
-        E2: 'static + Send,
-        U: 'static + Send,
-        T: 'static + Send,
-    {
+pub type PotentialFutureResult<T, E> = Result<PotentialFuture<T, E>, E>;
+
+pub trait SpannedPotentialFutureResult<T> {
+    fn spanned(self, span: Span) -> PotentialFutureResult<T, SpannedError>;
+}
+
+impl<T: 'static, E: ToSpannedError + 'static> SpannedPotentialFutureResult<T>
+    for PotentialFutureResult<T, E>
+{
+    fn spanned(self, span: Span) -> PotentialFutureResult<T, SpannedError> {
         match self {
-            InterpreterResult::Sync(Ok(value)) => f(value),
-            InterpreterResult::Sync(Err(e)) => InterpreterResult::Sync(Err(e.into())),
-            InterpreterResult::Async(pin) => InterpreterResult::Async(Box::pin(async {
-                crate::await_result!(f(pin.await.map_err(Into::into)?))
-            })),
+            Ok(pf) => Ok(pf.map_err(move |e| e.span(span))),
+            Err(_) => self
+                .map(|pf| pf.map_err(move |e| e.span(span)))
+                .map_err(|e| e.span(span)),
         }
     }
+}
+
+#[macro_export]
+macro_rules! execute_command {
+    ($command:expr, $data:expr) => {{
+        match $command.execute($data)? {
+            $crate::types::command::PotentialFuture::Sync(value) => Ok(value),
+            $crate::types::command::PotentialFuture::Async(pin) => pin.await,
+        }
+    }};
 }
 
 #[macro_export]
 macro_rules! await_result {
     ($expr:expr) => {
         match $expr {
-            $crate::types::command::InterpreterResult::Sync(value) => value,
-            $crate::types::command::InterpreterResult::Async(pin) => pin.await,
+            $crate::types::command::PotentialFuture::Sync(value) => Ok(value),
+            $crate::types::command::PotentialFuture::Async(pin) => pin.await,
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! potential_future {
+    ($expr:expr) => {
+        match $expr {
+            $crate::types::command::PotentialFuture::Sync(value) => value,
+            $crate::types::command::PotentialFuture::Async(pin) => pin.await?,
         }
     };
 }
@@ -92,7 +123,7 @@ macro_rules! try_result {
         match $result {
             Ok(result) => result,
             Err(e) => {
-                return InterpreterResult::Sync(Err(e));
+                return PotentialFuture::Sync(Err(e));
             }
         }
     }};
@@ -110,11 +141,11 @@ impl Handler {
         &self,
         command: Command,
         data: Arc<InterpreterData>,
-    ) -> InterpreterResult<Value, SpannedError> {
+    ) -> PotentialFutureResult<Value, SpannedError> {
         match self {
-            Handler::AsyncStatic(f) => InterpreterResult::Async(f(command, data)),
-            Handler::AsyncDynamic(f) => InterpreterResult::Async(f(command, data)),
-            Handler::SyncStatic(f) => InterpreterResult::Sync(f(command, data)),
+            Handler::AsyncStatic(f) => Ok(PotentialFuture::Async(f(command, data))),
+            Handler::AsyncDynamic(f) => Ok(PotentialFuture::Async(f(command, data))),
+            Handler::SyncStatic(f) => Ok(PotentialFuture::Sync(f(command, data)?)),
         }
     }
 }
@@ -426,7 +457,7 @@ impl Command {
     pub(crate) fn resolve_args(
         mut self,
         data: Arc<InterpreterData>,
-    ) -> InterpreterResult<Self, SpannedError> {
+    ) -> PotentialFutureResult<Self, SpannedError> {
         enum PendingOp {
             NeedsRaw(BoxFuture<'static, Result<Value, SpannedError>>),
             AlreadyRaw(BoxFuture<'static, Result<Value, ValueError>>),
@@ -438,18 +469,15 @@ impl Command {
                 let kind = std::mem::take(&mut arg.kind);
                 let value = kind.into_value(span, data.clone());
                 let value = match value {
-                    InterpreterResult::Sync(value) => try_result!(value),
-                    InterpreterResult::Async(pin) => {
+                    PotentialFuture::Sync(value) => value,
+                    PotentialFuture::Async(pin) => {
                         async_ops.push((i, (PendingOp::NeedsRaw(pin))));
                         continue;
                     }
                 };
-                let value = match value.as_raw(data.clone()) {
-                    InterpreterResult::Sync(value) => match value {
-                        Ok(value) => value,
-                        Err(e) => return InterpreterResult::Sync(Err(e.span(span))),
-                    },
-                    InterpreterResult::Async(pin) => {
+                let value = match value.as_raw(data.clone()).span_err(arg.span)? {
+                    PotentialFuture::Sync(value) => value,
+                    PotentialFuture::Async(pin) => {
                         async_ops.push((i, (PendingOp::AlreadyRaw(pin))));
                         continue;
                     }
@@ -458,13 +486,14 @@ impl Command {
             }
         }
         if async_ops.len() > 0 {
-            InterpreterResult::Async(Box::pin(async move {
+            Ok(PotentialFuture::Async(Box::pin(async move {
                 for (i, op) in async_ops {
                     let span = self.args[i].span;
                     match op {
                         PendingOp::NeedsRaw(pin) => {
                             let value = pin.await?;
-                            let value = await_result!(value.as_raw(data.clone())).span_err(span)?;
+                            let value = await_result!(value.as_raw(data.clone()).span_err(span)?)
+                                .span_err(span)?;
                             let arg = &mut self.args[i];
                             arg.replace_value(value);
                         }
@@ -476,43 +505,38 @@ impl Command {
                     }
                 }
                 Ok(self)
-            }))
+            })))
         } else {
-            InterpreterResult::Sync(Ok(self))
+            Ok(PotentialFuture::Sync(self))
         }
     }
 
     #[inline(always)]
-    fn handle(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, SpannedError> {
+    fn handle(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, SpannedError> {
         if data.should_execute() {
-            return InterpreterResult::Sync(Ok(Value::None));
+            return Ok(PotentialFuture::Sync(Value::None));
         }
 
         let handler = self.handler.clone();
         handler.handle(self, data.clone())
     }
 
-    pub fn execute(self, data: Arc<InterpreterData>) -> InterpreterResult<Value, SpannedError> {
+    pub fn execute(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, SpannedError> {
         if self.should_resolve_args() {
-            match self.resolve_args(data.clone()) {
-                InterpreterResult::Sync(command) => {
-                    let command = try_result!(command);
+            match self.resolve_args(data.clone())? {
+                PotentialFuture::Sync(command) => {
+                    let command = command;
                     command.handle(data)
                 }
-                InterpreterResult::Async(pin) => InterpreterResult::Async(Box::pin(async move {
+                PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
                     let command = pin.await?;
-                    await_result!(command.handle(data))
-                })),
+                    await_result!(command.handle(data)?)
+                }))),
             }
         } else {
             self.handle(data)
         }
     }
-}
-
-#[macro_export]
-macro_rules! execute_command {
-    ($command:expr, $data:expr) => {{ $crate::await_result!($command.execute($data)) }};
 }
 
 impl PartialEq for Command {

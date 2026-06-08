@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::{
-    await_result,
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError},
+    potential_future,
     span::Span,
     types::value::{Value, ValueError},
 };
@@ -63,7 +63,7 @@ impl List {
             List::Unresolved(arc) => {
                 let mut values = Arc::unwrap_or_clone(arc);
                 for value in values.iter_mut() {
-                    *value = await_result!(std::mem::take(value).as_raw(data.clone()))?;
+                    *value = potential_future!(std::mem::take(value).as_raw(data.clone())?);
                 }
                 Ok(List::Resolved(Arc::new(values)))
             }

@@ -1,13 +1,10 @@
 use std::sync::Arc;
 
-use tokio_stream::StreamExt;
-
 use crate::{
-    FslInterpreter, await_result,
+    FslInterpreter,
     data::InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    register_async,
-    source_str::SourceStr,
+    potential_future, register_async,
     types::{
         command::{Command, CommandSignature, ExpectedArgs},
         value::Value,
@@ -26,15 +23,16 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let program = await_result!(arg.to_text(data.clone()))?;
-    let args = tokio_stream::iter(args.into_iter());
-    let args: Vec<SourceStr> = args
-        .then(async |v| await_result!(v.to_text(data.clone())))
-        .collect::<Result<Vec<SourceStr>, _>>()
-        .await?;
-    let args: Vec<&str> = args.iter().map(|cs| &**cs).collect();
+    let program = potential_future!(arg.to_text(data.clone())?);
+    let args = command.take_args();
+    let mut strings = Vec::new();
+    for arg in args {
+        let string = potential_future!(arg.to_text(data.clone())?);
+        strings.push(string);
+    }
+    let strings: Vec<&str> = strings.iter().map(|cs| &**cs).collect();
     let output = tokio::process::Command::new(&*program)
-        .args(args)
+        .args(strings)
         .output()
         .await
         .map_err(|_| {
@@ -63,7 +61,7 @@ pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, S
     let mut command = command;
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
-    let script = await_result!(arg.to_text(data.clone()))?;
+    let script = potential_future!(arg.to_text(data.clone())?);
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&*script)

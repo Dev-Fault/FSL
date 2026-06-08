@@ -388,11 +388,26 @@ impl FslInterpreter {
         let result = Self::process_expression(data.clone(), defs, expression).await;
         match result {
             Ok(value) => match value {
-                Value::Command(command) => match execute_command!(command, data.clone()) {
-                    Ok(_) => Ok(()),
-                    Err(e) if e.exited_program() => Err(InterpreterError::Exit),
-                    Err(e) => Err(e.into_interpreter_error(data.clone())),
-                },
+                Value::Command(command) => {
+                    let result = command.execute(data.clone());
+                    let err = match result {
+                        Ok(pf) => {
+                            let result = await_result!(pf);
+                            match result {
+                                Ok(_) => {
+                                    return Ok(());
+                                }
+                                Err(e) => e,
+                            }
+                        }
+                        Err(e) => e,
+                    };
+                    if err.exited_program() {
+                        Err(InterpreterError::Exit)
+                    } else {
+                        Err(err.into_interpreter_error(data))
+                    }
+                }
                 _ => {
                     unreachable!("parse expression should always return a command")
                 }

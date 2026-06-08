@@ -5,20 +5,21 @@ use std::{
 };
 
 use rand::seq::SliceRandom;
-use tokio_stream::StreamExt;
 
 use crate::{
     DEF, DEF_RULES, FslInterpreter, InterpreterData, await_result,
     data::UserDeclaration,
     def,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
-    execute_command, register_async, register_sync,
+    execute_command, potential_future, register_async, register_sync,
     source_str::SourceStr,
     span::Span,
     types::{
-        ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, NO_ARGS, NOT_NONE, NUMBER,
+        ANY, COLLECTION, FslType, INDEXABLE, MATH_RULES, NO_ARGS, NUMBER,
         argument::Argument,
-        command::{ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs},
+        command::{
+            ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs, SpannedPotentialFutureResult,
+        },
         list::List,
         map::FslMap,
         value::Value,
@@ -617,14 +618,14 @@ pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let mut command = command;
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
-    let to_clamp = await_result!(arg.to_number(data.clone()))?;
+    let to_clamp = potential_future!(arg.to_number(data.clone())?);
     let min = args.pop_front().unwrap();
     let max = args.pop_front().unwrap();
 
     match await_result!(to_clamp.into_value(data.clone()))? {
         Value::Int(to_clamp) => {
-            let min = await_result!(min.to_int(data.clone()))?;
-            let max = await_result!(max.to_int(data.clone()))?;
+            let min = potential_future!(min.to_int(data.clone())?);
+            let max = potential_future!(max.to_int(data.clone())?);
 
             if min > max {
                 return Err(RuntimeError::InvalidRange.span(command.span));
@@ -633,8 +634,8 @@ pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value
             Ok(Value::Int(to_clamp.clamp(min, max)))
         }
         Value::Float(to_clamp) => {
-            let min = await_result!(min.to_float(data.clone()))?;
-            let max = await_result!(max.to_float(data.clone()))?;
+            let min = potential_future!(min.to_float(data.clone())?);
+            let max = potential_future!(max.to_float(data.clone())?);
 
             if min > max {
                 return Err(RuntimeError::InvalidRange.span(command.span));
@@ -654,12 +655,12 @@ pub async fn clamp_min(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let to_clamp = await_result!(args.pop_front().unwrap().to_number(data.clone()))?;
+    let to_clamp = potential_future!(args.pop_front().unwrap().to_number(data.clone())?);
     let min = args.pop_front().unwrap();
 
     match await_result!(to_clamp.into_value(data.clone()))? {
         Value::Int(to_clamp) => {
-            let min = await_result!(min.to_int(data.clone()))?;
+            let min = potential_future!(min.to_int(data.clone())?);
 
             if to_clamp < min {
                 Ok(Value::Int(min))
@@ -668,7 +669,7 @@ pub async fn clamp_min(
             }
         }
         Value::Float(to_clamp) => {
-            let min = await_result!(min.to_float(data.clone()))?;
+            let min = potential_future!(min.to_float(data.clone())?);
 
             if to_clamp < min {
                 Ok(Value::Float(min))
@@ -688,12 +689,12 @@ pub async fn clamp_max(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let to_clamp = await_result!(args.pop_front().unwrap().to_number(data.clone()))?;
+    let to_clamp = potential_future!(args.pop_front().unwrap().to_number(data.clone())?);
     let max = args.pop_front().unwrap();
 
     match await_result!(to_clamp.into_value(data.clone()))? {
         Value::Int(to_clamp) => {
-            let max = await_result!(max.to_int(data.clone()))?;
+            let max = potential_future!(max.to_int(data.clone())?);
 
             if to_clamp > max {
                 Ok(Value::Int(max))
@@ -702,7 +703,7 @@ pub async fn clamp_max(
             }
         }
         Value::Float(to_clamp) => {
-            let max = await_result!(max.to_float(data.clone()))?;
+            let max = potential_future!(max.to_float(data.clone())?);
 
             if to_clamp > max {
                 Ok(Value::Float(max))
@@ -724,8 +725,8 @@ pub async fn precision(
     let mut args = command.take_args();
     let arg_0 = args.pop_front().unwrap();
     let arg_1 = args.pop_front().unwrap();
-    let num = await_result!(arg_0.to_float(data.clone()))?;
-    let precision = await_result!(arg_1.to_usize(data))?;
+    let num = potential_future!(arg_0.to_float(data.clone())?);
+    let precision = potential_future!(arg_1.to_usize(data)?);
     let formatted = format!("{:.prec$}", num, prec = precision);
 
     Ok(Value::Text(SourceStr::Owned(formatted)))
@@ -737,11 +738,11 @@ pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
-    let var = await_result!(var.to_var(data.clone()))?;
+    let var = potential_future!(var.to_var(data.clone())?);
 
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let arg = await_result!(arg.as_raw_checked(ANY, data.clone()))?;
+    let arg = potential_future!(arg.as_raw_checked(ANY, data.clone())?);
 
     data.vars
         .write()
@@ -761,10 +762,10 @@ pub async fn assign(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let arg = await_result!(arg.as_raw_checked(ANY, data.clone()))?;
+    let arg = potential_future!(arg.as_raw_checked(ANY, data.clone())?);
 
     let var = args.pop_front().unwrap();
-    let var = await_result!(var.to_var(data.clone()))?;
+    let var = potential_future!(var.to_var(data.clone())?);
 
     data.vars
         .write()
@@ -782,11 +783,11 @@ pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
-    let var = await_result!(var.to_var(data.clone()))?;
+    let var = potential_future!(var.to_var(data.clone())?);
 
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let arg = await_result!(arg.as_raw_checked(ANY, data.clone()))?;
+    let arg = potential_future!(arg.as_raw_checked(ANY, data.clone())?);
 
     data.vars
         .write()
@@ -804,11 +805,11 @@ pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
-    let var = await_result!(var.to_var(data.clone()))?;
+    let var = potential_future!(var.to_var(data.clone())?);
 
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let arg = await_result!(arg.as_raw_checked(ANY, data.clone()))?;
+    let arg = potential_future!(arg.as_raw_checked(ANY, data.clone())?);
     let var_label = &var;
 
     data.vars
@@ -827,11 +828,11 @@ pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut command = command;
     let mut args = command.take_args();
     let var = args.pop_front().unwrap();
-    let var = await_result!(var.to_var(data.clone()))?;
+    let var = potential_future!(var.to_var(data.clone())?);
 
     let arg = args.pop_front().unwrap();
     let arg_span = arg.span;
-    let arg = await_result!(arg.as_raw_checked(ANY, data.clone()))?;
+    let arg = potential_future!(arg.as_raw_checked(ANY, data.clone())?);
     let var_label = &var;
 
     data.vars
@@ -849,7 +850,7 @@ pub const CLONE: &str = "clone";
 pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let arg = command.take_args().pop_front().unwrap();
-    let arg = await_result!(arg.as_raw(data.clone()))?;
+    let arg = potential_future!(arg.as_raw(data.clone())?);
     Ok(arg)
 }
 
@@ -880,7 +881,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     if let Some(limit) = data.limits.max_output_len {
         for value in args {
-            let text = await_result!(value.to_text(data.clone()))?;
+            let text = potential_future!(value.to_text(data.clone())?);
             // Must be locked after as_text (could require evaluating command that calls print)
             let mut output = data.output.lock().await;
             if text.len() + output.len() > limit {
@@ -890,7 +891,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
         }
     } else {
         for value in args {
-            let text = await_result!(value.to_text(data.clone()))?;
+            let text = potential_future!(value.to_text(data.clone())?);
             let mut output = data.output.lock().await;
             output.push_str(&text);
         }
@@ -914,7 +915,7 @@ pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let mut output = String::new();
 
     for value in args {
-        output.push_str(&await_result!(value.to_text(data.clone()))?);
+        output.push_str(&potential_future!(value.to_text(data.clone())?));
     }
 
     dbg!(output);
@@ -931,7 +932,7 @@ pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     let mut return_value = Value::None;
     for value in args {
-        return_value = await_result!(value.as_raw(data.clone()))?;
+        return_value = potential_future!(value.as_raw(data.clone())?);
     }
 
     data.vars.write().await.pop().await;
@@ -950,8 +951,16 @@ pub const EQ: &str = "eq";
 pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let a = await_result!(args.pop_front().unwrap().as_raw_checked(ANY, data.clone()))?;
-    let b = await_result!(args.pop_front().unwrap().as_raw_checked(ANY, data.clone()))?;
+    let a = potential_future!(
+        args.pop_front()
+            .unwrap()
+            .as_raw_checked(ANY, data.clone())?
+    );
+    let b = potential_future!(
+        args.pop_front()
+            .unwrap()
+            .as_raw_checked(ANY, data.clone())?
+    );
 
     Ok(Value::Bool(
         a.equal(&b, data.clone()).span_err(command.span)?,
@@ -963,8 +972,16 @@ pub const SOFT_EQ: &str = "soft_eq";
 pub async fn soft_eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let a = await_result!(args.pop_front().unwrap().as_raw_checked(ANY, data.clone()))?;
-    let b = await_result!(args.pop_front().unwrap().as_raw_checked(ANY, data.clone()))?;
+    let a = potential_future!(
+        args.pop_front()
+            .unwrap()
+            .as_raw_checked(ANY, data.clone())?
+    );
+    let b = potential_future!(
+        args.pop_front()
+            .unwrap()
+            .as_raw_checked(ANY, data.clone())?
+    );
 
     Ok(Value::Bool(
         a.soft_equal(&b, data.clone()).span_err(command.span)?,
@@ -975,19 +992,20 @@ pub const GT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::E
 pub const GT: &str = "gt";
 pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = tokio_stream::iter(command.take_args());
-    let mut args = args
-        .then(async |v| await_result!(v.to_number(data.clone())))
-        .collect::<Result<Vec<Argument>, _>>()
-        .await?;
-    if contains_float(&mut args, data.clone()).await? {
-        let b = await_result!(args.pop().unwrap().to_float(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_float(data.clone()))?;
+    let args = command.take_args();
+    let mut numbers = Vec::new();
+    for arg in args {
+        let num = potential_future!(arg.to_number(data.clone())?);
+        numbers.push(num);
+    }
+    if contains_float(&mut numbers, data.clone()).await? {
+        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
 
         Ok(Value::Bool(a > b))
     } else {
-        let b = await_result!(args.pop().unwrap().to_int(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_int(data.clone()))?;
+        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
 
         Ok(Value::Bool(a > b))
     }
@@ -997,19 +1015,20 @@ pub const GTOE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs:
 pub const GTOE: &str = "gtoe";
 pub async fn gtoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = tokio_stream::iter(command.take_args());
-    let mut args = args
-        .then(async |v| await_result!(v.to_number(data.clone())))
-        .collect::<Result<Vec<Argument>, _>>()
-        .await?;
-    if contains_float(&mut args, data.clone()).await? {
-        let b = await_result!(args.pop().unwrap().to_float(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_float(data.clone()))?;
+    let args = command.take_args();
+    let mut numbers = Vec::new();
+    for arg in args {
+        let num = potential_future!(arg.to_number(data.clone())?);
+        numbers.push(num);
+    }
+    if contains_float(&mut numbers, data.clone()).await? {
+        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
 
         Ok(Value::Bool(a >= b))
     } else {
-        let b = await_result!(args.pop().unwrap().to_int(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_int(data.clone()))?;
+        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
 
         Ok(Value::Bool(a >= b))
     }
@@ -1019,19 +1038,20 @@ pub const LT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::E
 pub const LT: &str = "lt";
 pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = tokio_stream::iter(command.take_args());
-    let mut args = args
-        .then(async |v| await_result!(v.to_number(data.clone())))
-        .collect::<Result<Vec<Argument>, _>>()
-        .await?;
-    if contains_float(&mut args, data.clone()).await? {
-        let b = await_result!(args.pop().unwrap().to_float(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_float(data.clone()))?;
+    let args = command.take_args();
+    let mut numbers = Vec::new();
+    for arg in args {
+        let num = potential_future!(arg.to_number(data.clone())?);
+        numbers.push(num);
+    }
+    if contains_float(&mut numbers, data.clone()).await? {
+        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
 
         Ok(Value::Bool(a < b))
     } else {
-        let b = await_result!(args.pop().unwrap().to_int(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_int(data.clone()))?;
+        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
 
         Ok(Value::Bool(a < b))
     }
@@ -1041,19 +1061,20 @@ pub const LTOE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs:
 pub const LTOE: &str = "ltoe";
 pub async fn ltoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = tokio_stream::iter(command.take_args());
-    let mut args = args
-        .then(async |v| await_result!(v.to_number(data.clone())))
-        .collect::<Result<Vec<Argument>, _>>()
-        .await?;
-    if contains_float(&mut args, data.clone()).await? {
-        let b = await_result!(args.pop().unwrap().to_float(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_float(data.clone()))?;
+    let args = command.take_args();
+    let mut numbers = Vec::new();
+    for arg in args {
+        let num = potential_future!(arg.to_number(data.clone())?);
+        numbers.push(num);
+    }
+    if contains_float(&mut numbers, data.clone()).await? {
+        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
 
         Ok(Value::Bool(a <= b))
     } else {
-        let b = await_result!(args.pop().unwrap().to_int(data.clone()))?;
-        let a = await_result!(args.pop().unwrap().to_int(data.clone()))?;
+        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
+        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
 
         Ok(Value::Bool(a <= b))
     }
@@ -1064,7 +1085,7 @@ pub const NOT: &str = "not";
 pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let a = await_result!(args.pop_front().unwrap().to_bool(data.clone()))?;
+    let a = potential_future!(args.pop_front().unwrap().to_bool(data.clone())?);
     Ok(Value::from(!a))
 }
 
@@ -1073,9 +1094,9 @@ pub const AND: &str = "and";
 pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let mut return_value = await_result!(args.pop_front().unwrap().to_bool(data.clone()))?;
+    let mut return_value = potential_future!(args.pop_front().unwrap().to_bool(data.clone())?);
     for arg in args {
-        return_value = return_value && await_result!(arg.to_bool(data.clone()))?;
+        return_value = return_value && potential_future!(arg.to_bool(data.clone())?);
     }
     Ok(Value::from(return_value))
 }
@@ -1085,9 +1106,9 @@ pub const OR: &str = "or";
 pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let mut return_value = await_result!(args.pop_front().unwrap().to_bool(data.clone()))?;
+    let mut return_value = potential_future!(args.pop_front().unwrap().to_bool(data.clone())?);
     for value in args {
-        return_value = return_value || await_result!(value.to_bool(data.clone()))?;
+        return_value = return_value || potential_future!(value.to_bool(data.clone())?);
     }
     Ok(Value::from(return_value))
 }
@@ -1097,7 +1118,7 @@ pub const IF: &str = "if";
 pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let condition = await_result!(args.pop_front().unwrap().to_bool(data.clone()))?;
+    let condition = potential_future!(args.pop_front().unwrap().to_bool(data.clone())?);
 
     let mut then_command: Option<Argument> = None;
     let mut else_ifs: VecDeque<Argument> = VecDeque::new();
@@ -1128,7 +1149,8 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             _ => {
                 if command_count == 1 {
                     if condition {
-                        return execute_command!(command.to_command(data.clone()).await?, data);
+                        let command = command.to_command(data.clone()).await?;
+                        return execute_command!(command, data);
                     } else {
                         return Ok(Value::None);
                     }
@@ -1151,7 +1173,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         for else_if in else_ifs {
             let mut else_if = else_if.to_command(data.clone()).await?;
             let condition = else_if.pop_front_arg().unwrap();
-            let condition = await_result!(condition.to_bool(data.clone()))?;
+            let condition = potential_future!(condition.to_bool(data.clone())?);
 
             if condition {
                 return execute_command!(else_if, data);
@@ -1175,7 +1197,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut command = command;
     let mut args = command.take_args();
     let expression = args.pop_front().unwrap();
-    let expression = await_result!(expression.as_raw_checked(ANY, data.clone()))?;
+    let expression = potential_future!(expression.as_raw_checked(ANY, data.clone())?);
     let commands = args;
 
     let mut cases: VecDeque<Argument> = VecDeque::new();
@@ -1198,7 +1220,7 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             let case_span = case.span;
             let mut case = case.to_command(data.clone()).await?;
             let arg = case.pop_front_arg().unwrap();
-            let arg = await_result!(arg.as_raw(data.clone()))?;
+            let arg = potential_future!(arg.as_raw(data.clone())?);
 
             if arg.equal(&expression, data.clone()).span_err(case_span)? {
                 return execute_command!(case, data);
@@ -1225,7 +1247,7 @@ pub async fn block(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     let mut return_value = Value::None;
     for value in args {
-        return_value = await_result!(value.as_raw_checked(ANY, data.clone()))?;
+        return_value = potential_future!(value.as_raw_checked(ANY, data.clone())?);
     }
     Ok(return_value)
 }
@@ -1248,7 +1270,7 @@ pub async fn while_command(
 
     data.inc_loop_depth();
 
-    'outer: while await_result!(while_condition.clone().to_bool(data.clone()))? {
+    'outer: while potential_future!(while_condition.clone().to_bool(data.clone())?) {
         for command in &commands {
             final_value = execute_command!(command.clone(), data.clone())?;
 
@@ -1274,7 +1296,7 @@ pub const REPEAT: &str = "repeat";
 pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let repetitions = await_result!(args.pop_front().unwrap().to_int(data.clone()))?;
+    let repetitions = potential_future!(args.pop_front().unwrap().to_int(data.clone())?);
     let mut final_value = Value::None;
 
     let mut commands = Vec::with_capacity(args.len());
@@ -1314,11 +1336,12 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let mut array = args.pop_front().unwrap();
     let array_span = array.span;
     let var = take_if_var(&mut array, data.clone(), array_span).await?;
-    let array = await_result!(array.as_raw_checked(&[FslType::List, FslType::Text], data.clone()))?;
+    let array =
+        potential_future!(array.as_raw_checked(&[FslType::List, FslType::Text], data.clone())?);
 
     let label = args.pop_front().unwrap();
     let label_span = label.span;
-    let label = await_result!(label.to_var(data.clone()))?;
+    let label = potential_future!(label.to_var(data.clone())?);
 
     data.vars.write().await.push();
     data.inc_loop_depth();
@@ -1353,7 +1376,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .unwrap();
 
                     let replacement =
-                        await_result!(character.to_text(data.clone())).span_err(label_span)?;
+                        potential_future!(character.to_text(data.clone()).spanned(label_span)?);
 
                     let i = (i as isize + offset) as usize;
                     text.replace_range(i..i + c.len_utf8(), &replacement);
@@ -1441,7 +1464,7 @@ pub async fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value
     array
         .with(data.clone(), async |value, span| match value {
             Value::Text(text) => {
-                let (i_span, i) = (i.span, await_result!(i.to_usize(data.clone()))?);
+                let (i_span, i) = (i.span, potential_future!(i.to_usize(data.clone())?));
                 match text.chars().nth(i) {
                     Some(char) => Ok(char.into()),
                     None => Err(RuntimeError::IndexOutOfBounds.span(i_span)),
@@ -1596,7 +1619,7 @@ pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             .with_mut(data.clone(), async |value, span| match value {
                 Value::Text(source_str) => {
                     let mut text = std::mem::take(source_str).into_owned_string();
-                    let removed = text.remove(await_result!(indexer.to_usize(data.clone()))?);
+                    let removed = text.remove(potential_future!(indexer.to_usize(data.clone())?));
                     *source_str = SourceStr::Owned(text);
                     Ok(Value::from(removed))
                 }
@@ -1635,9 +1658,9 @@ pub async fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value,
                 let text = std::mem::take(text).into_owned_string();
                 let mut chars: Vec<char> = text.chars().collect();
                 let (a_pos_span, a_pos) =
-                    (a_pos.span, await_result!(a_pos.to_usize(data.clone()))?);
+                    (a_pos.span, potential_future!(a_pos.to_usize(data.clone())?));
                 let (b_pos_span, b_pos) =
-                    (b_pos.span, await_result!(b_pos.to_usize(data.clone()))?);
+                    (b_pos.span, potential_future!(b_pos.to_usize(data.clone())?));
                 chars
                     .get(a_pos)
                     .ok_or(RuntimeError::IndexOutOfBounds.span(a_pos_span))?;
@@ -1681,8 +1704,11 @@ pub async fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
         .with_mut(data.clone(), async |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
-                let (i_span, i) = (indexer.span, await_result!(indexer.to_usize(data.clone()))?);
-                let replacement = await_result!(replacement.to_text(data.clone()))?;
+                let (i_span, i) = (
+                    indexer.span,
+                    potential_future!(indexer.to_usize(data.clone())?),
+                );
+                let replacement = potential_future!(replacement.to_text(data.clone())?);
 
                 if !text.is_char_boundary(i) {
                     Err(RuntimeError::IndexOutOfBounds.span(i_span))
@@ -1731,8 +1757,11 @@ pub async fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Valu
         .with_mut(data.clone(), async |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
-                let (i_span, i) = (indexer.span, await_result!(indexer.to_usize(data.clone()))?);
-                let to_insert = await_result!(to_insert.to_text(data.clone()))?;
+                let (i_span, i) = (
+                    indexer.span,
+                    potential_future!(indexer.to_usize(data.clone())?),
+                );
+                let to_insert = potential_future!(to_insert.to_text(data.clone())?);
 
                 if !text.is_char_boundary(i) {
                     Err(RuntimeError::IndexOutOfBounds.span(i_span))
@@ -1775,7 +1804,7 @@ pub async fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value,
         .with_mut(data.clone(), async |value, span| match value {
             Value::Text(source_str) => {
                 let mut text = std::mem::take(source_str).into_owned_string();
-                let ch = await_result!(to_push.to_text(data.clone()))?;
+                let ch = potential_future!(to_push.to_text(data.clone())?);
                 text.push_str(&ch);
                 *source_str = SourceStr::Owned(text);
                 Ok(())
@@ -1827,13 +1856,13 @@ pub async fn search_replace(
     let mut args = command.take_args();
     let mut string = args.pop_front().unwrap();
 
-    let to_replace = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
-    let with = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
+    let to_replace = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
+    let with = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
 
     let value_loc = string.span;
     let var = take_if_var(&mut string, data.clone(), value_loc).await?;
 
-    let string = await_result!(string.to_text(data.clone()))?;
+    let string = potential_future!(string.to_text(data.clone())?);
 
     let input = string.replace(&*to_replace, &with);
 
@@ -1852,23 +1881,29 @@ pub async fn slice_replace(
     let mut args = command.take_args();
     let mut string = args.pop_front().unwrap();
 
-    let mut range = await_result!(args.pop_front().unwrap().to_list(data.clone()))?;
-    let with = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
+    let mut range = potential_future!(args.pop_front().unwrap().to_list(data.clone())?);
+    let with = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
 
     let value_loc = string.span;
     let var = take_if_var(&mut string, data.clone(), value_loc).await?;
 
-    let string = await_result!(string.to_text(data.clone()))?;
+    let string = potential_future!(string.to_text(data.clone())?);
 
     if range.len() != 2 {
         return Err(RuntimeError::IndexOutOfBounds.span(command.span));
     }
 
     let (from, to) = (
-        await_result!(std::mem::take(&mut range[0]).to_usize(data.clone()))
-            .span_err(command.span)?,
-        await_result!(std::mem::take(&mut range[1]).to_usize(data.clone()))
-            .span_err(command.span)?,
+        potential_future!(
+            std::mem::take(&mut range[0])
+                .to_usize(data.clone())
+                .spanned(command.span)?
+        ),
+        potential_future!(
+            std::mem::take(&mut range[1])
+                .to_usize(data.clone())
+                .spanned(command.span)?
+        ),
     );
 
     if from > string.len() || to > string.len() || from > to {
@@ -1896,7 +1931,8 @@ pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut array = args.pop_front().unwrap();
     let value_loc = array.span;
     let var = take_if_var(&mut array, data.clone(), value_loc).await?;
-    let array = await_result!(array.as_raw_checked(&[FslType::List, FslType::Text], data.clone()))?;
+    let array =
+        potential_future!(array.as_raw_checked(&[FslType::List, FslType::Text], data.clone())?);
 
     match array {
         Value::Text(text) => {
@@ -1923,7 +1959,7 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut arg = args.pop_front().unwrap();
 
     let amount = if let Some(value) = args.pop_front() {
-        await_result!(value.to_int(data.clone()))?
+        potential_future!(value.to_int(data.clone())?)
     } else {
         1
     };
@@ -1951,7 +1987,7 @@ pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut arg = args.pop_front().unwrap();
 
     let amount = if let Some(value) = args.pop_front() {
-        await_result!(value.to_int(data.clone()))?
+        potential_future!(value.to_int(data.clone())?)
     } else {
         1
     };
@@ -1976,32 +2012,29 @@ pub const CONTAINS: &str = "contains";
 pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let collection = await_result!(
-        args.pop_front()
-            .unwrap()
-            .as_raw_checked(COLLECTION, data.clone())
-    )?;
+    let arg = args.pop_front().unwrap();
+    let collection_span = arg.span;
+    let collection = potential_future!(arg.as_raw_checked(COLLECTION, data.clone())?);
     let mut item = args.pop_front().unwrap();
 
     match collection {
         Value::Text(text) => {
-            let item = &await_result!(item.to_text(data))?;
+            let item = &potential_future!(item.to_text(data)?);
             Ok(Value::Bool(text.contains(&**item)))
         }
         Value::List(list) => {
-            let iter = tokio_stream::iter(list.take());
-            let list = iter
-                .then(async |v| await_result!(v.as_raw_checked(NOT_NONE, data.clone())))
-                .collect::<Result<Vec<_>, _>>()
+            let list = list
+                .resolve(data.clone())
                 .await
-                .span_err(command.span)?;
+                .span_err(collection_span)?
+                .take();
             Ok(Value::Bool(
                 item.with(data, async |value, _| Ok(list.contains(value)))
                     .await?,
             ))
         }
         Value::Map(map) => {
-            let key = await_result!(item.to_text(data))?;
+            let key = potential_future!(item.to_text(data)?);
             Ok(Value::Bool(map.contains_key(&key)))
         }
         _ => unreachable!("as_raw should enforce type"),
@@ -2016,8 +2049,8 @@ pub async fn starts_with(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let string = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
-    let value = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
+    let string = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
+    let value = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
     Ok(Value::from(string.starts_with(&*value)))
 }
 
@@ -2029,8 +2062,8 @@ pub async fn ends_with(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let string = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
-    let value = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
+    let string = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
+    let value = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
     Ok(Value::from(string.ends_with(&*value)))
 }
 
@@ -2043,7 +2076,7 @@ pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     let mut cat_string = String::new();
 
     for value in args {
-        cat_string.push_str(&await_result!(value.to_text(data.clone()))?);
+        cat_string.push_str(&potential_future!(value.to_text(data.clone())?));
     }
 
     Ok(cat_string.into())
@@ -2054,12 +2087,12 @@ pub const PREPEND: &str = "prepend";
 pub async fn prepend(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let end = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
+    let end = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
 
     let mut cat_string = String::new();
 
     for value in args {
-        cat_string.push_str(&await_result!(value.to_text(data.clone()))?);
+        cat_string.push_str(&potential_future!(value.to_text(data.clone())?));
     }
 
     cat_string.push_str(&end);
@@ -2075,7 +2108,7 @@ pub async fn capitalize(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let text = await_result!(args.pop_front().unwrap().to_text(data))?;
+    let text = potential_future!(args.pop_front().unwrap().to_text(data)?);
     let mut chars = text.chars();
     let text = if let Some(ch) = chars.next() {
         SourceStr::Owned(ch.to_uppercase().collect::<String>() + chars.as_str())
@@ -2093,7 +2126,7 @@ pub async fn uppercase(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let text = await_result!(args.pop_front().unwrap().to_text(data))?;
+    let text = potential_future!(args.pop_front().unwrap().to_text(data)?);
     Ok(Value::from(text.to_uppercase()))
 }
 
@@ -2105,7 +2138,7 @@ pub async fn lowercase(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let text = await_result!(args.pop_front().unwrap().to_text(data))?;
+    let text = potential_future!(args.pop_front().unwrap().to_text(data)?);
     Ok(Value::from(text.to_lowercase()))
 }
 
@@ -2114,8 +2147,8 @@ pub const TRIM: &str = "trim";
 pub async fn trim(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let text = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
-    let pattern = await_result!(args.pop_front().unwrap().to_text(data))?;
+    let text = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
+    let pattern = potential_future!(args.pop_front().unwrap().to_text(data)?);
     let chars: Vec<char> = pattern.chars().collect();
     Ok(Value::from(text.trim_matches(chars.as_slice()).to_string()))
 }
@@ -2129,7 +2162,7 @@ pub async fn trim_whitespace(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let text = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
+    let text = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
     Ok(Value::from(text.trim().to_string()))
 }
 
@@ -2141,8 +2174,11 @@ pub async fn is_number(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let value = await_result!(args.pop_front().unwrap().to_number(data));
-    Ok(Value::Bool(value.is_ok()))
+    let arg = args.pop_front().unwrap();
+    let value = potential_future!(arg.as_raw(data)?);
+    Ok(Value::Bool(
+        value.is_type(FslType::Int) | value.is_type(FslType::Float),
+    ))
 }
 
 pub const IS_NONE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
@@ -2150,7 +2186,8 @@ pub const IS_NONE: &str = "is_none";
 pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let value = await_result!(args.pop_front().unwrap().as_raw(data.clone()))?;
+    let arg = args.pop_front().unwrap();
+    let value = potential_future!(arg.as_raw(data)?);
     Ok(Value::Bool(value.is_type(FslType::None)))
 }
 
@@ -2160,7 +2197,8 @@ pub async fn is_alpha(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let mut command = command;
     let mut args = command.take_args();
     let value = args.pop_front().unwrap();
-    if let Ok(text) = await_result!(value.to_text(data)) {
+    if let Ok(text) = value.to_text(data) {
+        let text = potential_future!(text);
         let is_alpha = text.chars().all(char::is_alphabetic);
 
         Ok(Value::Bool(is_alpha))
@@ -2178,11 +2216,12 @@ pub async fn is_alpha_en(
     let mut command = command;
     let mut args = command.take_args();
     let value = args.pop_front().unwrap();
-    if let Ok(text) = await_result!(value.to_text(data)) {
+    if let Ok(text) = value.to_text(data) {
         const ALPHA: &[char] = &[
             'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q',
             'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
         ];
+        let text = potential_future!(text);
 
         let is_alpha = text
             .chars()
@@ -2204,7 +2243,8 @@ pub async fn is_whitespace(
     let mut command = command;
     let mut args = command.take_args();
     let value = args.pop_front().unwrap();
-    if let Ok(text) = await_result!(value.to_text(data)) {
+    if let Ok(text) = value.to_text(data) {
+        let text = potential_future!(text);
         let is_whitespace = text.chars().all(char::is_whitespace);
 
         Ok(Value::Bool(is_whitespace))
@@ -2222,7 +2262,7 @@ pub async fn remove_whitespace(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let text = await_result!(args.pop_front().unwrap().to_text(data))?;
+    let text = potential_future!(args.pop_front().unwrap().to_text(data)?);
     Ok(text.split_whitespace().collect::<String>().into())
 }
 
@@ -2231,8 +2271,8 @@ pub const SPLIT: &str = "split";
 pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let text_to_split = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
-    let pattern = await_result!(args.pop_front().unwrap().to_text(data.clone()))?;
+    let text_to_split = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
+    let pattern = potential_future!(args.pop_front().unwrap().to_text(data.clone())?);
     let mut list: Vec<Value> = Vec::new();
 
     for split in text_to_split.split(&*pattern) {
@@ -2251,15 +2291,16 @@ pub async fn random_range(
     data: Arc<InterpreterData>,
 ) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = tokio_stream::iter(command.take_args());
-    let mut args = args
-        .then(async |v| await_result!(v.to_number(data.clone())))
-        .collect::<Result<Vec<Argument>, _>>()
-        .await?;
+    let args = command.take_args();
+    let mut numbers = Vec::new();
+    for arg in args {
+        let num = potential_future!(arg.to_number(data.clone())?);
+        numbers.push(num);
+    }
 
-    if contains_float(&mut args, data.clone()).await? {
-        let max = await_result!(args.pop().unwrap().to_float(data.clone()))?;
-        let min = await_result!(args.pop().unwrap().to_float(data.clone()))?;
+    if contains_float(&mut numbers, data.clone()).await? {
+        let max = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
+        let min = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
         if min >= max {
             Err(RuntimeError::InvalidRange.span(command.span))
         } else if !min.is_finite() || !max.is_finite() {
@@ -2268,8 +2309,8 @@ pub async fn random_range(
             Ok(rand::random_range(min..=max).into())
         }
     } else {
-        let max = await_result!(args.pop().unwrap().to_int(data.clone()))?;
-        let min = await_result!(args.pop().unwrap().to_int(data.clone()))?;
+        let max = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
+        let min = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
         if min >= max {
             Err(RuntimeError::InvalidRange.span(command.span))
         } else {
@@ -2285,7 +2326,7 @@ pub async fn sleep(command: Command, data: Arc<InterpreterData>) -> Result<Value
     let mut args = command.take_args();
     let arg = args.pop_front().unwrap();
     let arg_loc = arg.span;
-    let delay = await_result!(arg.to_float(data.clone()))?;
+    let delay = potential_future!(arg.to_float(data.clone())?);
     if !delay.is_finite() {
         Err(RuntimeError::NonFiniteValue.span(command.span))
     } else if delay.is_sign_negative() {
@@ -2335,7 +2376,7 @@ pub async fn random_entry(
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let list = await_result!(args.pop_front().unwrap().to_list(data.clone()))?;
+    let list = potential_future!(args.pop_front().unwrap().to_list(data.clone())?);
     let range = 0..list.len();
     if range.is_empty() {
         Err(RuntimeError::InvalidRange.span(command.span))
@@ -2349,7 +2390,7 @@ pub const SHUFFLE: &str = "shuffle";
 pub async fn shuffle(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
-    let mut list = await_result!(args.pop_front().unwrap().to_list(data))?;
+    let mut list = potential_future!(args.pop_front().unwrap().to_list(data)?);
     list.shuffle(&mut rand::rng());
     Ok(Value::List(list))
 }
@@ -2428,7 +2469,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
                 aliases.insert(parameter, var);
             }
             _ => {
-                let value = await_result!(value.as_raw(data.clone())).span_err(arg_span)?;
+                let value = potential_future!(value.as_raw(data.clone()).spanned(arg_span)?);
                 data.vars
                     .write()
                     .await
@@ -2572,7 +2613,7 @@ pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Va
 
     match return_value {
         Some(arg) => {
-            let arg = await_result!(arg.as_raw(data.clone()))?;
+            let arg = potential_future!(arg.as_raw(data.clone())?);
             data.set_return_flag(true);
             Ok(arg)
         }

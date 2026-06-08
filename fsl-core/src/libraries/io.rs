@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    FslInterpreter, await_result,
+    FslInterpreter,
     data::InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    register_async,
+    potential_future, register_async,
     types::{
         command::{Command, CommandSignature},
         value::Value,
@@ -24,7 +24,7 @@ pub async fn say(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let mut output = String::new();
     for value in values {
-        let text = await_result!(value.to_text(data.clone()))?;
+        let text = potential_future!(value.to_text(data.clone())?);
         output.push_str(&text);
     }
 
@@ -41,7 +41,7 @@ pub async fn ask(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let mut output = String::new();
     for value in values {
-        let text = await_result!(value.to_text(data.clone()))?;
+        let text = potential_future!(value.to_text(data.clone())?);
         output.push_str(&text);
     }
 
