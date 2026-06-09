@@ -171,9 +171,9 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_async!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
     register_async!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
     register_async!(interpreter, DEF, DEF_RULES, def);
-    register_async!(interpreter, EXIT, NO_ARGS, exit);
-    register_async!(interpreter, BREAK, NO_ARGS, r#break);
-    register_async!(interpreter, CONTINUE, NO_ARGS, r#continue);
+    register_sync!(interpreter, EXIT, NO_ARGS, exit);
+    register_sync!(interpreter, BREAK, NO_ARGS, r#break);
+    register_sync!(interpreter, CONTINUE, NO_ARGS, r#continue);
     register_async!(interpreter, RETURN, RETURN_RULES, r#return);
 }
 
@@ -2421,91 +2421,10 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     data.pop_def();
 
     Ok(final_value)
-    //Ok(Value::None)
 }
-
-/*
-pub const RUN_RULES: CommandSignature = CommandSignature::AnyArgs;
-pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut command = command;
-    let mut args = command.take_args();
-
-    let command_label = args.pop_front().unwrap().as_var_label(data.clone()).await?;
-
-    data.push_def(command_label.clone()).await;
-
-    let (mut parameter_labels, commands) = {
-        let def = data.find_user_def(&command_label).await;
-        let def = match def {
-            Some(def) => def,
-            None => {
-                return Ok(Value::None);
-            }
-        };
-
-        let parameter_labels = def.parameters.lock().await.clone();
-        let commands = def.commands.lock().await.clone();
-        (parameter_labels, commands)
-    };
-
-    if args.len() != parameter_labels.len() {
-        return Err(RuntimeError::WrongArgCount {
-            command_label: command_label.to_string(),
-            expected: ExpectedArgs::Exactly(parameter_labels.len()),
-            got: args.len(),
-        }
-        .span(command.span));
-    }
-
-    data.vars.write().await.push();
-
-    let mut aliases: HashMap<SourceStr, SourceStr> = HashMap::new();
-    let parameters = parameter_labels.len();
-    for _ in 0..parameters {
-        let arg = args.pop_front().unwrap();
-        let arg_span = arg.span;
-        let parameter = parameter_labels.pop_front().unwrap();
-        let value = arg.into_value(data.clone()).await?;
-        match value {
-            Value::Var(var) => {
-                aliases.insert(parameter, var);
-            }
-            _ => {
-                let value = value.as_raw(data.clone()).await.span_err(arg_span)?;
-                data.vars
-                    .write()
-                    .await
-                    .insert(&parameter, Var::Mut(value))
-                    .await
-                    .span_err(command.span)?;
-            }
-        }
-    }
-
-    let mut final_value = Value::None;
-    for mut command in commands {
-        let args = command.get_args_mut();
-        for arg in args {
-            let mut value = arg.take_value();
-            alias_parameter(&mut value, &aliases, data.clone());
-            arg.replace_value(value);
-        }
-        final_value = command.execute(data.clone()).await?;
-        if data.get_return_flag().await {
-            data.set_return_flag(false).await;
-            break;
-        }
-    }
-    data.vars.write().await.pop().await;
-
-    data.pop_def().await;
-
-    Ok(final_value)
-}
-*/
 
 pub const BREAK: &str = "break";
-pub async fn r#break(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn r#break(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     if data.loop_depth() > 0 {
         data.set_break_flag(true);
     } else {
@@ -2515,10 +2434,7 @@ pub async fn r#break(command: Command, data: Arc<InterpreterData>) -> Result<Val
 }
 
 pub const CONTINUE: &str = "continue";
-pub async fn r#continue(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn r#continue(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     if data.loop_depth() > 0 {
         data.set_continue_flag(true);
     } else {
@@ -2547,7 +2463,7 @@ pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Va
 }
 
 pub const EXIT: &str = "exit";
-pub async fn exit(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn exit(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     Err(RuntimeError::ProgramExited.span(command.span))
 }
 
