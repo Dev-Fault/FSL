@@ -2364,6 +2364,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let command_label = args.pop_front().unwrap().as_var_label(data.clone())?;
 
+    data.vars.write().push();
     data.push_def(command_label.clone());
 
     let Some(UserDeclaration {
@@ -2387,8 +2388,6 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let mut final_value = Value::None;
     if parameter_labels.len() != 0 {
-        data.vars.write().push();
-
         let mut aliases: HashMap<SourceStr, SourceStr> = HashMap::new();
         let parameters = parameter_labels.len();
         for _ in 0..parameters {
@@ -2423,7 +2422,6 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
                 break;
             }
         }
-        data.vars.write().pop();
     } else {
         for command in commands {
             final_value = execute_command!(command, data.clone())?;
@@ -2434,6 +2432,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         }
     }
 
+    data.vars.write().pop();
     data.pop_def();
 
     Ok(final_value)

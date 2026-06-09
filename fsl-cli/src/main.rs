@@ -17,8 +17,6 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() {
-    flamegraph_test().await;
-    return;
     let args = Args::parse();
 
     let stdin = if io::stdin().is_terminal() {

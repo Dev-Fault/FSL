@@ -81,7 +81,7 @@ macro_rules! register_commands {
 ///     let mut interpreter = FslInterpreter::new();
 ///     register_async!(interpreter, "greet", NO_ARGS, |cmd, data| {
 ///         async move {
-///             data.output.lock().await.push_str("Hello!");
+///             data.output.lock().push_str("Hello!");
 ///             Ok(Value::None)
 ///         }
 ///     });
