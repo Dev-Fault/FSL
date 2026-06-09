@@ -20,15 +20,14 @@ pub const SAY_RULES: &CommandSignature = &CommandSignature::AnyArgs;
 pub const SAY: &str = "say";
 pub async fn say(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let values = command.take_args();
 
-    let mut output = String::new();
-    for value in values {
+    let mut arg = String::new();
+    for value in &mut command.args {
         let text = potential_future!(value.to_text(data.clone())?);
-        output.push_str(&text);
+        arg.push_str(&text);
     }
 
-    println!("{output}");
+    println!("{arg}");
 
     Ok(Value::None)
 }
@@ -37,11 +36,10 @@ pub const ASK_RULES: &CommandSignature = &CommandSignature::AnyArgs;
 pub const ASK: &str = "ask";
 pub async fn ask(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let values = command.take_args();
 
     let mut output = String::new();
-    for value in values {
-        let text = potential_future!(value.to_text(data.clone())?);
+    for arg in &mut command.args {
+        let text = potential_future!(arg.to_text(data.clone())?);
         output.push_str(&text);
     }
 

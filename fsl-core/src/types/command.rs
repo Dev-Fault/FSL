@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{collections::VecDeque, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 use futures::future::BoxFuture;
 
@@ -159,7 +159,7 @@ pub enum ExpectedArgs {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum CommandSignature {
-    Rules(&'static [ArgRule<ArgPos>]),
+    Positional(&'static [ArgRule<ArgPos>]),
     Count(ExpectedArgs),
     AnyArgs,
 }
@@ -196,7 +196,7 @@ impl CommandDef {
 pub struct Command {
     label: SourceStr,
     signature: &'static CommandSignature,
-    pub args: VecDeque<Argument>,
+    pub args: Vec<Argument>,
     handler: Handler,
     pub span: Span,
     needs_resolving: bool,
@@ -221,7 +221,7 @@ impl Command {
         span: Span,
     ) -> Self {
         Self {
-            args: VecDeque::new(),
+            args: Vec::new(),
             handler,
             label,
             signature,
@@ -234,7 +234,7 @@ impl Command {
         Self {
             label: SourceStr::Static(value.label),
             signature: value.signature,
-            args: VecDeque::new(),
+            args: Vec::new(),
             handler: value.handler.clone(),
             span,
             needs_resolving: false,
@@ -251,28 +251,12 @@ impl Command {
 
     pub fn set_args(
         &mut self,
-        args: VecDeque<Argument>,
+        args: Vec<Argument>,
         data: Arc<InterpreterData>,
     ) -> Result<(), SpannedError> {
         self.args = args;
         self.validate_args(data)?;
         Ok(())
-    }
-
-    pub fn take_args(&mut self) -> VecDeque<Argument> {
-        std::mem::take(&mut self.args)
-    }
-
-    pub fn pop_front_arg(&mut self) -> Option<Argument> {
-        self.args.pop_front()
-    }
-
-    pub fn get_args(&self) -> &VecDeque<Argument> {
-        &self.args
-    }
-
-    pub fn get_args_mut(&mut self) -> &mut VecDeque<Argument> {
-        &mut self.args
     }
 
     pub(crate) fn should_resolve_args(&self) -> bool {
@@ -417,7 +401,7 @@ impl Command {
 
     pub fn validate_args(&mut self, data: Arc<InterpreterData>) -> Result<(), SpannedError> {
         match self.signature {
-            CommandSignature::Rules(rules) => self.rules_count_check(rules, data),
+            CommandSignature::Positional(rules) => self.rules_count_check(rules, data),
             CommandSignature::Count(expected) => match expected {
                 ExpectedArgs::None => {
                     if !self.args.is_empty() {

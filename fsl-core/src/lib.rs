@@ -411,10 +411,10 @@ impl FslInterpreter {
         if let Some(def) = def {
             let mut command = Command::from_def(def, Span::from(&expression));
 
-            let mut args: VecDeque<_> = VecDeque::with_capacity(expression.args.len());
+            let mut args: Vec<_> = Vec::with_capacity(expression.args.len());
 
             for arg in expression.args {
-                args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
+                args.push(Self::process_arg(data.clone(), defs, arg).await?);
             }
 
             command
@@ -434,14 +434,14 @@ impl FslInterpreter {
                     Span::from(&expression),
                 );
 
-                let mut args = VecDeque::with_capacity(expression.args.len());
-                args.push_back(Argument::new(
+                let mut args = Vec::with_capacity(expression.args.len());
+                args.push(Argument::new(
                     Value::Var(def.label.clone()),
                     Span::from(&expression),
                 ));
 
                 for arg in expression.args {
-                    args.push_back(Self::process_arg(data.clone(), defs, arg).await?);
+                    args.push(Self::process_arg(data.clone(), defs, arg).await?);
                 }
 
                 command
@@ -518,7 +518,7 @@ impl FslInterpreter {
                     let span = Span::from(&list_arg);
                     let mut list: Vec<Value> = Vec::with_capacity(list_arg.data.len());
                     for arg in list_arg.data {
-                        let parsed_arg = Self::process_arg(data.clone(), &defs, arg).await?;
+                        let mut parsed_arg = Self::process_arg(data.clone(), &defs, arg).await?;
                         let data_clone = data.clone();
                         list.push(potential_future!(
                             parsed_arg
@@ -553,7 +553,7 @@ impl FslInterpreter {
                     Ok(Argument::new(value, span))
                 }
                 ArgKind::Path(path) => {
-                    let root = Self::process_arg(data.clone(), &defs, *path.root).await?;
+                    let mut root = Self::process_arg(data.clone(), &defs, *path.root).await?;
                     let mut segments = Vec::with_capacity(path.segments.len());
                     for arg in path.segments {
                         let data_clone = data.clone();
@@ -589,15 +589,15 @@ pub const DEF_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::
 pub const DEF: &str = "def";
 pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let mut args = command.take_args();
-    let mut label = args.pop_front().unwrap();
+    let mut args = command.args.iter_mut();
+    let label = args.next().unwrap();
     let label_span = label.span;
     let label = label.as_var_label(data.clone())?;
     let mut parameters: VecDeque<SourceStr> = VecDeque::new();
     let mut commands: Vec<Command> = Vec::new();
 
     let mut encountered_command = false;
-    for (i, mut arg) in args.into_iter().enumerate() {
+    for (i, arg) in args.into_iter().enumerate() {
         let span = arg.span;
         let kind = arg.to_type(data.clone()).await?;
         match potential_future!(arg.into_value(data.clone())) {

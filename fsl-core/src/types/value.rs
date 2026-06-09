@@ -29,22 +29,8 @@ pub enum Value {
     None,
 }
 
-pub trait FromValue<E> {
-    fn into_str(self) -> Result<SourceStr, E>;
-    fn into_int(self) -> Result<i64, E>;
-    fn into_float(self) -> Result<f64, E>;
-    fn into_bool(self) -> Result<bool, E>;
-    fn into_usize(self) -> Result<usize, E>;
-    fn into_list(self) -> Result<List, E>;
-    fn into_map(self) -> Result<Map, E>;
-    fn into_var(self) -> Result<SourceStr, E>;
-    fn into_command(self) -> Result<Box<Command>, E>;
-    fn into_list_indexer(self) -> Result<Vec<usize>, E>;
-    fn into_map_indexer(self) -> Result<Vec<SourceStr>, E>;
-}
-
-impl FromValue<RuntimeError> for Value {
-    fn into_str(self) -> Result<SourceStr, RuntimeError> {
+impl Value {
+    pub fn into_str(self) -> Result<SourceStr, RuntimeError> {
         match self {
             Value::Int(i) => Ok(SourceStr::Owned(i.to_string())),
             Value::Float(f) => Ok(SourceStr::Owned(f.to_string())),
@@ -55,7 +41,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_int(self) -> Result<i64, RuntimeError> {
+    pub fn into_int(self) -> Result<i64, RuntimeError> {
         match &self {
             Value::Int(i) => Ok(*i),
             Value::Text(source_str) => match FslInterpreter::parse_number(&source_str)? {
@@ -66,7 +52,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_float(self) -> Result<f64, RuntimeError> {
+    pub fn into_float(self) -> Result<f64, RuntimeError> {
         match &self {
             Value::Float(f) => Ok(*f),
             Value::Text(source_str) => match FslInterpreter::parse_number(&source_str)? {
@@ -77,7 +63,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_bool(self) -> Result<bool, RuntimeError> {
+    pub fn into_bool(self) -> Result<bool, RuntimeError> {
         if let Self::Bool(b) = self {
             Ok(b)
         } else {
@@ -85,7 +71,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_usize(self) -> Result<usize, RuntimeError> {
+    pub fn into_usize(self) -> Result<usize, RuntimeError> {
         if let Self::Int(i) = self {
             Ok(i as usize)
         } else {
@@ -93,7 +79,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_list_indexer(self) -> Result<Vec<usize>, RuntimeError> {
+    pub fn into_list_indexer(self) -> Result<Vec<usize>, RuntimeError> {
         match self {
             Value::Int(i) => Ok(vec![i as usize]),
             Value::List(values) => {
@@ -108,7 +94,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_map_indexer(self) -> Result<Vec<SourceStr>, RuntimeError> {
+    pub fn into_map_indexer(self) -> Result<Vec<SourceStr>, RuntimeError> {
         match self {
             Value::Text(source_str) => Ok(vec![source_str]),
             Value::List(values) => {
@@ -123,7 +109,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_list(self) -> Result<List, RuntimeError> {
+    pub fn into_list(self) -> Result<List, RuntimeError> {
         if let Self::List(list) = self {
             Ok(list)
         } else {
@@ -131,7 +117,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_map(self) -> Result<Map, RuntimeError> {
+    pub fn into_map(self) -> Result<Map, RuntimeError> {
         if let Self::Map(map) = self {
             Ok(map)
         } else {
@@ -139,7 +125,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_var(self) -> Result<SourceStr, RuntimeError> {
+    pub fn into_var(self) -> Result<SourceStr, RuntimeError> {
         if let Self::Var(label) = self {
             Ok(label)
         } else {
@@ -147,7 +133,7 @@ impl FromValue<RuntimeError> for Value {
         }
     }
 
-    fn into_command(self) -> Result<Box<Command>, RuntimeError> {
+    pub fn into_command(self) -> Result<Box<Command>, RuntimeError> {
         if let Self::Command(command) = self {
             Ok(command)
         } else {

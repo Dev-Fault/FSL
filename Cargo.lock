@@ -165,6 +165,7 @@ dependencies = [
  "futures",
  "parking_lot",
  "rand",
+ "smallvec",
  "tokio",
  "tokio-stream",
  "unicode-width",

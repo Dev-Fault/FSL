@@ -19,18 +19,15 @@ pub fn register_exec(interpreter: &mut FslInterpreter) {
 pub const EXEC_RULES: &CommandSignature = &CommandSignature::AnyArgs;
 pub const EXEC: &str = "exec";
 pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut command = command;
-    let mut args = command.take_args();
-    let arg = args.pop_front().unwrap();
-    let arg_span = arg.span;
-    let program = potential_future!(arg.to_text(data.clone())?);
-    let args = command.take_args();
-    let mut strings = Vec::new();
-    for arg in args {
+    let command = command;
+    let mut args = command.args;
+    let program = potential_future!(args[0].to_text(data.clone())?);
+    let mut options = Vec::new();
+    for arg in args.iter_mut().skip(1) {
         let string = potential_future!(arg.to_text(data.clone())?);
-        strings.push(string);
+        options.push(string);
     }
-    let strings: Vec<&str> = strings.iter().map(|cs| &**cs).collect();
+    let strings: Vec<&str> = options.iter().map(|cs| &**cs).collect();
     let output = tokio::process::Command::new(&*program)
         .args(strings)
         .output()
@@ -39,12 +36,12 @@ pub async fn exec(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             RuntimeError::FailedToRun {
                 process: program.to_string(),
             }
-            .span(arg_span)
+            .span(args[0].span)
         })?;
 
     if !output.status.success() {
         let output = String::from_utf8_lossy(&output.stderr);
-        return Err(RuntimeError::OutputFailure(output.trim().into()).span(arg_span));
+        return Err(RuntimeError::OutputFailure(output.trim().into()).span(args[0].span));
     }
 
     let output = output.stdout;
@@ -59,9 +56,8 @@ pub const SH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::E
 pub const SH: &str = "sh";
 pub async fn sh(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let mut args = command.take_args();
-    let arg = args.pop_front().unwrap();
-    let script = potential_future!(arg.to_text(data.clone())?);
+    let args = &mut command.args;
+    let script = potential_future!(args[0].to_text(data.clone())?);
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&*script)

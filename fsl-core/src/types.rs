@@ -132,8 +132,10 @@ pub const MAYBE_BOOL: &[ValueType] = &[
 
 pub const NO_ARGS: &CommandSignature = &CommandSignature::Count(ExpectedArgs::None);
 
-pub const MATH_RULES: &CommandSignature =
-    &CommandSignature::Rules(&[ArgRule::Literal(ArgPos::AnyFrom(0))]);
+pub const MATH_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Literal(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::AnyFrom(1)),
+]);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ValueType {

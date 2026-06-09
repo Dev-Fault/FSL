@@ -22,10 +22,8 @@ pub const JOIN_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs:
 pub const JOIN: &str = "join";
 pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = command.take_args();
-    let args = args.into_iter();
     let mut commands: Vec<_> = Vec::new();
-    for arg in args {
+    for arg in &mut command.args {
         commands.push(arg.to_command(data.clone()).await?);
     }
 
@@ -60,8 +58,7 @@ pub const YIELD_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs
 pub const YIELD: &str = "yield";
 pub async fn r#yield(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let mut args = command.take_args();
-    let command = args.pop_front().unwrap().to_command(data.clone()).await?;
+    let command = command.args[0].to_command(data.clone()).await?;
     tokio::task::yield_now().await;
     let result = execute_command!(command, data.clone())?;
 

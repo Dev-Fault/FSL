@@ -13,7 +13,7 @@ use crate::{
         },
         list::List,
         map::Map,
-        value::{FromValue, Value},
+        value::Value,
     },
 };
 
@@ -550,15 +550,20 @@ impl Argument {
         self.kind.with_mut(self.span, data.clone(), f)
     }
 
-    pub fn into_value(self, data: Arc<InterpreterData>) -> PotentialFuture<Value, SpannedError> {
-        self.kind.into_value(self.span, data)
+    pub fn into_value(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFuture<Value, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        kind.into_value(self.span, data)
     }
 
-    pub async fn into_indexer(
-        self,
+    pub fn into_indexer(
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> Result<(Argument, Indexer), SpannedError> {
-        match self.kind {
+        let kind = std::mem::take(&mut self.kind);
+        match kind {
             ArgumentKind::Value(_) => Err(RuntimeError::NotIndexable.span(self.span)),
             ArgumentKind::Accessor(mut accessor) => {
                 let indexer = accessor.to_indexer(self.span, data)?;
@@ -648,108 +653,144 @@ impl Argument {
         l_value.soft_equal(&r_value, data).span(self.span)
     }
 
-    pub fn to_int(self, data: Arc<InterpreterData>) -> PotentialFutureResult<i64, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+    pub fn to_int(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<i64, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value.map_result(|v| v.to_int(data)).span_future(self.span)
     }
 
     pub fn to_usize(
-        self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<usize, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value
             .map_result(|v| v.to_usize(data))
             .span_future(self.span)
     }
 
-    pub fn to_float(self, data: Arc<InterpreterData>) -> PotentialFutureResult<f64, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+    pub fn to_float(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<f64, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value
             .map_result(|v| v.to_float(data))
             .span_future(self.span)
     }
 
-    pub fn to_bool(self, data: Arc<InterpreterData>) -> PotentialFutureResult<bool, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+    pub fn to_bool(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<bool, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value.map_result(|v| v.to_bool(data)).span_future(self.span)
     }
 
     pub fn to_var(
-        self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<SourceStr, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value.map_result(|v| v.to_var(data)).span_future(self.span)
     }
 
     pub fn to_text(
-        self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<SourceStr, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value.map_result(|v| v.to_text(data)).span_future(self.span)
     }
 
-    pub fn to_list(self, data: Arc<InterpreterData>) -> PotentialFutureResult<List, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+    pub fn to_list(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<List, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value.map_result(|v| v.to_list(data)).span_future(self.span)
     }
 
-    pub fn to_map(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Map, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+    pub fn to_map(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<Map, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value.map_result(|v| v.to_map(data)).span_future(self.span)
     }
 
     pub fn to_number(
-        self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<Argument, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+        let kind = std::mem::take(&mut self.kind);
+        let span = self.span;
+        let value = kind.into_value(self.span, data.clone());
         value
             .map_result(move |v| {
                 v.to_number(data)
-                    .map(|pf| pf.map(move |v| Argument::new(v, self.span)))
+                    .map(|pf| pf.map(move |v| Argument::new(v, span)))
             })
-            .span_future(self.span)
+            .span_future(span)
     }
 
     pub fn as_raw_checked(
-        self,
+        &mut self,
         valid_types: &'static [ValueType],
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<Value, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value
             .map_result(move |v| v.as_raw_checked(valid_types, data))
             .span_future(self.span)
     }
 
-    pub fn as_raw(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, SpannedError> {
-        let value = self.kind.into_value(self.span, data.clone());
+    pub fn as_raw(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> PotentialFutureResult<Value, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        let value = kind.into_value(self.span, data.clone());
         value
             .map_result(move |v| v.as_raw(data))
             .span_future(self.span)
     }
 
     pub async fn to_list_indexer(
-        self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> Result<Vec<usize>, SpannedError> {
-        let value = potential_future!(self.kind.into_value(self.span, data.clone()));
+        let kind = std::mem::take(&mut self.kind);
+        let value = potential_future!(kind.into_value(self.span, data.clone()));
         value.to_list_indexer(data.clone()).await.span(self.span)
     }
 
     pub async fn to_map_indexer(
-        self,
+        &mut self,
         data: Arc<InterpreterData>,
     ) -> Result<Vec<SourceStr>, SpannedError> {
-        let value = potential_future!(self.kind.into_value(self.span, data.clone()));
+        let kind = std::mem::take(&mut self.kind);
+        let value = potential_future!(kind.into_value(self.span, data.clone()));
         value.to_map_indexer(data.clone()).await.span(self.span)
     }
 
-    pub async fn to_command(self, data: Arc<InterpreterData>) -> Result<Command, SpannedError> {
-        let value = potential_future!(self.kind.into_value(self.span, data.clone()));
+    pub async fn to_command(
+        &mut self,
+        data: Arc<InterpreterData>,
+    ) -> Result<Command, SpannedError> {
+        let kind = std::mem::take(&mut self.kind);
+        let value = potential_future!(kind.into_value(self.span, data.clone()));
         value.to_command(data.clone()).span(self.span)
     }
 
@@ -769,48 +810,48 @@ impl Argument {
     }
 }
 
-impl FromValue<SpannedError> for Argument {
-    fn into_str(mut self) -> Result<SourceStr, SpannedError> {
+impl Argument {
+    pub fn into_str(&mut self) -> Result<SourceStr, SpannedError> {
         self.take_value().into_str().span(self.span)
     }
 
-    fn into_usize(mut self) -> Result<usize, SpannedError> {
+    pub fn into_usize(&mut self) -> Result<usize, SpannedError> {
         self.take_value().into_usize().span(self.span)
     }
 
-    fn into_list_indexer(mut self) -> Result<Vec<usize>, SpannedError> {
+    pub fn into_list_indexer(&mut self) -> Result<Vec<usize>, SpannedError> {
         self.take_value().into_list_indexer().span(self.span)
     }
 
-    fn into_map_indexer(mut self) -> Result<Vec<SourceStr>, SpannedError> {
+    pub fn into_map_indexer(&mut self) -> Result<Vec<SourceStr>, SpannedError> {
         self.take_value().into_map_indexer().span(self.span)
     }
 
-    fn into_list(mut self) -> Result<List, SpannedError> {
+    pub fn into_list(&mut self) -> Result<List, SpannedError> {
         self.take_value().into_list().span(self.span)
     }
 
-    fn into_map(mut self) -> Result<Map, SpannedError> {
+    pub fn into_map(&mut self) -> Result<Map, SpannedError> {
         self.take_value().into_map().span(self.span)
     }
 
-    fn into_var(mut self) -> Result<SourceStr, SpannedError> {
+    pub fn into_var(&mut self) -> Result<SourceStr, SpannedError> {
         self.take_value().into_var().span(self.span)
     }
 
-    fn into_command(mut self) -> Result<Box<Command>, SpannedError> {
+    pub fn into_command(&mut self) -> Result<Box<Command>, SpannedError> {
         self.take_value().into_command().span(self.span)
     }
 
-    fn into_int(mut self) -> Result<i64, SpannedError> {
+    pub fn into_int(&mut self) -> Result<i64, SpannedError> {
         self.take_value().into_int().span(self.span)
     }
 
-    fn into_float(mut self) -> Result<f64, SpannedError> {
+    pub fn into_float(&mut self) -> Result<f64, SpannedError> {
         self.take_value().into_float().span(self.span)
     }
 
-    fn into_bool(mut self) -> Result<bool, SpannedError> {
+    pub fn into_bool(&mut self) -> Result<bool, SpannedError> {
         self.take_value().into_bool().span(self.span)
     }
 }
