@@ -10,8 +10,7 @@ pub const DEFAULT_OUTPUT_LIMIT: usize = u16::MAX as usize;
 pub const DEFAULT_LOOP_LIMIT: usize = u16::MAX as usize;
 
 use bytes::Bytes;
-use parking_lot::RwLock;
-use tokio::sync::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 use crate::{
     error::RuntimeError,
@@ -236,7 +235,7 @@ pub struct InterpreterData {
     pub limits: InterpreterLimits,
 
     pub vars: Arc<RwLock<VarStore>>,
-    pub def_store: Arc<std::sync::Mutex<UserDefinitionStore>>,
+    pub def_store: Arc<parking_lot::RwLock<UserDefinitionStore>>,
 
     pub ctx: Arc<ExecutionContext>,
 }
@@ -368,7 +367,7 @@ impl InterpreterData {
     }
 
     pub fn find_def(&self, label: &SourceStr) -> Option<UserDeclaration> {
-        let def_store = self.def_store.lock().unwrap();
+        let def_store = self.def_store.read();
         if let Some(decl) = def_store.get(&DefinitionKey::new(SourceStr::Static(""), label.clone()))
         {
             return Some(decl.clone());

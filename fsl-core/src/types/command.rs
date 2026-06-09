@@ -507,6 +507,7 @@ impl Command {
                 ArgRule::Mutable(_) => {
                     let span = arg.span;
                     if let ArgumentKind::Accessor(_) = arg.kind {
+                        arg.resolve_to = ArgRule::Raw(());
                         continue;
                     }
                     let kind = std::mem::take(&mut arg.kind);

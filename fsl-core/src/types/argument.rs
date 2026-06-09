@@ -801,4 +801,16 @@ impl FromValue<SpannedError> for Argument {
     fn into_command(mut self) -> Result<Box<Command>, SpannedError> {
         self.take_value().into_command().span(self.span)
     }
+
+    fn into_int(mut self) -> Result<i64, SpannedError> {
+        self.take_value().into_int().span(self.span)
+    }
+
+    fn into_float(mut self) -> Result<f64, SpannedError> {
+        self.take_value().into_float().span(self.span)
+    }
+
+    fn into_bool(mut self) -> Result<bool, SpannedError> {
+        self.take_value().into_bool().span(self.span)
+    }
 }

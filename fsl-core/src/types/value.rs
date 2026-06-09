@@ -1,7 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    InterpreterData,
+    FslInterpreter, InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
     potential_future,
     source_str::SourceStr,
@@ -31,6 +31,9 @@ pub enum Value {
 
 pub trait FromValue<E> {
     fn into_str(self) -> Result<SourceStr, E>;
+    fn into_int(self) -> Result<i64, E>;
+    fn into_float(self) -> Result<f64, E>;
+    fn into_bool(self) -> Result<bool, E>;
     fn into_usize(self) -> Result<usize, E>;
     fn into_list(self) -> Result<List, E>;
     fn into_map(self) -> Result<Map, E>;
@@ -49,6 +52,36 @@ impl FromValue<RuntimeError> for Value {
             Value::Text(source_str) => Ok(source_str),
             Value::Var(label) => Ok(label),
             _ => Err(self.conversion_err(&[ValueType::Text])),
+        }
+    }
+
+    fn into_int(self) -> Result<i64, RuntimeError> {
+        match &self {
+            Value::Int(i) => Ok(*i),
+            Value::Text(source_str) => match FslInterpreter::parse_number(&source_str)? {
+                Value::Int(i) => Ok(i),
+                _ => Err(self.conversion_err(&[ValueType::Int])),
+            },
+            _ => Err(self.conversion_err(&[ValueType::Int])),
+        }
+    }
+
+    fn into_float(self) -> Result<f64, RuntimeError> {
+        match &self {
+            Value::Float(f) => Ok(*f),
+            Value::Text(source_str) => match FslInterpreter::parse_number(&source_str)? {
+                Value::Float(f) => Ok(f),
+                _ => Err(self.conversion_err(&[ValueType::Float])),
+            },
+            _ => Err(self.conversion_err(&[ValueType::Float])),
+        }
+    }
+
+    fn into_bool(self) -> Result<bool, RuntimeError> {
+        if let Self::Bool(b) = self {
+            Ok(b)
+        } else {
+            Err(self.conversion_err(&[ValueType::Bool]))
         }
     }
 

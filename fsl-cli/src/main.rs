@@ -1,7 +1,7 @@
 use std::io::{self, IsTerminal, Read};
 
 use clap::Parser;
-use fsl_core::{FslInterpreter, data::InterpreterData, types::value::Value};
+use fsl_core::{FslInterpreter, data::InterpreterData, fsl, types::value::Value};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -17,6 +17,8 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() {
+    flamegraph_test().await;
+    return;
     let args = Args::parse();
 
     let stdin = if io::stdin().is_terminal() {
@@ -67,4 +69,25 @@ async fn main() {
         Ok(output) => println!("{output}"),
         Err(e) => eprintln!("{e}"),
     }
+}
+
+async fn flamegraph_test() {
+    let _ = fsl!(
+        r#"
+            increment.def(
+                sum.inc()
+            )
+
+            sum.store(0)
+
+            stopwatch(
+                repeat(1000000,
+                    increment()
+                )
+            ).elapsed.mul(1000).precision(4)
+            .prepend("1,000,000 def(sum.inc())\n")
+            .concat("ms\n").say()
+            print("\ndone")
+        "#
+    );
 }

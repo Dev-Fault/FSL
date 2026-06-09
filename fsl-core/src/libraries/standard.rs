@@ -131,8 +131,8 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
         search_replace
     );
     register_async!(interpreter, REVERSE, REVERSE_RULES, reverse);
-    register_async!(interpreter, INC, INC_RULES, inc);
-    register_async!(interpreter, DEC, DEC_RULES, dec);
+    register_sync!(interpreter, INC, INC_RULES, inc);
+    register_sync!(interpreter, DEC, DEC_RULES, dec);
     register_async!(interpreter, CONTAINS, CONTAINS_RULES, contains);
     register_async!(interpreter, STARTS_WITH, STARTS_WITH_RULES, starts_with);
     register_async!(interpreter, ENDS_WITH, ENDS_WITH_RULES, ends_with);
@@ -862,7 +862,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
         for value in args {
             let text = potential_future!(value.to_text(data.clone())?);
             // Must be locked after as_text (could require evaluating command that calls print)
-            let mut output = data.output.lock().await;
+            let mut output = data.output.lock();
             if text.len() + output.len() > limit {
                 return Err(RuntimeError::OutputLimitExceeded.span(command.span));
             }
@@ -871,7 +871,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
     } else {
         for value in args {
             let text = potential_future!(value.to_text(data.clone())?);
-            let mut output = data.output.lock().await;
+            let mut output = data.output.lock();
             output.push_str(&text);
         }
     }
@@ -881,7 +881,7 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
 pub const ARGS_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::None);
 pub const ARGS: &str = "args";
 pub async fn args(_: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let input = data.args.lock().await;
+    let input = data.args.lock();
     let arg_list = Value::from(input.clone());
     Ok(arg_list)
 }
@@ -1880,15 +1880,18 @@ pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Val
     }
 }
 
-pub const INC_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(1));
+pub const INC_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Raw(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::OptionalIndex(1)),
+]);
 pub const INC: &str = "inc";
-pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut arg = args.pop_front().unwrap();
 
     let amount = if let Some(value) = args.pop_front() {
-        potential_future!(value.to_int(data.clone())?)
+        value.into_int()?
     } else {
         1
     };
@@ -1906,15 +1909,18 @@ pub async fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     }
 }
 
-pub const DEC_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(1));
+pub const DEC_RULES: &CommandSignature = &CommandSignature::Rules(&[
+    ArgRule::Raw(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::OptionalIndex(1)),
+]);
 pub const DEC: &str = "dec";
-pub async fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.take_args();
     let mut arg = args.pop_front().unwrap();
 
     let amount = if let Some(value) = args.pop_front() {
-        potential_future!(value.to_int(data.clone())?)
+        value.into_int()?
     } else {
         1
     };
@@ -2379,44 +2385,54 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         .span(command.span));
     }
 
-    data.vars.write().push();
-
-    let mut aliases: HashMap<SourceStr, SourceStr> = HashMap::new();
-    let parameters = parameter_labels.len();
-    for _ in 0..parameters {
-        let arg = args.pop_front().unwrap();
-        let arg_span = arg.span;
-        let parameter = parameter_labels.pop_front().unwrap();
-        let value = potential_future!(arg.into_value(data.clone()));
-        match value {
-            Value::Var(var) => {
-                aliases.insert(parameter, var);
-            }
-            _ => {
-                let value = potential_future!(value.as_raw(data.clone()).span_future(arg_span)?);
-                data.vars
-                    .write()
-                    .insert(&parameter, Var::Mut(value))
-                    .span(command.span)?;
-            }
-        }
-    }
-
     let mut final_value = Value::None;
-    for mut command in commands {
-        let args = command.get_args_mut();
-        for arg in args {
-            let mut value = arg.take_value();
-            alias_parameter(&mut value, &aliases, data.clone());
-            arg.replace_value(value);
+    if parameter_labels.len() != 0 {
+        data.vars.write().push();
+
+        let mut aliases: HashMap<SourceStr, SourceStr> = HashMap::new();
+        let parameters = parameter_labels.len();
+        for _ in 0..parameters {
+            let arg = args.pop_front().unwrap();
+            let arg_span = arg.span;
+            let parameter = parameter_labels.pop_front().unwrap();
+            let value = potential_future!(arg.into_value(data.clone()));
+            match value {
+                Value::Var(var) => {
+                    aliases.insert(parameter, var);
+                }
+                _ => {
+                    let value =
+                        potential_future!(value.as_raw(data.clone()).span_future(arg_span)?);
+                    data.vars
+                        .write()
+                        .insert(&parameter, Var::Mut(value))
+                        .span(command.span)?;
+                }
+            }
         }
-        final_value = execute_command!(command, data.clone())?;
-        if data.get_return_flag() {
-            data.set_return_flag(false);
-            break;
+        for mut command in commands {
+            let args = command.get_args_mut();
+            for arg in args {
+                let mut value = arg.take_value();
+                alias_parameter(&mut value, &aliases, data.clone());
+                arg.replace_value(value);
+            }
+            final_value = execute_command!(command, data.clone())?;
+            if data.get_return_flag() {
+                data.set_return_flag(false);
+                break;
+            }
+        }
+        data.vars.write().pop();
+    } else {
+        for command in commands {
+            final_value = execute_command!(command, data.clone())?;
+            if data.get_return_flag() {
+                data.set_return_flag(false);
+                break;
+            }
         }
     }
-    data.vars.write().pop();
 
     data.pop_def();
 

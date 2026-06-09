@@ -27,10 +27,7 @@ use crate::{
     types::{
         ValueType,
         argument::{Accessor, AccessorSegment, Argument},
-        command::{
-            Command, CommandDef, CommandSignature, ExpectedArgs, Handler,
-            SpannedPotentialFutureResult,
-        },
+        command::{Command, CommandDef, CommandSignature, ExpectedArgs, Handler},
         value::Value,
     },
 };
@@ -280,13 +277,13 @@ impl FslInterpreter {
                     let defs = data.ctx.def_stack.lock().unwrap();
                     match defs.last() {
                         Some(parent) => {
-                            data.def_store.lock().unwrap().insert(
+                            data.def_store.write().insert(
                                 DefinitionKey::new(parent.clone(), label.clone()),
                                 UserDeclaration::new(label.clone()),
                             );
                         }
                         None => {
-                            data.def_store.lock().unwrap().insert(
+                            data.def_store.write().insert(
                                 DefinitionKey::new(SourceStr::Static(""), label.clone()),
                                 UserDeclaration::new(label.clone()),
                             );
@@ -378,7 +375,7 @@ impl FslInterpreter {
                 }
             }
         }
-        let mut output = data.output.lock().await;
+        let mut output = data.output.lock();
         let output = std::mem::take(&mut *output);
         Ok(output)
     }
@@ -556,7 +553,7 @@ impl FslInterpreter {
                     Ok(Argument::new(value, span))
                 }
                 ArgKind::Path(path) => {
-                    let mut root = Self::process_arg(data.clone(), &defs, *path.root).await?;
+                    let root = Self::process_arg(data.clone(), &defs, *path.root).await?;
                     let mut segments = Vec::with_capacity(path.segments.len());
                     for arg in path.segments {
                         let data_clone = data.clone();
@@ -628,8 +625,7 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
 
     let call_stack = data.ctx.def_stack.lock().unwrap();
     data.def_store
-        .lock()
-        .unwrap()
+        .write()
         .with_mut_def(&label, &call_stack, |decl| {
             decl.define(UserDefintion::new(parameters, commands));
         })
