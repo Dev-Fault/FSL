@@ -1091,7 +1091,6 @@ mod tests {
         (String ($value:literal)) => {
             Tree::String(Cow::Borrowed($value))
         };
-
         // Other literals (ident, number, keyword - passed as string literals in macro)
         ($type:ident ($value:literal)) => {
             Tree::$type($value)
@@ -1106,6 +1105,7 @@ mod tests {
             ))
         };
     }
+
     #[test]
     fn parse_simple() {
         let parser = Parser::new("print(\"hello world\")");
