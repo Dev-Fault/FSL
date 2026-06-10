@@ -37,6 +37,7 @@ pub mod error;
 mod lexer;
 pub mod libraries;
 mod parser;
+pub mod potential_futures;
 pub mod source_str;
 pub mod span;
 pub mod types;

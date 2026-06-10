@@ -4,13 +4,12 @@ use crate::{
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
     potential_future,
+    potential_futures::{PotentialFuture, PotentialFutureResult, SpannedPotentialFutureResult},
     source_str::SourceStr,
     span::Span,
     types::{
         ValueType,
-        command::{
-            ArgRule, Command, PotentialFuture, PotentialFutureResult, SpannedPotentialFutureResult,
-        },
+        command::{ArgRule, Command},
         list::List,
         map::Map,
         value::{Number, Value},
