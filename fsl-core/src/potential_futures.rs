@@ -55,6 +55,7 @@ impl<T: 'static, E: 'static> PotentialFuture<T, E> {
     }
 }
 
+// Needed since stable impl of Try still doesn't exist
 pub type PotentialFutureResult<T, E> = Result<PotentialFuture<T, E>, E>;
 
 pub trait SpannedPotentialFutureResult<T> {

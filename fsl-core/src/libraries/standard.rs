@@ -73,7 +73,7 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_sync!(interpreter, LENGTH, LENGTH_RULES, length);
     register_sync!(interpreter, SWAP, SWAP_RULES, swap);
     register_sync!(interpreter, INSERT, INSERT_RULES, insert);
-    register_async!(interpreter, REMOVE, REMOVE_RULES, remove);
+    register_sync!(interpreter, REMOVE, REMOVE_RULES, remove);
     register_sync!(interpreter, PUSH, PUSH_RULES, push);
     register_sync!(interpreter, POP, POP_RULES, pop);
     register_sync!(interpreter, REPLACE, REPLACE_RULES, replace);
@@ -1360,11 +1360,11 @@ pub fn length(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spa
 }
 
 pub const REMOVE_RULES: &CommandSignature = &CommandSignature::Positional(&[
-    ArgRule::Raw(ArgPos::Index(0)),
+    ArgRule::Mutable(ArgPos::Index(0)),
     ArgRule::Literal(ArgPos::OptionalIndex(1)),
 ]);
 pub const REMOVE: &str = "remove";
-pub async fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
 
@@ -2319,7 +2319,8 @@ pub mod tests {
     use std::time::{Duration, SystemTime};
 
     use crate::{
-        FslInterpreter, InterpreterError, RuntimeError, assert_runtime_err, data::InterpreterData,
+        FslInterpreter, InterpreterError, RuntimeError, assert_fsl, assert_runtime_err,
+        data::InterpreterData,
     };
 
     pub async fn test_interpreter(code: &str, expected_output: &str) {
@@ -2902,6 +2903,18 @@ pub mod tests {
             "3",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn remove_accessor_with_command() {
+        assert_fsl!(
+            r#"
+                list.store([1, 2, 3])
+                list.def(list, list.return())
+                list(list).0.remove().print()
+            "#,
+            "1"
+        )
     }
 
     #[tokio::test]

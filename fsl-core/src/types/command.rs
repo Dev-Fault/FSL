@@ -6,14 +6,14 @@ use futures::future::BoxFuture;
 use crate::{
     InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
-    execute_command, potential_future,
-    potential_futures::{PotentialFuture, PotentialFutureResult, SpannedPotentialFutureResult},
+    potential_future,
+    potential_futures::{PotentialFuture, PotentialFutureResult},
     source_str::SourceStr,
     span::Span,
     types::{
         ValueType,
         argument::{Argument, ArgumentKind},
-        value::{Value, ValueError},
+        value::Value,
     },
 };
 
@@ -56,7 +56,6 @@ pub enum ArgRule<T: std::fmt::Debug> {
     Literal(T),
     Raw(T),
     Mutable(T),
-    Command(T),
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -191,13 +190,10 @@ impl Command {
             }
             ArgRule::Raw(_) => arg.resolve_to = ArgRule::Raw(()),
             ArgRule::Mutable(_) => {
-                if !arg.is_type(ValueType::Var, data)? {
+                if let ArgumentKind::Accessor(_) = &arg.kind {
                     arg.resolve_to = ArgRule::Mutable(());
-                }
-            }
-            ArgRule::Command(_) => {
-                if !arg.is_type(ValueType::Command, data)? {
-                    arg.resolve_to = ArgRule::Command(());
+                } else if !arg.is_type(ValueType::Var, data)? {
+                    arg.resolve_to = ArgRule::Mutable(());
                 }
             }
         }
@@ -215,7 +211,6 @@ impl Command {
                 ArgRule::Literal(arg_pos) => arg_pos,
                 ArgRule::Raw(arg_pos) => arg_pos,
                 ArgRule::Mutable(arg_pos) => arg_pos,
-                ArgRule::Command(arg_pos) => arg_pos,
             };
 
             match pos {
@@ -367,29 +362,18 @@ impl Command {
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<Self, SpannedError> {
         enum PendingOp {
-            NeedsRaw(BoxFuture<'static, Result<Value, SpannedError>>),
-            AlreadyRaw(BoxFuture<'static, Result<Value, ValueError>>),
-            PossibleCommand(BoxFuture<'static, Result<Value, SpannedError>>),
-            CommandResult(BoxFuture<'static, PotentialFutureResult<Value, SpannedError>>),
+            Literal(BoxFuture<'static, Result<Value, SpannedError>>),
+            Command(BoxFuture<'static, PotentialFutureResult<Value, SpannedError>>),
+            RootCommand(BoxFuture<'static, Result<Value, SpannedError>>),
         }
         let mut async_ops: Vec<_> = Vec::new();
         for (i, arg) in self.args.iter_mut().enumerate() {
             match arg.resolve_to {
                 ArgRule::Literal(_) => {
-                    let span = arg.span;
-                    let kind = std::mem::take(&mut arg.kind);
-                    let value = kind.into_value(span, data.clone())?;
-                    let value = match value {
+                    let value = match arg.to_inner(data.clone())? {
                         PotentialFuture::Sync(value) => value,
                         PotentialFuture::Async(pin) => {
-                            async_ops.push((i, (PendingOp::NeedsRaw(pin))));
-                            continue;
-                        }
-                    };
-                    let value = match value.to_inner(data.clone()).span(arg.span)? {
-                        PotentialFuture::Sync(value) => value,
-                        PotentialFuture::Async(pin) => {
-                            async_ops.push((i, (PendingOp::AlreadyRaw(pin))));
+                            async_ops.push((i, (PendingOp::Literal(pin))));
                             continue;
                         }
                     };
@@ -400,67 +384,68 @@ impl Command {
                 }
                 ArgRule::Mutable(_) => {
                     let span = arg.span;
-                    if let ArgumentKind::Accessor(_) = arg.kind {
-                        arg.resolve_to = ArgRule::Raw(());
-                        continue;
-                    }
-                    let kind = std::mem::take(&mut arg.kind);
-                    let value = kind.into_value(span, data.clone())?;
-                    let value = match value {
-                        PotentialFuture::Sync(value) => value,
-                        PotentialFuture::Async(pin) => {
-                            async_ops.push((i, (PendingOp::PossibleCommand(pin))));
+                    if let ArgumentKind::Accessor(accessor) = &mut arg.kind {
+                        if accessor.root.value.is_command() {
+                            let root_value = std::mem::take(&mut accessor.root.value);
+                            let command = root_value.to_command().span(span)?;
+                            match command.execute(data.clone())? {
+                                PotentialFuture::Sync(value) => {
+                                    accessor.root.value = value;
+                                }
+                                PotentialFuture::Async(pin) => {
+                                    async_ops.push((
+                                        i,
+                                        PendingOp::RootCommand(Box::pin(async move {
+                                            let value = pin.await?;
+                                            Ok(value)
+                                        })),
+                                    ));
+                                }
+                            }
+                        } else {
+                            arg.resolve_to = ArgRule::Raw(());
+                        }
+                    } else {
+                        let value = arg.take_value();
+                        if value.is_command() {
+                            let data_clone = data.clone();
+                            async_ops.push((
+                                i,
+                                PendingOp::Command(Box::pin(async move {
+                                    let command = value.to_command().span(span)?;
+                                    Ok(command.execute(data_clone)?)
+                                })),
+                            ));
                             continue;
                         }
-                    };
-                    if value.is_type(ValueType::Command) {
-                        let data_clone = data.clone();
-                        async_ops.push((
-                            i,
-                            PendingOp::CommandResult(Box::pin(async move {
-                                let command = value.to_command(data_clone.clone()).span(span)?;
-                                Ok(command.execute(data_clone)?)
-                            })),
-                        ));
-                        continue;
+                        arg.replace_value(value);
                     }
-                    arg.replace_value(value);
                 }
-                ArgRule::Command(_) => todo!(),
             }
         }
         if async_ops.len() > 0 {
             Ok(PotentialFuture::Async(Box::pin(async move {
                 for (i, op) in async_ops {
-                    let span = self.args[i].span;
                     match op {
-                        PendingOp::NeedsRaw(pin) => {
-                            let value = pin.await?;
-                            let value =
-                                potential_future!(value.to_inner(data.clone()).span_future(span)?);
-                            let arg = &mut self.args[i];
-                            arg.replace_value(value);
-                        }
-                        PendingOp::AlreadyRaw(pin) => {
-                            let arg = &mut self.args[i];
-                            let value = pin.await.span(span)?;
-                            arg.replace_value(value);
-                        }
-                        PendingOp::PossibleCommand(pin) => {
+                        PendingOp::Literal(pin) => {
                             let arg = &mut self.args[i];
                             let value = pin.await?;
-                            if value.is_type(ValueType::Command) {
-                                let command = value.to_command(data.clone()).span(span)?;
-                                let value = execute_command!(command, data.clone())?;
-                                arg.replace_value(value);
-                            } else {
-                                arg.replace_value(value);
-                            }
+                            arg.replace_value(value);
                         }
-                        PendingOp::CommandResult(pin) => {
+                        PendingOp::Command(pin) => {
                             let arg = &mut self.args[i];
                             let value = potential_future!(pin.await?);
                             arg.replace_value(value);
+                        }
+                        PendingOp::RootCommand(pin) => {
+                            let arg = &mut self.args[i];
+                            let value = pin.await?;
+                            match &mut arg.kind {
+                                ArgumentKind::Value(_) => unreachable!(),
+                                ArgumentKind::Accessor(accessor) => {
+                                    accessor.root.value = value;
+                                }
+                            }
                         }
                     }
                 }

@@ -144,7 +144,7 @@ impl Accessor {
     ) -> PotentialFutureResult<Value, SpannedError> {
         if self.root.value.is_type(ValueType::Command) {
             let command = std::mem::take(&mut self.root.value);
-            let command = command.to_command(data.clone()).span(span)?;
+            let command = command.to_command().span(span)?;
             match command.execute(data.clone()) {
                 Ok(o) => match o {
                     PotentialFuture::Sync(value) => {
@@ -635,6 +635,11 @@ impl Argument {
             .with(self.span, data, |value, _| Ok(value.is_var()))
     }
 
+    pub fn is_command(&mut self, data: Arc<InterpreterData>) -> Result<bool, SpannedError> {
+        self.kind
+            .with(self.span, data, |value, _| Ok(value.is_command()))
+    }
+
     pub fn mem_size(&self) -> Result<usize, RuntimeError> {
         match &self.kind {
             ArgumentKind::Value(value) => value.mem_size(),
@@ -782,12 +787,10 @@ impl Argument {
         let value = kind.into_value(self.span, data.clone())?;
         let span = self.span;
         match value {
-            PotentialFuture::Sync(v) => Ok(PotentialFuture::Sync(
-                v.to_command(data.clone()).span(self.span)?,
-            )),
+            PotentialFuture::Sync(v) => Ok(PotentialFuture::Sync(v.to_command().span(self.span)?)),
             PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
                 let v = pin.await?;
-                Ok(v.to_command(data.clone()).span(span)?)
+                Ok(v.to_command().span(span)?)
             }))),
         }
     }

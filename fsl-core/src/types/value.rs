@@ -235,6 +235,13 @@ impl Value {
         }
     }
 
+    pub fn is_command(&self) -> bool {
+        match self {
+            Value::Command(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_type(&self, fsl_type: ValueType) -> bool {
         self.to_type() == fsl_type
     }
@@ -718,7 +725,7 @@ impl Value {
         })
     }
 
-    pub fn to_command(self, _: Arc<InterpreterData>) -> Result<Command, ValueError> {
+    pub fn to_command(self) -> Result<Command, ValueError> {
         if let Value::Command(command) = self {
             Ok(*command)
         } else {
