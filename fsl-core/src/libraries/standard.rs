@@ -28,29 +28,21 @@ use crate::{
 };
 
 pub fn register_std(interpreter: &mut FslInterpreter) {
+    // core
     register_sync!(interpreter, NO_OP, NO_OP_RULES, no_op);
     register_sync!(interpreter, ADD, MATH_RULES, add);
     register_sync!(interpreter, SUB, MATH_RULES, sub);
     register_sync!(interpreter, MUL, MATH_RULES, mul);
     register_sync!(interpreter, DIV, MATH_RULES, div);
     register_sync!(interpreter, MODULUS, MATH_RULES, modulus);
-    register_sync!(interpreter, CLAMP, CLAMP_RULES, clamp);
-    register_sync!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
-    register_sync!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
-    register_sync!(interpreter, PRECISION, PRECISION_RULES, precision);
     register_sync!(interpreter, STORE, STORE_RULES, store);
-    register_sync!(interpreter, ASSIGN, ASSIGN_RULES, assign);
     register_sync!(interpreter, CONST, CONST_RULES, r#const);
     register_sync!(interpreter, LOCAL, LOCAL_RULES, local);
-    register_sync!(interpreter, UPDATE, UPDATE_RULES, update);
     register_sync!(interpreter, GET, GET_RULES, get);
     register_sync!(interpreter, SET, SET_RULES, set);
     register_sync!(interpreter, CLONE, CLONE_RULES, clone);
     register_sync!(interpreter, TAKE, TAKE_RULES, take);
-    register_async!(interpreter, PRINT, PRINT_RULES, print);
     register_sync!(interpreter, ARGS, ARGS_RULES, args);
-    register_async!(interpreter, DEBUG, DEBUG_RULES, debug);
-    register_async!(interpreter, SCOPE, SCOPE_RULES, scope);
     register_sync!(interpreter, EQ, EQ_RULES, eq);
     register_sync!(interpreter, GT, GT_RULES, gt);
     register_sync!(interpreter, GTOE, GTOE_RULES, gtoe);
@@ -59,16 +51,6 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_sync!(interpreter, NOT, NOT_RULES, not);
     register_sync!(interpreter, AND, AND_RULES, and);
     register_sync!(interpreter, OR, OR_RULES, or);
-    register_async!(interpreter, IF, IF_RULES, r#if);
-    register_async!(interpreter, THEN, BLOCK_RULES, block);
-    register_async!(interpreter, ELSE_IF, BLOCK_RULES, block);
-    register_async!(interpreter, ELSE, BLOCK_RULES, block);
-    register_async!(interpreter, SWITCH, SWITCH_RULES, switch);
-    register_async!(interpreter, CASE, BLOCK_RULES, block);
-    register_async!(interpreter, FALLBACK, BLOCK_RULES, block);
-    register_async!(interpreter, WHILE_LOOP, WHILE_RULES, while_command);
-    register_async!(interpreter, REPEAT, REPEAT_RULES, repeat);
-    register_async!(interpreter, FOR_EACH, FOR_EACH_RULES, for_each);
     register_sync!(interpreter, INDEX, INDEX_RULES, index);
     register_sync!(interpreter, LENGTH, LENGTH_RULES, length);
     register_sync!(interpreter, SWAP, SWAP_RULES, swap);
@@ -77,26 +59,34 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_sync!(interpreter, PUSH, PUSH_RULES, push);
     register_sync!(interpreter, POP, POP_RULES, pop);
     register_sync!(interpreter, REPLACE, REPLACE_RULES, replace);
-    register_async!(
-        interpreter,
-        SLICE_REPLACE,
-        SLICE_REPLACE_RULES,
-        slice_replace
-    );
-    register_async!(
-        interpreter,
-        SEARCH_REPLACE,
-        SEARCH_REPLACE_RULES,
-        search_replace
-    );
-    register_async!(interpreter, REVERSE, REVERSE_RULES, reverse);
-    register_sync!(interpreter, INC, INC_RULES, inc);
-    register_sync!(interpreter, DEC, DEC_RULES, dec);
-    register_async!(interpreter, CONTAINS, CONTAINS_RULES, contains);
+    register_async!(interpreter, WHILE_LOOP, WHILE_RULES, while_command);
+    register_async!(interpreter, REPEAT, REPEAT_RULES, repeat);
+    register_async!(interpreter, FOR_EACH, FOR_EACH_RULES, for_each);
+    register_sync!(interpreter, EXIT, NO_ARGS, exit);
+    register_sync!(interpreter, BREAK, NO_ARGS, r#break);
+    register_sync!(interpreter, CONTINUE, NO_ARGS, r#continue);
+    register_async!(interpreter, IF, IF_RULES, r#if);
+    register_async!(interpreter, THEN, BLOCK_RULES, block);
+    register_async!(interpreter, ELSE_IF, BLOCK_RULES, block);
+    register_async!(interpreter, ELSE, BLOCK_RULES, block);
+    register_async!(interpreter, SWITCH, SWITCH_RULES, switch);
+    register_async!(interpreter, CASE, BLOCK_RULES, block);
+    register_async!(interpreter, FALLBACK, BLOCK_RULES, block);
+    register_async!(interpreter, DEF, DEF_RULES, def);
+    register_async!(interpreter, SCOPE, SCOPE_RULES, scope);
+    register_async!(interpreter, RETURN, RETURN_RULES, r#return);
+    register_async!(interpreter, PRINT, PRINT_RULES, print);
+    register_async!(interpreter, CONCAT, CONCAT_RULES, concat);
+    // std
+    register_sync!(interpreter, ASSIGN, ASSIGN_RULES, assign);
+    register_sync!(interpreter, UPDATE, UPDATE_RULES, update);
+    register_sync!(interpreter, CLAMP, CLAMP_RULES, clamp);
+    register_sync!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
+    register_sync!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
+    register_sync!(interpreter, PRECISION, PRECISION_RULES, precision);
+    register_async!(interpreter, DEBUG, DEBUG_RULES, debug);
     register_async!(interpreter, STARTS_WITH, STARTS_WITH_RULES, starts_with);
     register_async!(interpreter, ENDS_WITH, ENDS_WITH_RULES, ends_with);
-    register_async!(interpreter, CONCAT, CONCAT_RULES, concat);
-    register_async!(interpreter, PREPEND, PREPEND_RULES, prepend);
     register_async!(interpreter, CAPITALIZE, CAPITALIZE_RULES, capitalize);
     register_async!(interpreter, UPPERCASE, UPPERCASE_RULES, uppercase);
     register_async!(interpreter, LOWERCASE, LOWERCASE_RULES, lowercase);
@@ -125,15 +115,27 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     );
     register_async!(interpreter, SPLIT, SPLIT_RULES, split);
     register_async!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
+    register_async!(interpreter, REVERSE, REVERSE_RULES, reverse);
+    register_sync!(interpreter, INC, INC_RULES, inc);
+    register_sync!(interpreter, DEC, DEC_RULES, dec);
+    register_async!(interpreter, CONTAINS, CONTAINS_RULES, contains);
+    register_async!(interpreter, PREPEND, PREPEND_RULES, prepend);
     register_async!(interpreter, SLEEP, SLEEP_RULES, sleep);
     register_async!(interpreter, STOPWATCH, STOPWATCH_RULES, stopwatch);
     register_async!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
     register_async!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
-    register_async!(interpreter, DEF, DEF_RULES, def);
-    register_sync!(interpreter, EXIT, NO_ARGS, exit);
-    register_sync!(interpreter, BREAK, NO_ARGS, r#break);
-    register_sync!(interpreter, CONTINUE, NO_ARGS, r#continue);
-    register_async!(interpreter, RETURN, RETURN_RULES, r#return);
+    register_async!(
+        interpreter,
+        SLICE_REPLACE,
+        SLICE_REPLACE_RULES,
+        slice_replace
+    );
+    register_async!(
+        interpreter,
+        SEARCH_REPLACE,
+        SEARCH_REPLACE_RULES,
+        search_replace
+    );
 }
 
 pub async fn take_if_var(
@@ -1471,6 +1473,7 @@ pub fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, Sp
     let collection = args.next().unwrap();
     let indexer = args.next().unwrap();
     let replacement = args.next().unwrap();
+
     collection.with_mut(data.clone(), |value, span| match value {
         Value::Text(source_str) => {
             let mut text = std::mem::take(source_str).into_owned_string();
@@ -1519,6 +1522,7 @@ pub fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spa
     let collection = args.next().unwrap();
     let indexer = args.next().unwrap();
     let to_insert = args.next().unwrap();
+
     collection.with_mut(data.clone(), |value, span| match value {
         Value::Text(source_str) => {
             let mut text = std::mem::take(source_str).into_owned_string();
