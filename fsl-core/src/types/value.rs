@@ -571,7 +571,7 @@ impl Value {
     /// Reduces value to base type and checks the resulting type
     /// Recursively reduces inner values of lists and maps to their most base type
     /// Expensive, use as_base if list/map inner values do not need to be reduced
-    pub fn as_raw_checked(
+    pub fn to_inner_checked(
         self,
         valid_types: &'static [ValueType],
         data: Arc<InterpreterData>,
@@ -629,11 +629,11 @@ impl Value {
             }
             Value::Var(label) => {
                 let value = data.vars.read().get_clone(&label)?;
-                value.as_raw_checked(valid_types, data)
+                value.to_inner_checked(valid_types, data)
             }
             Value::Command(command) => command
                 .execute(data.clone())?
-                .map_result(|r| r.as_raw(data)),
+                .map_result(|r| r.to_inner(data)),
             Value::None => {
                 if valid_types.contains(&self.to_type()) {
                     Ok(PotentialFuture::Sync(self))
@@ -647,7 +647,7 @@ impl Value {
     /// Reduces value to base type
     /// Recursively reduces inner values of lists and maps to their most base type
     /// Expensive, use as_base if list/map inner values do not need to be reduced
-    pub fn as_raw(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, ValueError> {
+    pub fn to_inner(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Value, ValueError> {
         match self {
             Value::Int(_) => Ok(PotentialFuture::Sync(self)),
             Value::Float(_) => Ok(PotentialFuture::Sync(self)),
@@ -665,11 +665,11 @@ impl Value {
             }))),
             Value::Var(label) => {
                 let value = data.vars.read().get_clone(&label)?;
-                value.as_raw(data)
+                value.to_inner(data)
             }
             Value::Command(command) => command
                 .execute(data.clone())?
-                .map_result(|r| r.as_raw(data)),
+                .map_result(|r| r.to_inner(data)),
             Value::None => Ok(PotentialFuture::Sync(self)),
         }
     }
@@ -680,7 +680,7 @@ impl Value {
         data: Arc<InterpreterData>,
     ) -> ValueResult<Vec<usize>, ValueError> {
         Box::pin(async move {
-            let accesor = potential_future!(self.as_raw_checked(LIST_KEY, data.clone())?);
+            let accesor = potential_future!(self.to_inner_checked(LIST_KEY, data.clone())?);
 
             match accesor {
                 Value::List(values) => {
@@ -701,7 +701,7 @@ impl Value {
         data: Arc<InterpreterData>,
     ) -> ValueResult<Vec<SourceStr>, ValueError> {
         Box::pin(async move {
-            let accesor = potential_future!(self.as_raw_checked(MAP_KEY, data.clone())?);
+            let accesor = potential_future!(self.to_inner_checked(MAP_KEY, data.clone())?);
 
             match accesor {
                 Value::List(values) => {

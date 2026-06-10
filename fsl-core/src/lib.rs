@@ -135,9 +135,7 @@ macro_rules! register_sync {
 #[macro_export]
 macro_rules! fsl {
     ($code:literal) => {{
-        // 1. Stringify the Rust tokens into a raw string slice at compile time
         let code = $code;
-
         let mut interpreter = FslInterpreter::new();
         interpreter.register_all_libraries();
         interpreter
@@ -523,6 +521,7 @@ impl FslInterpreter {
                         list.push(potential_future!(
                             parsed_arg
                                 .into_value(data.clone())
+                                .map_err(|e| e.into_interpreter_error(data.clone()))?
                                 .map_err(move |e| e.into_interpreter_error(data_clone))
                         ));
                     }
@@ -540,6 +539,7 @@ impl FslInterpreter {
                                 Self::process_arg(data.clone(), &defs, value)
                                     .await?
                                     .into_value(data.clone())
+                                    .map_err(|e| e.into_interpreter_error(data.clone()))?
                                     .map_err(move |e| e.into_interpreter_error(data_clone))
                             ),
                         );
@@ -562,6 +562,7 @@ impl FslInterpreter {
                             Self::process_arg(data.clone(), &defs, arg)
                                 .await?
                                 .into_value(data.clone())
+                                .map_err(|e| e.into_interpreter_error(data.clone()))?
                                 .map_err(move |e| e.into_interpreter_error(data_clone))
                         );
                         let segment = AccessorSegment::new(key, segment_span);
@@ -573,6 +574,7 @@ impl FslInterpreter {
                     let root = AccessorSegment::new(
                         potential_future!(
                             root.into_value(data.clone())
+                                .map_err(|e| e.into_interpreter_error(data.clone()))?
                                 .map_err(move |e| e.into_interpreter_error(data_clone))
                         ),
                         root_span,
@@ -599,8 +601,8 @@ pub async fn def(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     let mut encountered_command = false;
     for (i, arg) in args.into_iter().enumerate() {
         let span = arg.span;
-        let kind = arg.to_type(data.clone()).await?;
-        match potential_future!(arg.into_value(data.clone())) {
+        let kind = arg.to_type(data.clone())?;
+        match potential_future!(arg.into_value(data.clone())?) {
             Value::Var(label) => {
                 if encountered_command {
                     return Err(RuntimeError::ParametersOutOfOrder.span(command.span));

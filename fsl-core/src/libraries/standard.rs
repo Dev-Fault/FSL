@@ -789,7 +789,7 @@ pub async fn scope(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     let mut return_value = Value::None;
     for value in args.iter_mut() {
-        return_value = potential_future!(value.as_raw(data.clone())?);
+        return_value = potential_future!(value.to_inner(data.clone())?);
     }
 
     data.vars.write().pop();
@@ -949,7 +949,7 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
             _ => {
                 if command_count == 1 {
                     if condition {
-                        let command = command.to_command(data.clone()).await?;
+                        let command = potential_future!(command.to_command(data.clone())?);
                         return execute_command!(command, data);
                     } else {
                         return Ok(Value::None);
@@ -969,10 +969,11 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     }
 
     if condition {
-        execute_command!(then_command.to_command(data.clone()).await?, data)
+        let then_command = potential_future!(then_command.to_command(data.clone())?);
+        execute_command!(then_command, data)
     } else {
         for else_if in &mut else_ifs {
-            let mut else_if = else_if.to_command(data.clone()).await?;
+            let mut else_if = potential_future!(else_if.to_command(data.clone())?);
             let condition = &mut else_if.args[0];
             let condition = potential_future!(condition.to_bool(data.clone())?);
 
@@ -985,7 +986,8 @@ pub async fn r#if(command: Command, data: Arc<InterpreterData>) -> Result<Value,
 
         if else_command.is_some() {
             let mut else_command = else_command.unwrap();
-            return execute_command!(else_command.to_command(data.clone()).await?, data);
+            let else_command = potential_future!(else_command.to_command(data.clone())?);
+            return execute_command!(else_command, data);
         }
 
         Ok(Value::None)
@@ -996,7 +998,7 @@ pub const SWITCH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArg
 pub const SWITCH: &str = "switch";
 pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let expression = potential_future!(args[0].as_raw_checked(ANY, data.clone())?);
+    let expression = potential_future!(args[0].to_inner_checked(ANY, data.clone())?);
 
     let mut cases: VecDeque<Argument> = VecDeque::new();
     let mut fallback: VecDeque<Argument> = VecDeque::new();
@@ -1016,9 +1018,9 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     {
         for case in &mut cases {
             let case_span = case.span;
-            let mut case = case.to_command(data.clone()).await?;
+            let mut case = potential_future!(case.to_command(data.clone())?);
             let arg = &mut case.args[0];
-            let arg = potential_future!(arg.as_raw(data.clone())?);
+            let arg = potential_future!(arg.to_inner(data.clone())?);
 
             if arg.equal(&expression, data.clone()).span(case_span)? {
                 return execute_command!(case, data);
@@ -1027,7 +1029,8 @@ pub async fn switch(command: Command, data: Arc<InterpreterData>) -> Result<Valu
             }
         }
 
-        execute_command!(fallback.to_command(data.clone()).await?, data)
+        let fallback = potential_future!(fallback.to_command(data.clone())?);
+        execute_command!(fallback, data)
     } else {
         Err(RuntimeError::SwitchMustHaveSingleFallbackCommand.span(command.span))
     }
@@ -1044,7 +1047,7 @@ pub async fn block(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
     let mut return_value = Value::None;
     for value in args.iter_mut() {
-        return_value = potential_future!(value.as_raw_checked(ANY, data.clone())?);
+        return_value = potential_future!(value.to_inner_checked(ANY, data.clone())?);
     }
     Ok(return_value)
 }
@@ -1062,7 +1065,7 @@ pub async fn while_command(
 
     let mut commands = Vec::with_capacity(args.len());
     for arg in args {
-        commands.push(arg.to_command(data.clone()).await?);
+        commands.push(potential_future!(arg.to_command(data.clone())?));
     }
 
     data.inc_loop_depth();
@@ -1098,7 +1101,7 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
 
     let mut commands = Vec::with_capacity(args.len());
     for arg in args {
-        commands.push(arg.to_command(data.clone()).await?);
+        commands.push(potential_future!(arg.to_command(data.clone())?));
     }
 
     data.inc_loop_depth();
@@ -1132,7 +1135,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let span = args[0].span;
     let var = take_if_var(&mut args[0], data.clone(), span).await?;
     let array = potential_future!(
-        args[0].as_raw_checked(&[ValueType::List, ValueType::Text], data.clone())?
+        args[0].to_inner_checked(&[ValueType::List, ValueType::Text], data.clone())?
     );
 
     let label = potential_future!(args[1].to_var(data.clone())?);
@@ -1155,7 +1158,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .insert(&label, Var::Mut(Value::from(c.to_string())))
                         .span(args[1].span)?;
 
-                    let command = command.clone().to_command(data.clone()).await?;
+                    let command = potential_future!(command.clone().to_command(data.clone())?);
                     let command_value = execute_command!(command, data.clone())?;
 
                     let character = data
@@ -1198,7 +1201,7 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
                         .insert(&label, Var::Mut(std::mem::take(element)))
                         .span(args[1].span)?;
 
-                    let command = command.clone().to_command(data.clone()).await?;
+                    let command = potential_future!(command.clone().to_command(data.clone())?);
                     let command_value = execute_command!(command, data.clone())?;
 
                     *element = data
@@ -1686,8 +1689,9 @@ pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut array = args.next().unwrap();
     let value_loc = array.span;
     let var = take_if_var(&mut array, data.clone(), value_loc).await?;
-    let array =
-        potential_future!(array.as_raw_checked(&[ValueType::List, ValueType::Text], data.clone())?);
+    let array = potential_future!(
+        array.to_inner_checked(&[ValueType::List, ValueType::Text], data.clone())?
+    );
 
     match array {
         Value::Text(text) => {
@@ -1771,7 +1775,7 @@ pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Va
     let mut args = command.args.iter_mut();
     let arg = args.next().unwrap();
     let collection_span = arg.span;
-    let collection = potential_future!(arg.as_raw_checked(COLLECTION, data.clone())?);
+    let collection = potential_future!(arg.to_inner_checked(COLLECTION, data.clone())?);
     let item = args.next().unwrap();
 
     match collection {
@@ -1931,7 +1935,7 @@ pub async fn is_number(
     let mut command = command;
     let mut args = command.args.iter_mut();
     let arg = args.next().unwrap();
-    let value = potential_future!(arg.as_raw(data)?);
+    let value = potential_future!(arg.to_inner(data)?);
     Ok(Value::Bool(
         value.is_type(ValueType::Int) | value.is_type(ValueType::Float),
     ))
@@ -1943,7 +1947,7 @@ pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut command = command;
     let mut args = command.args.iter_mut();
     let arg = args.next().unwrap();
-    let value = potential_future!(arg.as_raw(data)?);
+    let value = potential_future!(arg.to_inner(data)?);
     Ok(Value::Bool(value.is_type(ValueType::None)))
 }
 
@@ -2113,7 +2117,8 @@ pub async fn stopwatch(
     let start = std::time::Instant::now();
     let mut final_value = Value::None;
     for command in args {
-        final_value = execute_command!(command.to_command(data.clone()).await?, data.clone())?;
+        let command = potential_future!(command.to_command(data.clone())?);
+        final_value = execute_command!(command, data.clone())?;
     }
     let elapsed = start.elapsed().as_secs_f64();
     let return_value = Value::from(FslMap::from([
@@ -2220,14 +2225,14 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
             let arg = args.next().unwrap();
             let arg_span = arg.span;
             let parameter = parameter_labels.pop_front().unwrap();
-            let value = potential_future!(arg.into_value(data.clone()));
+            let value = potential_future!(arg.into_value(data.clone())?);
             match value {
                 Value::Var(var) => {
                     aliases.insert(parameter, var);
                 }
                 _ => {
                     let value =
-                        potential_future!(value.as_raw(data.clone()).span_future(arg_span)?);
+                        potential_future!(value.to_inner(data.clone()).span_future(arg_span)?);
                     data.vars
                         .write()
                         .insert(&parameter, Var::Mut(value))
@@ -2293,7 +2298,7 @@ pub async fn r#return(command: Command, data: Arc<InterpreterData>) -> Result<Va
 
     match return_value {
         Some(arg) => {
-            let arg = potential_future!(arg.as_raw(data.clone())?);
+            let arg = potential_future!(arg.to_inner(data.clone())?);
             data.set_return_flag(true);
             Ok(arg)
         }

@@ -52,7 +52,7 @@ impl Map {
             Map::Unresolved(arc) => {
                 let mut map = Arc::unwrap_or_clone(arc);
                 for (_, value) in map.iter_mut() {
-                    *value = potential_future!(std::mem::take(value).as_raw(data.clone())?);
+                    *value = potential_future!(std::mem::take(value).to_inner(data.clone())?);
                 }
                 Ok(Map::Resolved(Arc::new(map)))
             }

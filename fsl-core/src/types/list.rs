@@ -63,7 +63,7 @@ impl List {
             List::Unresolved(arc) => {
                 let mut values = Arc::unwrap_or_clone(arc);
                 for value in values.iter_mut() {
-                    *value = potential_future!(std::mem::take(value).as_raw(data.clone())?);
+                    *value = potential_future!(std::mem::take(value).to_inner(data.clone())?);
                 }
                 Ok(List::Resolved(Arc::new(values)))
             }

@@ -271,7 +271,7 @@ impl Command {
     ) -> Result<(), SpannedError> {
         match rule {
             ArgRule::Literal(_) => {
-                // Don't resolve already literal values
+                // Don't resolve already literal values (better for performance)
                 if let ArgumentKind::Value(value) = &arg.kind {
                     if value.is_literal() {
                         return Ok(());
@@ -468,7 +468,7 @@ impl Command {
                 ArgRule::Literal(_) => {
                     let span = arg.span;
                     let kind = std::mem::take(&mut arg.kind);
-                    let value = kind.into_value(span, data.clone());
+                    let value = kind.into_value(span, data.clone())?;
                     let value = match value {
                         PotentialFuture::Sync(value) => value,
                         PotentialFuture::Async(pin) => {
@@ -476,7 +476,7 @@ impl Command {
                             continue;
                         }
                     };
-                    let value = match value.as_raw(data.clone()).span(arg.span)? {
+                    let value = match value.to_inner(data.clone()).span(arg.span)? {
                         PotentialFuture::Sync(value) => value,
                         PotentialFuture::Async(pin) => {
                             async_ops.push((i, (PendingOp::AlreadyRaw(pin))));
@@ -495,7 +495,7 @@ impl Command {
                         continue;
                     }
                     let kind = std::mem::take(&mut arg.kind);
-                    let value = kind.into_value(span, data.clone());
+                    let value = kind.into_value(span, data.clone())?;
                     let value = match value {
                         PotentialFuture::Sync(value) => value,
                         PotentialFuture::Async(pin) => {
@@ -527,7 +527,7 @@ impl Command {
                         PendingOp::NeedsRaw(pin) => {
                             let value = pin.await?;
                             let value =
-                                potential_future!(value.as_raw(data.clone()).span_future(span)?);
+                                potential_future!(value.to_inner(data.clone()).span_future(span)?);
                             let arg = &mut self.args[i];
                             arg.replace_value(value);
                         }

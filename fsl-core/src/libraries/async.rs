@@ -6,7 +6,7 @@ use crate::{
     FslInterpreter,
     data::InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    execute_command,
+    execute_command, potential_future,
     types::{
         command::{Command, CommandSignature, ExpectedArgs},
         value::Value,
@@ -24,7 +24,7 @@ pub async fn join(command: Command, data: Arc<InterpreterData>) -> Result<Value,
     let mut command = command;
     let mut commands: Vec<_> = Vec::new();
     for arg in &mut command.args {
-        commands.push(arg.to_command(data.clone()).await?);
+        commands.push(potential_future!(arg.to_command(data.clone())?));
     }
 
     let mut executors = Vec::new();
@@ -58,7 +58,7 @@ pub const YIELD_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs
 pub const YIELD: &str = "yield";
 pub async fn r#yield(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let command = command.args[0].to_command(data.clone()).await?;
+    let command = potential_future!(command.args[0].to_command(data.clone())?);
     tokio::task::yield_now().await;
     let result = execute_command!(command, data.clone())?;
 
