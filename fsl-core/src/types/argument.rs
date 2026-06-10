@@ -13,7 +13,7 @@ use crate::{
         },
         list::List,
         map::Map,
-        value::Value,
+        value::{Number, Value},
     },
 };
 
@@ -633,26 +633,6 @@ impl Argument {
         }
     }
 
-    pub async fn equal(
-        &mut self,
-        other: &mut Argument,
-        data: Arc<InterpreterData>,
-    ) -> Result<bool, SpannedError> {
-        let l_value = potential_future!(self.clone().into_value(data.clone()));
-        let r_value = potential_future!(other.clone().into_value(data.clone()));
-        l_value.equal(&r_value, data).span(self.span)
-    }
-
-    pub async fn soft_equal(
-        &mut self,
-        other: &mut Argument,
-        data: Arc<InterpreterData>,
-    ) -> Result<bool, SpannedError> {
-        let l_value = potential_future!(self.clone().into_value(data.clone()));
-        let r_value = potential_future!(other.clone().into_value(data.clone()));
-        l_value.soft_equal(&r_value, data).span(self.span)
-    }
-
     pub fn to_int(
         &mut self,
         data: Arc<InterpreterData>,
@@ -849,6 +829,10 @@ impl Argument {
 
     pub fn into_float(&mut self) -> Result<f64, SpannedError> {
         self.take_value().into_float().span(self.span)
+    }
+
+    pub fn into_number(&mut self) -> Result<Number, SpannedError> {
+        self.take_value().into_number().span(self.span)
     }
 
     pub fn into_bool(&mut self) -> Result<bool, SpannedError> {

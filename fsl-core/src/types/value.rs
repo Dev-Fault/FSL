@@ -29,12 +29,20 @@ pub enum Value {
     None,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Number {
+    Int(i64),
+    Float(f64),
+}
+
 impl Value {
     pub fn into_str(self) -> Result<SourceStr, RuntimeError> {
         match self {
             Value::Int(i) => Ok(SourceStr::Owned(i.to_string())),
             Value::Float(f) => Ok(SourceStr::Owned(f.to_string())),
             Value::Bool(b) => Ok(SourceStr::Owned(b.to_string())),
+            Value::Map(map) => Ok(SourceStr::Owned(map.to_string())),
+            Value::List(list) => Ok(SourceStr::Owned(list.to_string())),
             Value::Text(source_str) => Ok(source_str),
             Value::Var(label) => Ok(label),
             _ => Err(self.conversion_err(&[ValueType::Text])),
@@ -54,12 +62,27 @@ impl Value {
 
     pub fn into_float(self) -> Result<f64, RuntimeError> {
         match &self {
+            Value::Int(i) => Ok(*i as f64),
             Value::Float(f) => Ok(*f),
             Value::Text(source_str) => match FslInterpreter::parse_number(&source_str)? {
                 Value::Float(f) => Ok(f),
+                Value::Int(i) => Ok(i as f64),
                 _ => Err(self.conversion_err(&[ValueType::Float])),
             },
             _ => Err(self.conversion_err(&[ValueType::Float])),
+        }
+    }
+
+    pub fn into_number(self) -> Result<Number, RuntimeError> {
+        match &self {
+            Value::Int(i) => Ok(Number::Int(*i)),
+            Value::Float(f) => Ok(Number::Float(*f)),
+            Value::Text(source_str) => match FslInterpreter::parse_number(&source_str)? {
+                Value::Int(i) => Ok(Number::Int(i)),
+                Value::Float(f) => Ok(Number::Float(f)),
+                _ => Err(self.conversion_err(&[ValueType::Float])),
+            },
+            _ => Err(self.conversion_err(&[ValueType::Int, ValueType::Float])),
         }
     }
 

@@ -22,7 +22,7 @@ use crate::{
         },
         list::List,
         map::FslMap,
-        value::Value,
+        value::{Number, Value},
     },
     vars::Var,
 };
@@ -34,31 +34,31 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_sync!(interpreter, MUL, MATH_RULES, mul);
     register_sync!(interpreter, DIV, MATH_RULES, div);
     register_sync!(interpreter, MODULUS, MATH_RULES, modulus);
-    register_async!(interpreter, CLAMP, CLAMP_RULES, clamp);
-    register_async!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
-    register_async!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
-    register_async!(interpreter, PRECISION, PRECISION_RULES, precision);
-    register_async!(interpreter, STORE, STORE_RULES, store);
-    register_async!(interpreter, ASSIGN, ASSIGN_RULES, assign);
-    register_async!(interpreter, CONST, CONST_RULES, r#const);
-    register_async!(interpreter, LOCAL, LOCAL_RULES, local);
-    register_async!(interpreter, UPDATE, UPDATE_RULES, update);
+    register_sync!(interpreter, CLAMP, CLAMP_RULES, clamp);
+    register_sync!(interpreter, CLAMP_MIN, CLAMP_MIN_RULES, clamp_min);
+    register_sync!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
+    register_sync!(interpreter, PRECISION, PRECISION_RULES, precision);
+    register_sync!(interpreter, STORE, STORE_RULES, store);
+    register_sync!(interpreter, ASSIGN, ASSIGN_RULES, assign);
+    register_sync!(interpreter, CONST, CONST_RULES, r#const);
+    register_sync!(interpreter, LOCAL, LOCAL_RULES, local);
+    register_sync!(interpreter, UPDATE, UPDATE_RULES, update);
     register_sync!(interpreter, GET, GET_RULES, get);
-    register_async!(interpreter, SET, SET_RULES, set);
-    register_async!(interpreter, CLONE, CLONE_RULES, clone);
-    register_async!(interpreter, TAKE, TAKE_RULES, take);
+    register_sync!(interpreter, SET, SET_RULES, set);
+    register_sync!(interpreter, CLONE, CLONE_RULES, clone);
+    register_sync!(interpreter, TAKE, TAKE_RULES, take);
     register_async!(interpreter, PRINT, PRINT_RULES, print);
-    register_async!(interpreter, ARGS, ARGS_RULES, args);
+    register_sync!(interpreter, ARGS, ARGS_RULES, args);
     register_async!(interpreter, DEBUG, DEBUG_RULES, debug);
     register_async!(interpreter, SCOPE, SCOPE_RULES, scope);
-    register_async!(interpreter, EQ, EQ_RULES, eq);
-    register_async!(interpreter, GT, GT_RULES, gt);
-    register_async!(interpreter, GTOE, GTOE_RULES, gtoe);
-    register_async!(interpreter, LT, LT_RULES, lt);
-    register_async!(interpreter, LTOE, LTOE_RULES, ltoe);
-    register_async!(interpreter, NOT, NOT_RULES, not);
-    register_async!(interpreter, AND, AND_RULES, and);
-    register_async!(interpreter, OR, OR_RULES, or);
+    register_sync!(interpreter, EQ, EQ_RULES, eq);
+    register_sync!(interpreter, GT, GT_RULES, gt);
+    register_sync!(interpreter, GTOE, GTOE_RULES, gtoe);
+    register_sync!(interpreter, LT, LT_RULES, lt);
+    register_sync!(interpreter, LTOE, LTOE_RULES, ltoe);
+    register_sync!(interpreter, NOT, NOT_RULES, not);
+    register_sync!(interpreter, AND, AND_RULES, and);
+    register_sync!(interpreter, OR, OR_RULES, or);
     register_async!(interpreter, IF, IF_RULES, r#if);
     register_async!(interpreter, THEN, BLOCK_RULES, block);
     register_async!(interpreter, ELSE_IF, BLOCK_RULES, block);
@@ -525,226 +525,221 @@ pub fn modulus(command: Command, _: Arc<InterpreterData>) -> Result<Value, Spann
     }
 }
 
-pub const CLAMP_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(3));
+pub const CLAMP_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..3))]);
 pub const CLAMP: &str = "clamp";
-pub async fn clamp(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut command = command;
-    let args = &mut command.args;
-    let mut to_clamp = potential_future!(args[0].to_number(data.clone())?);
+pub fn clamp(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let command = command;
+    let mut args = command.args;
 
-    match potential_future!(to_clamp.into_value(data.clone())) {
-        Value::Int(to_clamp) => {
-            let min = potential_future!(args[1].to_int(data.clone())?);
-            let max = potential_future!(args[2].to_int(data.clone())?);
-
-            if min > max {
-                return Err(RuntimeError::InvalidRange.span(command.span));
-            }
-
-            Ok(Value::Int(to_clamp.clamp(min, max)))
-        }
-        Value::Float(to_clamp) => {
-            let min = potential_future!(args[1].to_float(data.clone())?);
-            let max = potential_future!(args[2].to_float(data.clone())?);
+    match args[0].into_number()? {
+        Number::Int(i) => {
+            let min = args[1].into_int()?;
+            let max = args[2].into_int()?;
 
             if min > max {
                 return Err(RuntimeError::InvalidRange.span(command.span));
             }
 
-            Ok(Value::Float(to_clamp.clamp(min, max)))
+            Ok(Value::Int(i.clamp(min, max)))
         }
-        _ => unreachable!("already checked to_clamp was number with as_number"),
+        Number::Float(f) => {
+            let min = args[1].into_float()?;
+            let max = args[2].into_float()?;
+
+            if min > max {
+                return Err(RuntimeError::InvalidRange.span(command.span));
+            }
+
+            Ok(Value::Float(f.clamp(min, max)))
+        }
     }
 }
 
-pub const CLAMP_MIN_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const CLAMP_MIN_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const CLAMP_MIN: &str = "clamp_min";
-pub async fn clamp_min(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn clamp_min(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let command = command;
     let mut args = command.args;
-    let mut to_clamp = potential_future!(args[0].to_number(data.clone())?);
 
-    match potential_future!(to_clamp.into_value(data.clone())) {
-        Value::Int(to_clamp) => {
-            let min = potential_future!(args[1].to_int(data.clone())?);
+    match args[0].into_number()? {
+        Number::Int(i) => {
+            let min = args[1].into_int()?;
 
-            if to_clamp < min {
+            if i < min {
                 Ok(Value::Int(min))
             } else {
-                Ok(Value::Int(to_clamp))
+                Ok(Value::Int(i))
             }
         }
-        Value::Float(to_clamp) => {
-            let min = potential_future!(args[1].to_float(data.clone())?);
+        Number::Float(f) => {
+            let min = args[1].into_float()?;
 
-            if to_clamp < min {
+            if f < min {
                 Ok(Value::Float(min))
             } else {
-                Ok(Value::Float(to_clamp))
+                Ok(Value::Float(f))
             }
         }
-        _ => unreachable!("already checked to_clamp was number with as_number"),
     }
 }
 
-pub const CLAMP_MAX_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const CLAMP_MAX_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const CLAMP_MAX: &str = "clamp_max";
-pub async fn clamp_max(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn clamp_max(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let command = command;
     let mut args = command.args;
-    let mut to_clamp = potential_future!(args[0].to_number(data.clone())?);
 
-    match potential_future!(to_clamp.into_value(data.clone())) {
-        Value::Int(to_clamp) => {
-            let max = potential_future!(args[1].to_int(data.clone())?);
+    match args[0].into_number()? {
+        Number::Int(i) => {
+            let max = args[1].into_int()?;
 
-            if to_clamp > max {
+            if i > max {
                 Ok(Value::Int(max))
             } else {
-                Ok(Value::Int(to_clamp))
+                Ok(Value::Int(i))
             }
         }
-        Value::Float(to_clamp) => {
-            let max = potential_future!(args[1].to_float(data.clone())?);
+        Number::Float(f) => {
+            let max = args[1].into_float()?;
 
-            if to_clamp > max {
+            if f > max {
                 Ok(Value::Float(max))
             } else {
-                Ok(Value::Float(to_clamp))
+                Ok(Value::Float(f))
             }
         }
-        _ => unreachable!("already checked to_clamp was number with as_number"),
     }
 }
 
-pub const PRECISION_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const PRECISION_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const PRECISION: &str = "precision";
-pub async fn precision(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn precision(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let num = potential_future!(args[0].to_float(data.clone())?);
-    let precision = potential_future!(args[1].to_usize(data)?);
+    let num = args[0].into_float()?;
+    let precision = args[1].into_usize()?;
     let formatted = format!("{:.prec$}", num, prec = precision);
 
     Ok(Value::Text(SourceStr::Owned(formatted)))
 }
 
-pub const STORE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const STORE_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const STORE: &str = "store";
-pub async fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn store(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let var = potential_future!(args[0].to_var(data.clone())?);
-
-    let arg = potential_future!(args[1].as_raw_checked(ANY, data.clone())?);
+    let var = args[0].into_var()?;
 
     data.vars
         .write()
-        .store(&var, Var::Mut(arg))
+        .store(&var, Var::Mut(args[1].take_value()))
         .span(args[0].span)?;
 
     Ok(Value::Var(var))
 }
 
-pub const ASSIGN_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const ASSIGN_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Literal(ArgPos::Index(0)),
+    ArgRule::Mutable(ArgPos::Index(1)),
+]);
 pub const ASSIGN: &str = "assign";
-pub async fn assign(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn assign(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-
-    let arg = potential_future!(args[0].as_raw_checked(ANY, data.clone())?);
-
-    let var = potential_future!(args[1].to_var(data.clone())?);
+    let var = args[1].into_var()?;
 
     data.vars
         .write()
-        .store(&var, Var::Mut(arg))
+        .store(&var, Var::Mut(args[0].take_value()))
         .span(args[1].span)?;
 
     Ok(Value::Var(var))
 }
 
-pub const LOCAL_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const LOCAL_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const LOCAL: &str = "local";
-pub async fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn local(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let var = potential_future!(args[0].to_var(data.clone())?);
-
-    let arg = potential_future!(args[1].as_raw_checked(ANY, data.clone())?);
+    let var = args[0].into_var()?;
 
     data.vars
         .write()
-        .insert(&var, Var::Mut(arg))
+        .insert(&var, Var::Mut(args[1].take_value()))
         .span(args[0].span)?;
 
     Ok(Value::Var(var))
 }
 
-pub const UPDATE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const UPDATE_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const UPDATE: &str = "update";
-pub async fn update(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn update(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let var = potential_future!(args[0].to_var(data.clone())?);
-
-    let arg = potential_future!(args[1].as_raw_checked(ANY, data.clone())?);
-    let var_label = &var;
+    let var = args[0].into_var()?;
 
     data.vars
         .write()
-        .replace(var_label, arg)
+        .replace(&var, args[1].take_value())
         .span(args[0].span)?;
 
     Ok(Value::Var(var))
 }
 
-pub const CONST_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const CONST_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const CONST: &str = "const";
-pub async fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn r#const(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let var = potential_future!(args[0].to_var(data.clone())?);
-
-    let arg = potential_future!(args[1].as_raw_checked(ANY, data.clone())?);
-    let var_label = &var;
+    let var = args[0].into_var()?;
 
     data.vars
         .write()
-        .insert(var_label, Var::Const(arg))
+        .insert(&var, Var::Const(args[1].take_value()))
         .span(args[0].span)?;
 
     Ok(Value::Var(var))
 }
 
-pub const CLONE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const CLONE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Index(0))]);
 pub const CLONE: &str = "clone";
-pub async fn clone(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn clone(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let arg = potential_future!(args[0].as_raw(data.clone())?);
-    Ok(arg)
+    Ok(args[0].take_value())
 }
 
-pub const TAKE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const TAKE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const TAKE: &str = "take";
-pub async fn take(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn take(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let var = args[0].as_var_label(data.clone())?;
+    let var = args[0].into_var()?;
     match data.vars.write().remove(&var).span(args[0].span)? {
         Some(value) => Ok(value),
         None => Ok(Value::None),
     }
 }
 
-pub const PRINT_RULES: &CommandSignature = &CommandSignature::AnyArgs;
+pub const PRINT_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Raw(ArgPos::AnyFrom(0))]);
 pub const PRINT: &str = "print";
 pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
 
     if let Some(limit) = data.limits.max_output_len {
-        for value in args.iter_mut() {
-            let text = potential_future!(value.to_text(data.clone())?);
+        for arg in args.iter_mut() {
+            let text = potential_future!(arg.to_text(data.clone())?);
             // Must be locked after as_text (could require evaluating command that calls print)
             let mut output = data.output.lock();
             if text.len() + output.len() > limit {
@@ -753,8 +748,8 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
             output.push_str(&text);
         }
     } else {
-        for value in args.iter_mut() {
-            let text = potential_future!(value.to_text(data.clone())?);
+        for arg in args.iter_mut() {
+            let text = potential_future!(arg.to_text(data.clone())?);
             let mut output = data.output.lock();
             output.push_str(&text);
         }
@@ -764,20 +759,21 @@ pub async fn print(command: Command, data: Arc<InterpreterData>) -> Result<Value
 
 pub const ARGS_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::None);
 pub const ARGS: &str = "args";
-pub async fn args(_: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn args(_: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let input = data.args.lock();
     let arg_list = Value::from(input.clone());
     Ok(arg_list)
 }
 
-pub const DEBUG_RULES: &CommandSignature = &CommandSignature::AnyArgs;
+pub const DEBUG_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Raw(ArgPos::AnyFrom(0))]);
 pub const DEBUG: &str = "debug";
 pub async fn debug(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
     let mut output = String::new();
 
-    for value in args.iter_mut() {
-        output.push_str(&potential_future!(value.to_text(data.clone())?));
+    for arg in args.iter_mut() {
+        output.push_str(&potential_future!(arg.to_text(data.clone())?));
     }
 
     dbg!(output);
@@ -807,142 +803,113 @@ pub fn no_op(_: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError>
     Ok(Value::None)
 }
 
-pub const EQ_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const EQ_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const EQ: &str = "eq";
-pub async fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let a = potential_future!(args[0].as_raw_checked(ANY, data.clone())?);
-    let b = potential_future!(args[1].as_raw_checked(ANY, data.clone())?);
+    let a = args[0].take_value();
+    let b = args[1].take_value();
 
     Ok(Value::Bool(a.equal(&b, data.clone()).span(command.span)?))
 }
 
-pub const SOFT_EQ_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const SOFT_EQ_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const SOFT_EQ: &str = "soft_eq";
-pub async fn soft_eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn soft_eq(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let a = potential_future!(args[0].as_raw_checked(ANY, data.clone())?);
-    let b = potential_future!(args[1].as_raw_checked(ANY, data.clone())?);
+    let a = args[0].take_value();
+    let b = args[1].take_value();
 
     Ok(Value::Bool(
         a.soft_equal(&b, data.clone()).span(command.span)?,
     ))
 }
 
-pub const GT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const GT_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const GT: &str = "gt";
-pub async fn gt(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn gt(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let mut numbers = Vec::new();
-    for arg in args.iter_mut() {
-        let num = potential_future!(arg.to_number(data.clone())?);
-        numbers.push(num);
-    }
-    if contains_float(&mut numbers, data.clone()).await? {
-        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-
-        Ok(Value::Bool(a > b))
-    } else {
-        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-
-        Ok(Value::Bool(a > b))
+    match (args[0].into_number()?, args[1].into_number()?) {
+        (Number::Int(a), Number::Int(b)) => Ok(Value::from(a > b)),
+        (Number::Int(a), Number::Float(b)) => Ok(Value::from(a as f64 > b)),
+        (Number::Float(a), Number::Int(b)) => Ok(Value::from(a > b as f64)),
+        (Number::Float(a), Number::Float(b)) => Ok(Value::from(a > b)),
     }
 }
 
-pub const GTOE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const GTOE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const GTOE: &str = "gtoe";
-pub async fn gtoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn gtoe(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let mut numbers = Vec::new();
-    for arg in args.iter_mut() {
-        let num = potential_future!(arg.to_number(data.clone())?);
-        numbers.push(num);
-    }
-    if contains_float(&mut numbers, data.clone()).await? {
-        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-
-        Ok(Value::Bool(a >= b))
-    } else {
-        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-
-        Ok(Value::Bool(a >= b))
+    match (args[0].into_number()?, args[1].into_number()?) {
+        (Number::Int(a), Number::Int(b)) => Ok(Value::from(a >= b)),
+        (Number::Int(a), Number::Float(b)) => Ok(Value::from(a as f64 >= b)),
+        (Number::Float(a), Number::Int(b)) => Ok(Value::from(a >= b as f64)),
+        (Number::Float(a), Number::Float(b)) => Ok(Value::from(a >= b)),
     }
 }
 
-pub const LT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const LT_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const LT: &str = "lt";
-pub async fn lt(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn lt(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let mut numbers = Vec::new();
-    for arg in args.iter_mut() {
-        let num = potential_future!(arg.to_number(data.clone())?);
-        numbers.push(num);
-    }
-    if contains_float(&mut numbers, data.clone()).await? {
-        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-
-        Ok(Value::Bool(a < b))
-    } else {
-        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-
-        Ok(Value::Bool(a < b))
+    match (args[0].into_number()?, args[1].into_number()?) {
+        (Number::Int(a), Number::Int(b)) => Ok(Value::from(a < b)),
+        (Number::Int(a), Number::Float(b)) => Ok(Value::from((a as f64) < b)),
+        (Number::Float(a), Number::Int(b)) => Ok(Value::from(a < b as f64)),
+        (Number::Float(a), Number::Float(b)) => Ok(Value::from(a < b)),
     }
 }
 
-pub const LTOE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const LTOE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Range(0..2))]);
 pub const LTOE: &str = "ltoe";
-pub async fn ltoe(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn ltoe(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let mut numbers = Vec::new();
-    for arg in args.iter_mut() {
-        let num = potential_future!(arg.to_number(data.clone())?);
-        numbers.push(num);
-    }
-    if contains_float(&mut numbers, data.clone()).await? {
-        let b = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-
-        Ok(Value::Bool(a <= b))
-    } else {
-        let b = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-        let a = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-
-        Ok(Value::Bool(a <= b))
+    match (args[0].into_number()?, args[1].into_number()?) {
+        (Number::Int(a), Number::Int(b)) => Ok(Value::from(a <= b)),
+        (Number::Int(a), Number::Float(b)) => Ok(Value::from(a as f64 <= b)),
+        (Number::Float(a), Number::Int(b)) => Ok(Value::from(a <= b as f64)),
+        (Number::Float(a), Number::Float(b)) => Ok(Value::from(a <= b)),
     }
 }
 
-pub const NOT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const NOT_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Index(0))]);
 pub const NOT: &str = "not";
-pub async fn not(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn not(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut args = command.args;
-    let a = potential_future!(args[0].to_bool(data.clone())?);
+    let a = args[0].into_bool()?;
     Ok(Value::from(!a))
 }
 
-pub const AND_RULES: &CommandSignature = &CommandSignature::AnyArgs;
+pub const AND_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::AnyFrom(0))]);
 pub const AND: &str = "and";
-pub async fn and(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut args = command.args;
-    let mut return_value = potential_future!(args[0].to_bool(data.clone())?);
-    for arg in args.iter_mut().skip(1) {
-        return_value = return_value && potential_future!(arg.to_bool(data.clone())?);
+pub fn and(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let args = &mut command.args.iter_mut();
+    let mut return_value = args.next().unwrap().into_bool()?;
+    for arg in args {
+        return_value = return_value && arg.into_bool()?;
     }
     Ok(Value::from(return_value))
 }
 
-pub const OR_RULES: &CommandSignature = &CommandSignature::AnyArgs;
+pub const OR_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::AnyFrom(0))]);
 pub const OR: &str = "or";
-pub async fn or(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut args = command.args;
-    let mut return_value = potential_future!(args[0].to_bool(data.clone())?);
-    for value in args.iter_mut().skip(1) {
-        return_value = return_value || potential_future!(value.to_bool(data.clone())?);
+pub fn or(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let args = &mut command.args.iter_mut();
+    let mut return_value = args.next().unwrap().into_bool()?;
+    for arg in args {
+        return_value = return_value || arg.into_bool()?;
     }
     Ok(Value::from(return_value))
 }
@@ -1088,15 +1055,21 @@ pub async fn while_command(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, SpannedError> {
-    let args = command.args;
+    let mut command = command;
+    let mut args = command.args.iter_mut();
+    let condition = args.next().unwrap();
     let mut final_value = Value::None;
+
+    let mut commands = Vec::with_capacity(args.len());
+    for arg in args {
+        commands.push(arg.to_command(data.clone()).await?);
+    }
 
     data.inc_loop_depth();
 
-    'outer: while potential_future!(args[0].clone().to_bool(data.clone())?) {
-        for command in args.iter().skip(1) {
-            let command = command.clone().to_command(data.clone()).await?;
-            final_value = execute_command!(command, data.clone())?;
+    'outer: while potential_future!(condition.clone().to_bool(data.clone())?) {
+        for command in &commands {
+            final_value = execute_command!(command.clone(), data.clone())?;
 
             if data.get_break_flag() || data.get_return_flag() {
                 data.set_break_flag(false);
@@ -1271,9 +1244,9 @@ pub const INDEX_RULES: &CommandSignature = &CommandSignature::Positional(&[
 pub const INDEX: &str = "index";
 pub fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let mut it = command.args.iter_mut();
-    let array = it.next().unwrap();
-    let i = it.next().unwrap();
+    let mut args = command.args.iter_mut();
+    let array = args.next().unwrap();
+    let i = args.next().unwrap();
 
     array.with(data.clone(), |value, span| match value {
         Value::Text(text) => {
@@ -1301,9 +1274,9 @@ pub fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
     if args.len() == 1 {
         args[0].with(data, |value, _| Ok(value.clone()))
     } else {
-        let mut it = args.iter_mut();
-        let arg = it.next().unwrap();
-        let key = it.next().unwrap();
+        let mut args = args.iter_mut();
+        let arg = args.next().unwrap();
+        let key = args.next().unwrap();
         arg.with(data.clone(), |value, span| match value {
             Value::Map(map) => {
                 let (key_span, key) = (key.span, key.into_map_indexer()?);
@@ -1326,7 +1299,7 @@ pub const SET_RULES: &CommandSignature = &CommandSignature::Positional(&[
     ArgRule::Literal(ArgPos::OptionalIndex(2)),
 ]);
 pub const SET: &str = "set";
-pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let command_label = command.label();
     let mut args = command.args.iter_mut();
@@ -1335,13 +1308,13 @@ pub async fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         let old = args.next().unwrap();
         let new = args.next().unwrap();
 
-        let new = potential_future!(new.into_value(data.clone()));
+        let new = new.take_value();
         old.with_mut(data.clone(), |value, _| {
             *value = new;
             Ok(())
         })?;
 
-        Ok(potential_future!(old.into_value(data)))
+        Ok(old.take_value())
     } else if args.len() == 3 {
         let arg = args.next().unwrap();
         let key = args.next().unwrap();
@@ -1582,8 +1555,8 @@ pub const PUSH: &str = "push";
 pub fn push(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let mut array = args.next().unwrap();
-    let mut to_push = args.next().unwrap();
+    let array = args.next().unwrap();
+    let to_push = args.next().unwrap();
 
     array.with_mut(data.clone(), |value, span| match value {
         Value::Text(source_str) => {
@@ -1741,7 +1714,7 @@ pub const INC: &str = "inc";
 pub fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let mut arg = args.next().unwrap();
+    let arg = args.next().unwrap();
 
     let amount = if let Some(value) = args.next() {
         value.into_int()?
@@ -1770,7 +1743,7 @@ pub const DEC: &str = "dec";
 pub fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let mut arg = args.next().unwrap();
+    let arg = args.next().unwrap();
 
     let amount = if let Some(value) = args.next() {
         value.into_int()?
@@ -2553,6 +2526,23 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn clone_var_param() {
+        test_interpreter(
+            r#"
+                string.store("hello")
+                test.def(s,
+                    s.push("o")
+                    return(s)
+                )
+                test(string.clone()).print("\n")
+                string.print()
+            "#,
+            "helloo\nhello",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn take_var() {
         let err = test_interpreter_err_type("a.store(1) print(a) a.take() print(a)").await;
         assert_runtime_err!(err, RuntimeError::NonExistantVar { .. })
@@ -2709,6 +2699,23 @@ pub mod tests {
     #[tokio::test]
     async fn int_text_eq() {
         test_interpreter(r#"print(eq(1, "1"))"#, "true").await;
+        let err = test_interpreter_err_type(r#"print(eq(1, "a"))"#).await;
+        assert_runtime_err!(err, RuntimeError::InvalidConversion { .. })
+    }
+
+    #[tokio::test]
+    async fn list_eq() {
+        test_interpreter(
+            r#"
+                x.store([1, 2, 3])
+                y.store([1, 2, 3])
+                x.eq(y).print(" ")
+                x.push(4)
+                x.eq(y).print()
+            "#,
+            "true false",
+        )
+        .await;
         let err = test_interpreter_err_type(r#"print(eq(1, "a"))"#).await;
         assert_runtime_err!(err, RuntimeError::InvalidConversion { .. })
     }

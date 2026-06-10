@@ -69,6 +69,7 @@ async fn main() {
     }
 }
 
+#[allow(dead_code)]
 async fn flamegraph_test() {
     let _ = fsl!(
         r#"
