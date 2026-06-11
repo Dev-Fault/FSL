@@ -17,15 +17,17 @@ use crate::{
     },
 };
 
-pub type InterpreterFut = BoxFuture<'static, Result<Value, SpannedError>>;
-
-pub type InterpreterFn = Arc<dyn Fn(Command, Arc<InterpreterData>) -> InterpreterFut + Send + Sync>;
+pub type FslFut = BoxFuture<'static, Result<Value, SpannedError>>;
+pub type FslAsyncFn = Arc<dyn Fn(Command, Arc<InterpreterData>) -> FslFut + Send + Sync>;
+pub type FslFn =
+    Arc<dyn Fn(Command, Arc<InterpreterData>) -> Result<Value, SpannedError> + Send + Sync>;
 
 #[derive(Clone)]
 pub enum Handler {
     SyncStatic(fn(Command, Arc<InterpreterData>) -> Result<Value, SpannedError>),
-    AsyncStatic(fn(Command, Arc<InterpreterData>) -> InterpreterFut),
-    AsyncDynamic(InterpreterFn),
+    SyncDynamic(FslFn),
+    AsyncStatic(fn(Command, Arc<InterpreterData>) -> FslFut),
+    AsyncDynamic(FslAsyncFn),
 }
 
 impl Handler {
@@ -35,10 +37,26 @@ impl Handler {
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<Value, SpannedError> {
         match self {
+            Handler::SyncStatic(f) => Ok(PotentialFuture::Sync(f(command, data)?)),
+            Handler::SyncDynamic(f) => Ok(PotentialFuture::Sync(f(command, data)?)),
             Handler::AsyncStatic(f) => Ok(PotentialFuture::Async(f(command, data))),
             Handler::AsyncDynamic(f) => Ok(PotentialFuture::Async(f(command, data))),
-            Handler::SyncStatic(f) => Ok(PotentialFuture::Sync(f(command, data)?)),
         }
+    }
+
+    pub fn new_async<F, Fut>(f: F) -> Self
+    where
+        F: Fn(Command, Arc<InterpreterData>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value, SpannedError>> + Send + 'static,
+    {
+        Handler::AsyncDynamic(Arc::new(move |command, data| Box::pin(f(command, data))))
+    }
+
+    pub fn new_sync<F>(f: F) -> Self
+    where
+        F: Fn(Command, Arc<InterpreterData>) -> Result<Value, SpannedError> + Sync + Send + 'static,
+    {
+        Handler::SyncDynamic(Arc::new(move |command, data| f(command, data)))
     }
 }
 
