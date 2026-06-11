@@ -102,28 +102,28 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
         TRIM_WHITESPACE_RULES,
         trim_whitespace
     );
-    register_async!(
+    register_sync!(
         interpreter,
         REMOVE_WHITESPACE,
         REMOVE_WHITESPACE_RULES,
         remove_whitespace
     );
-    register_async!(interpreter, IS_NUMBER, IS_NUMBER_RULES, is_number);
-    register_async!(interpreter, IS_NONE, IS_NONE_RULES, is_none);
-    register_async!(interpreter, IS_ALPHA, IS_ALPHA_RULES, is_alpha);
-    register_async!(interpreter, IS_ALPHA_EN, IS_ALPHA_EN_RULES, is_alpha_en);
-    register_async!(
+    register_sync!(interpreter, IS_NUMBER, IS_NUMBER_RULES, is_number);
+    register_sync!(interpreter, IS_NONE, IS_NONE_RULES, is_none);
+    register_sync!(interpreter, IS_ALPHA, IS_ALPHA_RULES, is_alpha);
+    register_sync!(interpreter, IS_ALPHA_EN, IS_ALPHA_EN_RULES, is_alpha_en);
+    register_sync!(
         interpreter,
         IS_WHITESPACE,
         IS_WHITESPACE_RULES,
         is_whitespace
     );
-    register_async!(interpreter, SPLIT, SPLIT_RULES, split);
-    register_async!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
+    register_sync!(interpreter, SPLIT, SPLIT_RULES, split);
+    register_sync!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
     register_async!(interpreter, SLEEP, SLEEP_RULES, sleep);
     register_async!(interpreter, STOPWATCH, STOPWATCH_RULES, stopwatch);
-    register_async!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
-    register_async!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
+    register_sync!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
+    register_sync!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
     register_sync!(
         interpreter,
         RANGE_REPLACE,
@@ -1691,8 +1691,26 @@ pub fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, Sp
     Ok(array.take_value())
 }
 
+pub const SHUFFLE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
+pub const SHUFFLE: &str = "shuffle";
+pub fn shuffle(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let mut args = command.args.iter_mut();
+    let array = args.next().unwrap();
+
+    array.with_mut(data.clone(), |value, span| match value {
+        Value::List(list) => {
+            list.shuffle(&mut rand::rng());
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::List])).span(span),
+    })?;
+    Ok(array.take_value())
+}
+
 pub const INC_RULES: &CommandSignature = &CommandSignature::Positional(&[
-    ArgRule::Raw(ArgPos::Index(0)),
+    ArgRule::Mutable(ArgPos::Index(0)),
     ArgRule::Literal(ArgPos::OptionalIndex(1)),
 ]);
 pub const INC: &str = "inc";
@@ -1721,7 +1739,7 @@ pub fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
 }
 
 pub const DEC_RULES: &CommandSignature = &CommandSignature::Positional(&[
-    ArgRule::Raw(ArgPos::Index(0)),
+    ArgRule::Mutable(ArgPos::Index(0)),
     ArgRule::Literal(ArgPos::OptionalIndex(1)),
 ]);
 pub const DEC: &str = "dec";
@@ -1739,6 +1757,44 @@ pub fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
     let value = arg.with_mut(data.clone(), |value, span| match value {
         Value::Int(value) => {
             *value -= amount;
+            Ok(*value)
+        }
+        _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
+    })?;
+    match arg.as_var_label(data) {
+        Ok(label) => Ok(Value::Var(label)),
+        Err(_) => Ok(Value::from(value)),
+    }
+}
+
+pub const SCALE_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
+pub const SCALE: &str = "scale";
+pub fn scale(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    todo!()
+}
+
+pub const REDUCE_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::OptionalIndex(1)),
+]);
+pub const REDUCE: &str = "reduce";
+pub fn reduce(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let mut args = command.args.iter_mut();
+    let arg = args.next().unwrap();
+
+    let amount = if let Some(value) = args.next() {
+        value.into_int()?
+    } else {
+        1
+    };
+
+    let value = arg.with_mut(data.clone(), |value, span| match value {
+        Value::Int(value) => {
+            *value += amount;
             Ok(*value)
         }
         _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
@@ -1948,157 +2004,160 @@ pub fn trim_whitespace(
     Ok(text.take_value())
 }
 
-pub const SPLIT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const SPLIT_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const SPLIT: &str = "split";
-pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text_to_split = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let pattern = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let mut list: Vec<Value> = Vec::new();
-
-    for split in text_to_split.split(&*pattern) {
-        if !split.is_empty() {
-            list.push(Value::from(split.to_string()));
+    let text = args.next().unwrap();
+    let pattern = args.next().unwrap().into_str()?;
+    text.with(data, |value, span| match value {
+        Value::Text(source_str) => {
+            let split: Vec<_> = source_str
+                .split(&*pattern)
+                .map(|s| Value::from(s.to_string()))
+                .collect();
+            Ok(Value::List(List::Resolved(Arc::new(split))))
         }
-    }
-    Ok(Value::List(List::Resolved(Arc::new(list))))
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })
 }
 
 pub const REMOVE_WHITESPACE_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(1));
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
-pub async fn remove_whitespace(
+pub fn remove_whitespace(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text = potential_future!(args.next().unwrap().to_text(data)?);
-    Ok(text.split_whitespace().collect::<String>().into())
+    let text = args.next().unwrap();
+    text.with_mut(data, |value, span| match value {
+        Value::Text(source_str) => {
+            let string = source_str.split_whitespace().collect::<String>();
+            *value = Value::Text(SourceStr::Owned(string));
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
+    Ok(text.take_value())
 }
 
-pub const IS_ALPHA_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const IS_ALPHA_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const IS_ALPHA: &str = "is_alpha";
-pub async fn is_alpha(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn is_alpha(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let value = args.next().unwrap();
-    if let Ok(text) = value.to_text(data) {
-        let text = potential_future!(text);
-        let is_alpha = text.chars().all(char::is_alphabetic);
-
-        Ok(Value::Bool(is_alpha))
-    } else {
-        Ok(Value::Bool(false))
-    }
+    let text = args.next().unwrap();
+    text.with(data, |value, span| match value {
+        Value::Text(source_str) => Ok(Value::from(source_str.chars().all(char::is_alphabetic))),
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })
 }
 
 pub const IS_ALPHA_EN_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
 pub const IS_ALPHA_EN: &str = "is_alpha_en";
-pub async fn is_alpha_en(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn is_alpha_en(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    const ALPHA: &[char] = &[
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
+        's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    ];
+
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let value = args.next().unwrap();
-    if let Ok(text) = value.to_text(data) {
-        const ALPHA: &[char] = &[
-            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q',
-            'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-        ];
-        let text = potential_future!(text);
-
-        let is_alpha = text
-            .chars()
-            .all(|c| ALPHA.contains(&c.to_ascii_lowercase()));
-
-        Ok(Value::Bool(is_alpha))
-    } else {
-        Ok(Value::Bool(false))
-    }
+    let text = args.next().unwrap();
+    text.with(data, |value, span| match value {
+        Value::Text(source_str) => Ok(Value::from(
+            source_str
+                .chars()
+                .all(|ch| ALPHA.contains(&ch.to_ascii_lowercase())),
+        )),
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })
 }
 
 pub const IS_WHITESPACE_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(1));
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const IS_WHITESPACE: &str = "is_whitespace";
-pub async fn is_whitespace(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn is_whitespace(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let value = args.next().unwrap();
-    if let Ok(text) = value.to_text(data) {
-        let text = potential_future!(text);
-        let is_whitespace = text.chars().all(char::is_whitespace);
-
-        Ok(Value::Bool(is_whitespace))
-    } else {
-        Ok(Value::Bool(false))
-    }
+    let text = args.next().unwrap();
+    text.with(data, |value, span| match value {
+        Value::Text(source_str) => Ok(Value::from(source_str.chars().all(char::is_whitespace))),
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })
 }
 
-pub const IS_NUMBER_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const IS_NUMBER_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const IS_NUMBER: &str = "is_number";
-pub async fn is_number(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn is_number(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
     let arg = args.next().unwrap();
-    let value = potential_future!(arg.to_inner(data)?);
-    Ok(Value::Bool(
-        value.is_type(ValueType::Int) | value.is_type(ValueType::Float),
-    ))
+    arg.with(data, |value, _| match value {
+        Value::Int(_) => Ok(Value::from(true)),
+        Value::Float(_) => Ok(Value::from(true)),
+        _ => Ok(Value::from(false)),
+    })
 }
 
-pub const IS_NONE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const IS_NONE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const IS_NONE: &str = "is_none";
-pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
     let arg = args.next().unwrap();
-    let value = potential_future!(arg.to_inner(data)?);
-    Ok(Value::Bool(value.is_type(ValueType::None)))
+    arg.with(data, |value, _| match value {
+        Value::None => Ok(Value::from(true)),
+        _ => Ok(Value::from(false)),
+    })
 }
 
-pub const RANDOM_RANGE_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const RANDOM_RANGE_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Literal(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const RANDOM_RANGE: &str = "random_range";
-pub async fn random_range(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn random_range(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
-    let args = command.args.iter_mut();
-    let mut numbers = Vec::new();
-    for arg in args {
-        let num = potential_future!(arg.to_number(data.clone())?);
-        numbers.push(num);
-    }
+    let mut args = command.args.iter_mut();
+    let min = args.next().unwrap().into_number()?;
+    let max = args.next().unwrap().into_number()?;
 
-    if contains_float(&mut numbers, data.clone()).await? {
-        let max = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-        let min = potential_future!(numbers.pop().unwrap().to_float(data.clone())?);
-        if min >= max {
-            Err(RuntimeError::InvalidRange.span(command.span))
-        } else if !min.is_finite() || !max.is_finite() {
-            Err(RuntimeError::NonFiniteValue.span(command.span))
-        } else {
-            Ok(rand::random_range(min..=max).into())
+    match (min, max) {
+        (Number::Int(min), Number::Int(max)) => Ok(Value::from(rand::random_range(min..=max))),
+        (Number::Int(min), Number::Float(max)) => {
+            Ok(Value::from(rand::random_range((min as f64)..=max)))
         }
-    } else {
-        let max = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-        let min = potential_future!(numbers.pop().unwrap().to_int(data.clone())?);
-        if min >= max {
-            Err(RuntimeError::InvalidRange.span(command.span))
-        } else {
-            Ok(rand::random_range(min..=max).into())
+        (Number::Float(min), Number::Int(max)) => {
+            Ok(Value::from(rand::random_range(min..=(max as f64))))
         }
+        (Number::Float(min), Number::Float(max)) => Ok(Value::from(rand::random_range(min..=max))),
     }
+}
+
+pub const RANDOM_ENTRY_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
+pub const RANDOM_ENTRY: &str = "random_entry";
+pub fn random_entry(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let mut args = command.args.iter_mut();
+    let list = args.next().unwrap();
+    list.with(data, |value, span| match value {
+        Value::List(list) => {
+            let item = list[rand::random_range(0..list.len())].clone();
+            Ok(Value::from(item))
+        }
+        _ => Err(value.conversion_err(&[ValueType::List])).span(span),
+    })
 }
 
 pub const SLEEP_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
@@ -2148,34 +2207,6 @@ pub async fn stopwatch(
         (SourceStr::Static("elapsed"), Value::from(elapsed)),
     ]));
     Ok(return_value)
-}
-
-pub const RANDOM_ENTRY_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(1));
-pub const RANDOM_ENTRY: &str = "random_entry";
-pub async fn random_entry(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
-    let mut command = command;
-    let mut args = command.args.iter_mut();
-    let list = potential_future!(args.next().unwrap().to_list(data.clone())?);
-    let range = 0..list.len();
-    if range.is_empty() {
-        Err(RuntimeError::InvalidRange.span(command.span))
-    } else {
-        Ok(list[rand::random_range(range)].clone())
-    }
-}
-
-pub const SHUFFLE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
-pub const SHUFFLE: &str = "shuffle";
-pub async fn shuffle(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut command = command;
-    let mut args = command.args.iter_mut();
-    let mut list = potential_future!(args.next().unwrap().to_list(data)?);
-    list.shuffle(&mut rand::rng());
-    Ok(Value::List(list))
 }
 
 fn alias_parameter(
