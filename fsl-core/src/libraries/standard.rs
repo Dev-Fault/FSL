@@ -76,7 +76,7 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_async!(interpreter, SCOPE, SCOPE_RULES, scope);
     register_async!(interpreter, RETURN, RETURN_RULES, r#return);
     register_async!(interpreter, PRINT, PRINT_RULES, print);
-    register_async!(interpreter, CONCAT, CONCAT_RULES, concat);
+    register_sync!(interpreter, CONCAT, CONCAT_RULES, concat);
     // std
     register_sync!(interpreter, ASSIGN, ASSIGN_RULES, assign);
     register_sync!(interpreter, UPDATE, UPDATE_RULES, update);
@@ -85,17 +85,28 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_sync!(interpreter, CLAMP_MAX, CLAMP_MAX_RULES, clamp_max);
     register_sync!(interpreter, PRECISION, PRECISION_RULES, precision);
     register_async!(interpreter, DEBUG, DEBUG_RULES, debug);
-    register_async!(interpreter, STARTS_WITH, STARTS_WITH_RULES, starts_with);
-    register_async!(interpreter, ENDS_WITH, ENDS_WITH_RULES, ends_with);
-    register_async!(interpreter, CAPITALIZE, CAPITALIZE_RULES, capitalize);
-    register_async!(interpreter, UPPERCASE, UPPERCASE_RULES, uppercase);
-    register_async!(interpreter, LOWERCASE, LOWERCASE_RULES, lowercase);
-    register_async!(interpreter, TRIM, TRIM_RULES, trim);
-    register_async!(
+    register_sync!(interpreter, INC, INC_RULES, inc);
+    register_sync!(interpreter, DEC, DEC_RULES, dec);
+    register_sync!(interpreter, CONTAINS, CONTAINS_RULES, contains);
+    register_sync!(interpreter, PREPEND, PREPEND_RULES, prepend);
+    register_sync!(interpreter, REVERSE, REVERSE_RULES, reverse);
+    register_sync!(interpreter, STARTS_WITH, STARTS_WITH_RULES, starts_with);
+    register_sync!(interpreter, ENDS_WITH, ENDS_WITH_RULES, ends_with);
+    register_sync!(interpreter, CAPITALIZE, CAPITALIZE_RULES, capitalize);
+    register_sync!(interpreter, UPPERCASE, UPPERCASE_RULES, uppercase);
+    register_sync!(interpreter, LOWERCASE, LOWERCASE_RULES, lowercase);
+    register_sync!(interpreter, TRIM, TRIM_RULES, trim);
+    register_sync!(
         interpreter,
         TRIM_WHITESPACE,
         TRIM_WHITESPACE_RULES,
         trim_whitespace
+    );
+    register_async!(
+        interpreter,
+        REMOVE_WHITESPACE,
+        REMOVE_WHITESPACE_RULES,
+        remove_whitespace
     );
     register_async!(interpreter, IS_NUMBER, IS_NUMBER_RULES, is_number);
     register_async!(interpreter, IS_NONE, IS_NONE_RULES, is_none);
@@ -107,30 +118,19 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
         IS_WHITESPACE_RULES,
         is_whitespace
     );
-    register_async!(
-        interpreter,
-        REMOVE_WHITESPACE,
-        REMOVE_WHITESPACE_RULES,
-        remove_whitespace
-    );
     register_async!(interpreter, SPLIT, SPLIT_RULES, split);
     register_async!(interpreter, RANDOM_RANGE, RANDOM_RANGE_RULES, random_range);
-    register_async!(interpreter, REVERSE, REVERSE_RULES, reverse);
-    register_sync!(interpreter, INC, INC_RULES, inc);
-    register_sync!(interpreter, DEC, DEC_RULES, dec);
-    register_async!(interpreter, CONTAINS, CONTAINS_RULES, contains);
-    register_async!(interpreter, PREPEND, PREPEND_RULES, prepend);
     register_async!(interpreter, SLEEP, SLEEP_RULES, sleep);
     register_async!(interpreter, STOPWATCH, STOPWATCH_RULES, stopwatch);
     register_async!(interpreter, RANDOM_ENTRY, RANDOM_ENTRY_RULES, random_entry);
     register_async!(interpreter, SHUFFLE, SHUFFLE_RULES, shuffle);
-    register_async!(
+    register_sync!(
         interpreter,
-        SLICE_REPLACE,
-        SLICE_REPLACE_RULES,
-        slice_replace
+        RANGE_REPLACE,
+        RANGE_REPLACE_RULES,
+        range_replace
     );
-    register_async!(
+    register_sync!(
         interpreter,
         SEARCH_REPLACE,
         SEARCH_REPLACE_RULES,
@@ -1607,111 +1607,88 @@ pub fn pop(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
     })
 }
 
-pub const SEARCH_REPLACE_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(3));
+pub const SEARCH_REPLACE_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+    ArgRule::Literal(ArgPos::Index(2)),
+]);
 pub const SEARCH_REPLACE: &str = "search_replace";
-pub async fn search_replace(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn search_replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let mut string = args.next().unwrap();
-
-    let to_replace = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let with = potential_future!(args.next().unwrap().to_text(data.clone())?);
-
-    let value_loc = string.span;
-    let var = take_if_var(&mut string, data.clone(), value_loc).await?;
-
-    let string = potential_future!(string.to_text(data.clone())?);
-
-    let input = string.replace(&*to_replace, &with);
-
-    let return_value = update_if_var(var, Value::from(input), data, value_loc).await?;
-    Ok(return_value)
+    let text = args.next().unwrap();
+    let to_replace = args.next().unwrap().into_str()?;
+    let with = args.next().unwrap().into_str()?;
+    text.with_mut(data.clone(), |value, span| match value {
+        Value::Text(source_str) => {
+            let string = source_str.replace(&*to_replace, &with);
+            *value = Value::from(string);
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
+    Ok(text.take_value())
 }
 
-pub const SLICE_REPLACE_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(3));
-pub const SLICE_REPLACE: &str = "slice_replace";
-pub async fn slice_replace(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub const RANGE_REPLACE_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+    ArgRule::Literal(ArgPos::Index(2)),
+]);
+pub const RANGE_REPLACE: &str = "range_replace";
+pub fn range_replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let mut string = args.next().unwrap();
-
-    let mut range = potential_future!(args.next().unwrap().to_list(data.clone())?);
-    let with = potential_future!(args.next().unwrap().to_text(data.clone())?);
-
-    let value_loc = string.span;
-    let var = take_if_var(&mut string, data.clone(), value_loc).await?;
-
-    let string = potential_future!(string.to_text(data.clone())?);
+    let text = args.next().unwrap();
+    let range = args.next().unwrap().into_list_indexer()?;
+    let with = args.next().unwrap().into_str()?;
 
     if range.len() != 2 {
         return Err(RuntimeError::IndexOutOfBounds.span(command.span));
+    } else if range[0] > range[1] {
+        return Err(RuntimeError::InvalidRange.span(command.span));
     }
 
-    let (from, to) = (
-        potential_future!(
-            std::mem::take(&mut range[0])
-                .to_usize(data.clone())
-                .span_future(command.span)?
-        ),
-        potential_future!(
-            std::mem::take(&mut range[1])
-                .to_usize(data.clone())
-                .span_future(command.span)?
-        ),
-    );
+    text.with_mut(data.clone(), |value, span| match value {
+        Value::Text(source_str) => {
+            if !source_str.is_char_boundary(range[0]) || !source_str.is_char_boundary(range[1]) {
+                return Err(RuntimeError::InvalidArgument(
+                    "slice of text must lie within char boundries".to_string(),
+                )
+                .span(command.span));
+            }
+            let mut string = source_str.to_string();
+            string.replace_range(range[0]..range[1], &with);
+            *value = Value::from(string);
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
 
-    if from > string.len() || to > string.len() || from > to {
-        return Err(RuntimeError::IndexOutOfBounds.span(command.span));
-    } else if !string.is_char_boundary(from) || !string.is_char_boundary(to) {
-        return Err(RuntimeError::InvalidArgument(
-            "slice of text must lie within char boundries".to_string(),
-        )
-        .span(command.span));
-    }
-
-    let mut input = string.to_string();
-    input.replace_range(from..to, &with);
-
-    let return_value = update_if_var(var, Value::from(input), data, value_loc).await?;
-    Ok(return_value)
+    Ok(text.take_value())
 }
 
-pub const REVERSE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const REVERSE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const REVERSE: &str = "reverse";
-pub async fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn reverse(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
+    let array = args.next().unwrap();
 
-    let mut array = args.next().unwrap();
-    let value_loc = array.span;
-    let var = take_if_var(&mut array, data.clone(), value_loc).await?;
-    let array = potential_future!(
-        array.to_inner_checked(&[ValueType::List, ValueType::Text], data.clone())?
-    );
-
-    match array {
-        Value::Text(text) => {
-            let text = SourceStr::Owned(text.chars().rev().collect());
-
-            let return_value = update_if_var(var, Value::Text(text), data, value_loc).await?;
-            Ok(return_value)
+    array.with_mut(data.clone(), |value, span| match value {
+        Value::Text(source_str) => {
+            let string: String = source_str.chars().rev().collect();
+            *value = Value::from(string);
+            Ok(())
         }
-        Value::List(mut list) => {
+        Value::List(list) => {
             list.reverse();
-
-            let return_value = update_if_var(var, Value::List(list), data, value_loc).await?;
-            Ok(return_value)
+            Ok(())
         }
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    }
+        _ => Err(value.conversion_err(&[ValueType::Text, ValueType::List])).span(span),
+    })?;
+    Ok(array.take_value())
 }
 
 pub const INC_RULES: &CommandSignature = &CommandSignature::Positional(&[
@@ -1772,91 +1749,100 @@ pub fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
     }
 }
 
-pub const CONTAINS_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const CONTAINS_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const CONTAINS: &str = "contains";
-pub async fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn contains(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let arg = args.next().unwrap();
-    let collection_span = arg.span;
-    let collection = potential_future!(arg.to_inner_checked(COLLECTION, data.clone())?);
+    let collection = args.next().unwrap();
     let item = args.next().unwrap();
 
-    match collection {
-        Value::Text(text) => {
-            let item = &potential_future!(item.to_text(data)?);
-            Ok(Value::Bool(text.contains(&**item)))
-        }
-        Value::List(list) => {
-            let list = list
-                .resolve(data.clone())
-                .await
-                .span(collection_span)?
-                .take();
-            Ok(Value::Bool(
-                item.with(data, |value, _| Ok(list.contains(value)))?,
-            ))
-        }
-        Value::Map(map) => {
-            let key = potential_future!(item.to_text(data)?);
-            Ok(Value::Bool(map.contains_key(&key)))
-        }
-        _ => unreachable!("as_raw should enforce type"),
-    }
+    collection.with(data.clone(), |value, span| match value {
+        Value::Text(source_str) => Ok(Value::Bool(source_str.contains(&*item.into_str()?))),
+        Value::List(list) => Ok(Value::Bool(list.contains(&item.take_value()))),
+        Value::Map(map) => Ok(Value::Bool(map.contains_key(&item.into_str()?))),
+        _ => Err(value.conversion_err(&[ValueType::Text, ValueType::List, ValueType::Map]))
+            .span(span),
+    })
 }
 
-pub const STARTS_WITH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const STARTS_WITH_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const STARTS_WITH: &str = "starts_with";
-pub async fn starts_with(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn starts_with(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let string = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let value = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    Ok(Value::from(string.starts_with(&*value)))
+    let array = args.next().unwrap();
+    let item = args.next().unwrap();
+    array.with(data.clone(), |value, span| match value {
+        Value::Text(source_str) => Ok(Value::Bool(source_str.starts_with(&*item.into_str()?))),
+        Value::List(list) => {
+            let item = item.take_value();
+            match item {
+                Value::List(values) => Ok(Value::Bool(list.starts_with(&values.take()))),
+                _ => Ok(Value::Bool(list.starts_with(&[item]))),
+            }
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text, ValueType::List])).span(span),
+    })
 }
 
-pub const ENDS_WITH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const ENDS_WITH_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const ENDS_WITH: &str = "ends_with";
-pub async fn ends_with(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn ends_with(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let string = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let value = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    Ok(Value::from(string.ends_with(&*value)))
+    let array = args.next().unwrap();
+    let item = args.next().unwrap();
+    array.with(data.clone(), |value, span| match value {
+        Value::Text(source_str) => Ok(Value::Bool(source_str.ends_with(&*item.into_str()?))),
+        Value::List(list) => {
+            let item = item.take_value();
+            match item {
+                Value::List(values) => Ok(Value::Bool(list.ends_with(&values.take()))),
+                _ => Ok(Value::Bool(list.ends_with(&[item]))),
+            }
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text, ValueType::List])).span(span),
+    })
 }
 
-pub const CONCAT_RULES: &CommandSignature = &CommandSignature::AnyArgs;
+pub const CONCAT_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::AnyFrom(0))]);
 pub const CONCAT: &str = "concat";
-pub async fn concat(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn concat(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let args = command.args.iter_mut();
 
     let mut cat_string = String::new();
 
     for value in args {
-        cat_string.push_str(&potential_future!(value.to_text(data.clone())?));
+        cat_string.push_str(&value.into_str()?);
     }
 
     Ok(cat_string.into())
 }
 
-pub const PREPEND_RULES: &CommandSignature = &CommandSignature::AnyArgs;
+pub const PREPEND_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::AnyFrom(0))]);
 pub const PREPEND: &str = "prepend";
-pub async fn prepend(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn prepend(command: Command, _: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let end = potential_future!(args.next().unwrap().to_text(data.clone())?);
+    let end = args.next().unwrap().into_str()?;
 
     let mut cat_string = String::new();
 
     for value in args {
-        cat_string.push_str(&potential_future!(value.to_text(data.clone())?));
+        cat_string.push_str(&value.into_str()?);
     }
 
     cat_string.push_str(&end);
@@ -1864,95 +1850,132 @@ pub async fn prepend(command: Command, data: Arc<InterpreterData>) -> Result<Val
     Ok(cat_string.into())
 }
 
-pub const CAPITALIZE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const CAPITALIZE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const CAPITALIZE: &str = "capitalize";
-pub async fn capitalize(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn capitalize(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text = potential_future!(args.next().unwrap().to_text(data)?);
-    let mut chars = text.chars();
-    let text = if let Some(ch) = chars.next() {
-        SourceStr::Owned(ch.to_uppercase().collect::<String>() + chars.as_str())
-    } else {
-        text
-    };
-    Ok(Value::Text(text))
+    let text = args.next().unwrap();
+    text.with_mut(data, |value, span| match value {
+        Value::Text(source_str) => {
+            let mut chars = source_str.chars();
+            if let Some(ch) = chars.next() {
+                let string: String = ch.to_uppercase().collect::<String>() + chars.as_str();
+                *value = Value::from(string);
+            }
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
+    Ok(text.take_value())
 }
 
-pub const UPPERCASE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const UPPERCASE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const UPPERCASE: &str = "uppercase";
-pub async fn uppercase(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn uppercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text = potential_future!(args.next().unwrap().to_text(data)?);
-    Ok(Value::from(text.to_uppercase()))
+    let text = args.next().unwrap();
+    text.with_mut(data, |value, span| match value {
+        Value::Text(source_str) => {
+            *value = Value::from(source_str.to_uppercase());
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
+    Ok(text.take_value())
 }
 
-pub const LOWERCASE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const LOWERCASE_RULES: &CommandSignature =
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const LOWERCASE: &str = "lowercase";
-pub async fn lowercase(
-    command: Command,
-    data: Arc<InterpreterData>,
-) -> Result<Value, SpannedError> {
+pub fn lowercase(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text = potential_future!(args.next().unwrap().to_text(data)?);
-    Ok(Value::from(text.to_lowercase()))
+    let text = args.next().unwrap();
+    text.with_mut(data, |value, span| match value {
+        Value::Text(source_str) => {
+            *value = Value::from(source_str.to_lowercase());
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
+    Ok(text.take_value())
 }
 
-pub const TRIM_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const TRIM_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Literal(ArgPos::Index(1)),
+]);
 pub const TRIM: &str = "trim";
-pub async fn trim(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub fn trim(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let pattern = potential_future!(args.next().unwrap().to_text(data)?);
-    let chars: Vec<char> = pattern.chars().collect();
-    Ok(Value::from(text.trim_matches(chars.as_slice()).to_string()))
+    let text = args.next().unwrap();
+    let pattern = args.next().unwrap().into_str()?;
+    text.with_mut(data, |value, span| match value {
+        Value::Text(source_str) => {
+            let chars: Vec<char> = pattern.chars().collect();
+            let string = source_str.trim_matches(chars.as_slice()).to_string();
+            *value = Value::from(string);
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
+    Ok(text.take_value())
 }
 
 pub const TRIM_WHITESPACE_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(1));
+    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
 pub const TRIM_WHITESPACE: &str = "trim_whitespace";
-pub async fn trim_whitespace(
+pub fn trim_whitespace(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    Ok(Value::from(text.trim().to_string()))
+    let text = args.next().unwrap();
+    text.with_mut(data, |value, span| match value {
+        Value::Text(source_str) => {
+            let string = source_str.trim().to_string();
+            *value = Value::from(string);
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Text])).span(span),
+    })?;
+    Ok(text.take_value())
 }
 
-pub const IS_NUMBER_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
-pub const IS_NUMBER: &str = "is_number";
-pub async fn is_number(
+pub const SPLIT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
+pub const SPLIT: &str = "split";
+pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+    let mut command = command;
+    let mut args = command.args.iter_mut();
+    let text_to_split = potential_future!(args.next().unwrap().to_text(data.clone())?);
+    let pattern = potential_future!(args.next().unwrap().to_text(data.clone())?);
+    let mut list: Vec<Value> = Vec::new();
+
+    for split in text_to_split.split(&*pattern) {
+        if !split.is_empty() {
+            list.push(Value::from(split.to_string()));
+        }
+    }
+    Ok(Value::List(List::Resolved(Arc::new(list))))
+}
+
+pub const REMOVE_WHITESPACE_RULES: &CommandSignature =
+    &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
+pub async fn remove_whitespace(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let arg = args.next().unwrap();
-    let value = potential_future!(arg.to_inner(data)?);
-    Ok(Value::Bool(
-        value.is_type(ValueType::Int) | value.is_type(ValueType::Float),
-    ))
-}
-
-pub const IS_NONE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
-pub const IS_NONE: &str = "is_none";
-pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut command = command;
-    let mut args = command.args.iter_mut();
-    let arg = args.next().unwrap();
-    let value = potential_future!(arg.to_inner(data)?);
-    Ok(Value::Bool(value.is_type(ValueType::None)))
+    let text = potential_future!(args.next().unwrap().to_text(data)?);
+    Ok(text.split_whitespace().collect::<String>().into())
 }
 
 pub const IS_ALPHA_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
@@ -2017,34 +2040,29 @@ pub async fn is_whitespace(
     }
 }
 
-pub const REMOVE_WHITESPACE_RULES: &CommandSignature =
-    &CommandSignature::Count(ExpectedArgs::Exactly(1));
-pub const REMOVE_WHITESPACE: &str = "remove_whitespace";
-pub async fn remove_whitespace(
+pub const IS_NUMBER_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const IS_NUMBER: &str = "is_number";
+pub async fn is_number(
     command: Command,
     data: Arc<InterpreterData>,
 ) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text = potential_future!(args.next().unwrap().to_text(data)?);
-    Ok(text.split_whitespace().collect::<String>().into())
+    let arg = args.next().unwrap();
+    let value = potential_future!(arg.to_inner(data)?);
+    Ok(Value::Bool(
+        value.is_type(ValueType::Int) | value.is_type(ValueType::Float),
+    ))
 }
 
-pub const SPLIT_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(2));
-pub const SPLIT: &str = "split";
-pub async fn split(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
+pub const IS_NONE_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::Exactly(1));
+pub const IS_NONE: &str = "is_none";
+pub async fn is_none(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
-    let text_to_split = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let pattern = potential_future!(args.next().unwrap().to_text(data.clone())?);
-    let mut list: Vec<Value> = Vec::new();
-
-    for split in text_to_split.split(&*pattern) {
-        if !split.is_empty() {
-            list.push(Value::from(split.to_string()));
-        }
-    }
-    Ok(Value::List(List::Resolved(Arc::new(list))))
+    let arg = args.next().unwrap();
+    let value = potential_future!(arg.to_inner(data)?);
+    Ok(Value::Bool(value.is_type(ValueType::None)))
 }
 
 pub const RANDOM_RANGE_RULES: &CommandSignature =
@@ -2339,11 +2357,10 @@ pub mod tests {
             Err(e) => println!("Result:\n{}", e.to_string()),
         }
 
+        println!("\n");
         let result = result.unwrap();
-        println!("EXPECTED:\n");
-        println!("{}", expected_output);
-        println!("\nGOT:\n");
-        println!("{}", &result);
+        println!("EXPECTED:\n{}\n", expected_output);
+        println!("\nGOT:\n{}\n", &result);
 
         assert!(result == expected_output);
     }
@@ -3065,9 +3082,33 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn starts_with() {
+    async fn starts_with_text_1() {
         test_interpreter(r#"starts_with("text", "t").print()"#, "true").await;
+    }
+
+    #[tokio::test]
+    async fn starts_with_text_2() {
         test_interpreter(r#"starts_with("text", "f").print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn starts_with_list_1() {
+        test_interpreter(r#"starts_with([1, 2, 3], 1).print()"#, "true").await;
+    }
+
+    #[tokio::test]
+    async fn starts_with_list_2() {
+        test_interpreter(r#"starts_with([1, 2, 3], 2).print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn starts_with_list_3() {
+        test_interpreter(r#"starts_with([1, 2, 3], [1, 2]).print()"#, "true").await;
+    }
+
+    #[tokio::test]
+    async fn starts_with_list_4() {
+        test_interpreter(r#"starts_with([1, 2, 3], ["d", 2]).print()"#, "false").await;
     }
 
     #[tokio::test]
@@ -3079,6 +3120,17 @@ pub mod tests {
     #[tokio::test]
     async fn concat() {
         test_interpreter(r#"concat(1, 2, "3").print()"#, "123").await;
+    }
+
+    #[tokio::test]
+    async fn prepend() {
+        test_interpreter(
+            r#"
+                "example".prepend("-> ").print()
+            "#,
+            "-> example",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -3338,20 +3390,20 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn slice_replace() {
-        test_interpreter(r#"slice_replace("hello", [1, 5], "hhhh").print()"#, "hhhhh").await;
+    async fn range_replace() {
+        test_interpreter(r#"range_replace("hello", [1, 5], "hhhh").print()"#, "hhhhh").await;
     }
 
     #[tokio::test]
-    async fn slice_replace_invalid_index() {
-        let err = test_interpreter_err_type(r#"slice_replace("café", [4, 5], "h").print()"#).await;
+    async fn range_replace_invalid_index() {
+        let err = test_interpreter_err_type(r#"range_replace("café", [4, 5], "h").print()"#).await;
         assert_runtime_err!(err, RuntimeError::InvalidArgument(_))
     }
 
     #[tokio::test]
-    async fn slice_replace_var() {
+    async fn range_replace_var() {
         test_interpreter(
-            r#"text.store("hello") text.slice_replace([1, 5], "hhhh") text.print()"#,
+            r#"text.store("hello") text.range_replace([1, 5], "hhhh") text.print()"#,
             "hhhhh",
         )
         .await;
