@@ -87,6 +87,8 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
     register_async!(interpreter, DEBUG, DEBUG_RULES, debug);
     register_sync!(interpreter, INC, INC_RULES, inc);
     register_sync!(interpreter, DEC, DEC_RULES, dec);
+    register_sync!(interpreter, SCALE, SCALE_RULES, scale);
+    register_sync!(interpreter, REDUCE, REDUCE_RULES, reduce);
     register_sync!(interpreter, CONTAINS, CONTAINS_RULES, contains);
     register_sync!(interpreter, PREPEND, PREPEND_RULES, prepend);
     register_sync!(interpreter, REVERSE, REVERSE_RULES, reverse);
@@ -136,58 +138,6 @@ pub fn register_std(interpreter: &mut FslInterpreter) {
         SEARCH_REPLACE_RULES,
         search_replace
     );
-}
-
-pub async fn take_if_var(
-    arg: &mut Argument,
-    data: Arc<InterpreterData>,
-    span: Span,
-) -> Result<Option<SourceStr>, SpannedError> {
-    if arg.is_type(ValueType::Var, data.clone())? {
-        let label = arg.as_var_label(data.clone())?;
-        let data_clone = data.clone();
-        let var = {
-            let mut vars = data_clone.vars.write();
-            vars.take(&label).span(span)?
-        };
-        arg.with_mut(data, {
-            |value, _| {
-                *value = var;
-                Ok(())
-            }
-        })?;
-        Ok(Some(label))
-    } else {
-        Ok(None)
-    }
-}
-
-pub async fn update_if_var(
-    var: Option<SourceStr>,
-    value: Value,
-    data: Arc<InterpreterData>,
-    span: Span,
-) -> Result<Value, SpannedError> {
-    match var {
-        Some(label) => {
-            let mut vars = data.vars.write();
-            vars.store(&label, Var::Mut(value)).span(span)?;
-            Ok(Value::Var(label))
-        }
-        None => Ok(value),
-    }
-}
-
-async fn contains_float(
-    values: &mut [Argument],
-    data: Arc<InterpreterData>,
-) -> Result<bool, SpannedError> {
-    for value in values {
-        if value.is_type(ValueType::Float, data.clone())? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 pub const ADD: &str = "add";
@@ -1129,117 +1079,139 @@ pub async fn repeat(command: Command, data: Arc<InterpreterData>) -> Result<Valu
     Ok(final_value)
 }
 
-pub const FOR_EACH_RULES: &CommandSignature = &CommandSignature::Count(ExpectedArgs::AtLeast(3));
+pub const FOR_EACH_RULES: &CommandSignature = &CommandSignature::Positional(&[
+    ArgRule::Mutable(ArgPos::Index(0)),
+    ArgRule::Mutable(ArgPos::Index(1)),
+    ArgRule::Raw(ArgPos::AnyFrom(2)),
+]);
 pub const FOR_EACH: &str = "for_each";
 pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    let mut args = command.args;
+    let mut command = command;
+    let mut args = command.args.iter_mut();
+    let arg = args.next().unwrap();
+    let item = args.next().unwrap();
+    let item_span = item.span;
+    let item = item.into_var()?;
 
-    let span = args[0].span;
-    let var = take_if_var(&mut args[0], data.clone(), span).await?;
-    let array = potential_future!(
-        args[0].to_inner_checked(&[ValueType::List, ValueType::Text], data.clone())?
-    );
-
-    let label = potential_future!(args[1].to_var(data.clone())?);
-
-    data.vars.write().push();
-    data.inc_loop_depth();
-
-    let mut return_value = None;
-    let result = match array {
-        Value::Text(text) => {
-            let original_len = text.len();
-            let mut text = text.to_string();
-            let indices: Vec<_> = text.char_indices().collect();
-            let mut offset: isize = 0;
-
-            'outer: for (i, c) in indices {
-                for command in args.iter().skip(2) {
-                    data.vars
-                        .write()
-                        .insert(&label, Var::Mut(Value::from(c.to_string())))
-                        .span(args[1].span)?;
-
-                    let command = potential_future!(command.clone().to_command(data.clone())?);
-                    let command_value = execute_command!(command, data.clone())?;
-
-                    let character = data
-                        .vars
-                        .write()
-                        .remove(&label)
-                        .span(args[1].span)?
-                        .unwrap();
-
-                    let replacement = potential_future!(
-                        character.to_text(data.clone()).span_future(args[1].span)?
-                    );
-
-                    let i = (i as isize + offset) as usize;
-                    text.replace_range(i..i + c.len_utf8(), &replacement);
-                    offset = text.len() as isize - original_len as isize;
-
-                    if data.get_return_flag() {
-                        return_value = Some(command_value);
-                        break 'outer;
-                    } else if data.get_break_flag() {
-                        data.set_break_flag(false);
-                        break 'outer;
-                    } else if data.get_continue_flag() {
-                        data.set_continue_flag(false);
-                        continue 'outer;
-                    }
-                }
-
-                data.inc_total_loops().span(command.span)?;
-            }
-
-            update_if_var(var, Value::from(text), data.clone(), args[0].span).await?
-        }
-        Value::List(mut list) => {
-            'outer: for element in list.iter_mut() {
-                for command in args.iter().skip(2) {
-                    data.vars
-                        .write()
-                        .insert(&label, Var::Mut(std::mem::take(element)))
-                        .span(args[1].span)?;
-
-                    let command = potential_future!(command.clone().to_command(data.clone())?);
-                    let command_value = execute_command!(command, data.clone())?;
-
-                    *element = data
-                        .vars
-                        .write()
-                        .remove(&label)
-                        .span(args[1].span)?
-                        .unwrap();
-
-                    if data.get_return_flag() {
-                        return_value = Some(command_value);
-                        break 'outer;
-                    } else if data.get_break_flag() {
-                        data.set_break_flag(false);
-                        break 'outer;
-                    } else if data.get_continue_flag() {
-                        data.set_continue_flag(false);
-                        continue 'outer;
-                    }
-                }
-
-                data.inc_total_loops().span(command.span)?;
-            }
-
-            update_if_var(var, Value::List(list), data.clone(), args[0].span).await?
-        }
-        _ => unreachable!("as_raw should enforce array is List or Text"),
-    };
-
-    data.vars.write().pop();
-    data.dec_loop_depth();
-
-    match return_value {
-        Some(value) => Ok(value),
-        None => Ok(result),
+    let mut commands: Vec<Command> = Vec::with_capacity(args.len());
+    for arg in args {
+        let command = potential_future!(arg.to_command(data.clone())?);
+        commands.push(command);
     }
+
+    let mut final_value = Value::None;
+
+    enum Either {
+        Text(SourceStr),
+        List(List),
+    }
+
+    let mut array = arg.with(data.clone(), |value, span| match value {
+        Value::Text(source_str) => Ok(Either::Text(source_str.clone())),
+        Value::List(list) => Ok(Either::List(list.clone())),
+        _ => Err(value.conversion_err(&[ValueType::Text, ValueType::List])).span(span),
+    })?;
+
+    match array {
+        Either::Text(ref mut source_str) => {
+            let original_len = source_str.len();
+            let mut chars: Vec<(usize, Value)> = source_str
+                .char_indices()
+                .map(|(i, ch)| (i, Value::from(ch)))
+                .collect();
+            let mut owned = std::mem::take(source_str).into_owned_string();
+            let mut offset = 0;
+
+            let mut update_str = |i: usize| -> Result<(), SpannedError> {
+                let mut vars = data.vars.write();
+                let replacement = vars.remove(&item).span(item_span)?.unwrap();
+                let replacement = replacement.into_str().span(item_span)?;
+                let i = (i as isize + offset) as usize;
+                let c = owned.chars().nth(i).unwrap();
+                owned.replace_range(i..i + c.len_utf8(), &replacement);
+                offset = owned.len() as isize - original_len as isize;
+                Ok(())
+            };
+
+            'outer: for (i, element) in &mut chars {
+                {
+                    let mut vars = data.vars.write();
+                    vars.push();
+                    vars.insert(&item, Var::Mut(std::mem::take(element)))
+                        .span(item_span)?;
+                }
+
+                for command in &commands {
+                    final_value = execute_command!(command.clone(), data.clone())?;
+
+                    if data.get_break_flag() || data.get_return_flag() {
+                        data.set_break_flag(false);
+                        update_str(*i)?;
+                        break 'outer;
+                    } else if data.get_continue_flag() {
+                        update_str(*i)?;
+                        data.set_continue_flag(false);
+                        continue 'outer;
+                    }
+                }
+
+                update_str(*i)?;
+            }
+            *source_str = SourceStr::Owned(owned);
+        }
+        Either::List(ref mut list) => {
+            let update_element = |element: &mut Value| -> Result<(), SpannedError> {
+                let mut vars = data.vars.write();
+                let replacement = vars.remove(&item).span(item_span)?.unwrap();
+                *element = replacement;
+                Ok(())
+            };
+            'outer: for element in list.iter_mut() {
+                {
+                    let mut vars = data.vars.write();
+                    vars.push();
+                    vars.insert(&item, Var::Mut(std::mem::take(element)))
+                        .span(item_span)?;
+                }
+
+                for command in &commands {
+                    final_value = execute_command!(command.clone(), data.clone())?;
+
+                    if data.get_break_flag() || data.get_return_flag() {
+                        update_element(element)?;
+                        data.set_break_flag(false);
+                        break 'outer;
+                    } else if data.get_continue_flag() {
+                        update_element(element)?;
+                        data.set_continue_flag(false);
+                        continue 'outer;
+                    }
+                }
+
+                update_element(element)?;
+            }
+        }
+    }
+
+    arg.with_mut(data, |value, _| match value {
+        Value::List(list) => match array {
+            Either::Text(_) => unreachable!(),
+            Either::List(new_list) => {
+                *list = new_list;
+                Ok(())
+            }
+        },
+        Value::Text(source_str) => match array {
+            Either::Text(new_str) => {
+                *source_str = new_str;
+                Ok(())
+            }
+            Either::List(_) => unreachable!(),
+        },
+        _ => unreachable!(),
+    })?;
+
+    Ok(final_value)
 }
 
 pub const INDEX_RULES: &CommandSignature = &CommandSignature::Positional(&[
@@ -1725,17 +1697,14 @@ pub fn inc(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
         1
     };
 
-    let value = arg.with_mut(data.clone(), |value, span| match value {
+    arg.with_mut(data.clone(), |value, span| match value {
         Value::Int(value) => {
             *value += amount;
-            Ok(*value)
+            Ok(())
         }
         _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
     })?;
-    match arg.as_var_label(data) {
-        Ok(label) => Ok(Value::Var(label)),
-        Err(_) => Ok(Value::from(value)),
-    }
+    Ok(arg.take_value())
 }
 
 pub const DEC_RULES: &CommandSignature = &CommandSignature::Positional(&[
@@ -1754,17 +1723,14 @@ pub fn dec(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
         1
     };
 
-    let value = arg.with_mut(data.clone(), |value, span| match value {
+    arg.with_mut(data.clone(), |value, span| match value {
         Value::Int(value) => {
             *value -= amount;
-            Ok(*value)
+            Ok(())
         }
         _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
     })?;
-    match arg.as_var_label(data) {
-        Ok(label) => Ok(Value::Var(label)),
-        Err(_) => Ok(Value::from(value)),
-    }
+    Ok(arg.take_value())
 }
 
 pub const SCALE_RULES: &CommandSignature = &CommandSignature::Positional(&[
@@ -1773,36 +1739,50 @@ pub const SCALE_RULES: &CommandSignature = &CommandSignature::Positional(&[
 ]);
 pub const SCALE: &str = "scale";
 pub fn scale(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
-    todo!()
+    let mut command = command;
+    let mut args = command.args.iter_mut();
+    let arg = args.next().unwrap();
+    let value = args.next().unwrap();
+    let amount = value.into_float()?;
+
+    arg.with_mut(data.clone(), |value, span| match value {
+        Value::Int(i) => {
+            *value = Value::from((*i as f64) * amount);
+            Ok(())
+        }
+        Value::Float(f) => {
+            *f *= amount;
+            Ok(())
+        }
+        _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
+    })?;
+    Ok(arg.take_value())
 }
 
 pub const REDUCE_RULES: &CommandSignature = &CommandSignature::Positional(&[
     ArgRule::Mutable(ArgPos::Index(0)),
-    ArgRule::Literal(ArgPos::OptionalIndex(1)),
+    ArgRule::Literal(ArgPos::Index(1)),
 ]);
 pub const REDUCE: &str = "reduce";
 pub fn reduce(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
     let mut args = command.args.iter_mut();
     let arg = args.next().unwrap();
+    let value = args.next().unwrap();
+    let amount = value.into_float()?;
 
-    let amount = if let Some(value) = args.next() {
-        value.into_int()?
-    } else {
-        1
-    };
-
-    let value = arg.with_mut(data.clone(), |value, span| match value {
-        Value::Int(value) => {
-            *value += amount;
-            Ok(*value)
+    arg.with_mut(data.clone(), |value, span| match value {
+        Value::Int(i) => {
+            *value = Value::from((*i as f64) / amount);
+            Ok(())
+        }
+        Value::Float(f) => {
+            *f /= amount;
+            Ok(())
         }
         _ => Err(value.conversion_err(&[ValueType::Int]).span(span)),
     })?;
-    match arg.as_var_label(data) {
-        Ok(label) => Ok(Value::Var(label)),
-        Err(_) => Ok(Value::from(value)),
-    }
+    Ok(arg.take_value())
 }
 
 pub const CONTAINS_RULES: &CommandSignature = &CommandSignature::Positional(&[
@@ -2874,6 +2854,45 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn for_each_return_text() {
+        test_interpreter(
+            r#"
+                text.store("hello")
+                func.def(
+                    text.for_each(char,
+                        char.update("l")
+                        return()
+                    )
+                )
+                func()
+                text.print()
+
+            "#,
+            "lello",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn for_each_mutation() {
+        test_interpreter(
+            r#"
+                list.store([1, 2, 3])
+                func.def(
+                    list.for_each(n,
+                        list.push(n)
+                    )
+                )
+                func()
+                list.print()
+
+            "#,
+            "[1, 2, 3]",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn for_each_return_value() {
         test_interpreter(
             r#"
@@ -3092,6 +3111,16 @@ pub mod tests {
     #[tokio::test]
     async fn dec_by_x() {
         test_interpreter(r#"x.store(5) i.store(1) i.dec(x) i.print()"#, "-4").await;
+    }
+
+    #[tokio::test]
+    async fn scale() {
+        test_interpreter(r#"i.store(1) i.scale(1.5).print()"#, "1.5").await;
+    }
+
+    #[tokio::test]
+    async fn reduce() {
+        test_interpreter(r#"i.store(3) i.reduce(2).print()"#, "1.5").await;
     }
 
     #[tokio::test]

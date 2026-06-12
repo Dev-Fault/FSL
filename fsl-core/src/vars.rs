@@ -147,6 +147,17 @@ impl VarStore {
         .span(span))
     }
 
+    pub fn get_stack(&self, label: &SourceStr) -> Result<Arc<RwLock<VarMap>>, RuntimeError> {
+        for map in self.data.iter().rev() {
+            if map.read().contains_key(label) {
+                return Ok(map.clone());
+            }
+        }
+        Err(RuntimeError::NonExistantVar {
+            label: label.to_string(),
+        })
+    }
+
     pub fn get_clone(&self, label: &SourceStr) -> Result<Value, RuntimeError> {
         for map in self.data.iter().rev() {
             if let Some(var) = map.read().get(label) {
