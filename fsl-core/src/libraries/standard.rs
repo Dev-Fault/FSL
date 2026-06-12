@@ -2084,6 +2084,7 @@ pub fn is_number(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     arg.with(data, |value, _| match value {
         Value::Int(_) => Ok(Value::from(true)),
         Value::Float(_) => Ok(Value::from(true)),
+        Value::Text(text) => Ok(Value::from(FslInterpreter::parse_number(&text).is_ok())),
         _ => Ok(Value::from(false)),
     })
 }
@@ -3529,6 +3530,14 @@ pub mod tests {
         test_interpreter(r#"is_number(1).print()"#, "true").await;
         test_interpreter(r#"is_number(1.012).print()"#, "true").await;
         test_interpreter(r#"is_number(false).print()"#, "false").await;
+    }
+
+    #[tokio::test]
+    async fn is_number_text() {
+        test_interpreter(r#"is_number("1").print()"#, "true").await;
+        test_interpreter(r#"is_number("1.0").print()"#, "true").await;
+        test_interpreter(r#"is_number("d").print()"#, "false").await;
+        test_interpreter(r#"is_number("1.0.0").print()"#, "false").await;
     }
 
     #[tokio::test]
