@@ -2240,6 +2240,9 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
     data.vars.write().push();
     data.push_def(command_label.clone());
 
+    dbg!(&data.ctx.def_stack.lock().unwrap());
+    dbg!(&data.def_store.read());
+
     let Some(UserDeclaration {
         definition: Some(def),
         ..

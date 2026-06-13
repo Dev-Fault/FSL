@@ -337,11 +337,14 @@ impl FslInterpreter {
             }
         }
         if expression.name.as_str() == DEF {
-            let result = Self::process_expression(data.clone(), defs, expression.clone()).await;
-            if let Ok(Value::Command(command)) = result {
-                def(*command, data.clone())
-                    .await
-                    .into_interpreter_error(data.clone())?;
+            let result = Self::process_expression(data.clone(), defs, expression.clone()).await?;
+            match result {
+                Value::Command(command) => {
+                    def(*command, data.clone())
+                        .await
+                        .into_interpreter_error(data.clone())?;
+                }
+                _ => unreachable!("process_expression should only return command"),
             }
         }
         Ok(())
