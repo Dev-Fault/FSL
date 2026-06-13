@@ -452,7 +452,6 @@ impl FslInterpreter {
 
                 Ok(Value::Command(Box::new(command)))
             } else {
-                println!("In lib: {:?}", &expression);
                 Err(RuntimeError::NonExistantCommand {
                     label: expression.name.to_string(),
                 }
