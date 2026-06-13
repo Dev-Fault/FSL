@@ -2237,9 +2237,12 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         ..
     }) = data.find_def(&command_label)
     else {
-        println!("couldn't find {}", command_label);
-        todo!()
+        return Err(RuntimeError::NonExistantCommand {
+            label: command_label.into_owned_string(),
+        })
+        .span(command.span);
     };
+
     let (mut parameter_labels, commands) = { (def.parameters, def.commands) };
 
     if args.len() != parameter_labels.len() {
