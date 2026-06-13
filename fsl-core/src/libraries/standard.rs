@@ -1112,6 +1112,8 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
         _ => Err(value.conversion_err(&[ValueType::Text, ValueType::List])).span(span),
     })?;
 
+    data.vars.write().push();
+
     match array {
         Either::Text(ref mut source_str) => {
             let original_len = source_str.len();
@@ -1123,8 +1125,12 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
             let mut offset = 0;
 
             let mut update_str = |i: usize| -> Result<(), SpannedError> {
-                let mut vars = data.vars.write();
-                let replacement = vars.remove(&item).span(item_span)?.unwrap();
+                let replacement = data
+                    .vars
+                    .write()
+                    .remove(&item)
+                    .span(item_span)?
+                    .unwrap_or(Value::None);
                 let replacement = replacement.into_str().span(item_span)?;
                 let i = (i as isize + offset) as usize;
                 let c = owned.chars().nth(i).unwrap();
@@ -1134,12 +1140,10 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
             };
 
             'outer: for (i, element) in &mut chars {
-                {
-                    let mut vars = data.vars.write();
-                    vars.push();
-                    vars.insert(&item, Var::Mut(std::mem::take(element)))
-                        .span(item_span)?;
-                }
+                data.vars
+                    .write()
+                    .insert(&item, Var::Mut(std::mem::take(element)))
+                    .span(item_span)?;
 
                 for command in &commands {
                     final_value = execute_command!(command.clone(), data.clone())?;
@@ -1161,18 +1165,20 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
         }
         Either::List(ref mut list) => {
             let update_element = |element: &mut Value| -> Result<(), SpannedError> {
-                let mut vars = data.vars.write();
-                let replacement = vars.remove(&item).span(item_span)?.unwrap();
+                let replacement = data
+                    .vars
+                    .write()
+                    .remove(&item)
+                    .span(item_span)?
+                    .unwrap_or(Value::None);
                 *element = replacement;
                 Ok(())
             };
             'outer: for element in list.iter_mut() {
-                {
-                    let mut vars = data.vars.write();
-                    vars.push();
-                    vars.insert(&item, Var::Mut(std::mem::take(element)))
-                        .span(item_span)?;
-                }
+                data.vars
+                    .write()
+                    .insert(&item, Var::Mut(std::mem::take(element)))
+                    .span(item_span)?;
 
                 for command in &commands {
                     final_value = execute_command!(command.clone(), data.clone())?;
@@ -1192,6 +1198,8 @@ pub async fn for_each(command: Command, data: Arc<InterpreterData>) -> Result<Va
             }
         }
     }
+
+    data.vars.write().pop();
 
     arg.with_mut(data, |value, _| match value {
         Value::List(list) => match array {
@@ -2237,6 +2245,7 @@ pub async fn run(command: Command, data: Arc<InterpreterData>) -> Result<Value, 
         ..
     }) = data.find_def(&command_label)
     else {
+        println!("In run {:?}", &command);
         return Err(RuntimeError::NonExistantCommand {
             label: command_label.into_owned_string(),
         })
