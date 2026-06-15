@@ -1162,6 +1162,60 @@ mod tests {
     }
 
     #[test]
+    fn parse_property() {
+        let parser = Parser::new("player.weapon.name.damage.add()");
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            add {
+                Path(
+                    "player",
+                    [
+                        "weapon",
+                        "name",
+                        "damage"
+                    ]
+                ),
+            }
+        }];
+        println!("==GOT==\n");
+        dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
+        assert!(expected == parsed)
+    }
+
+    /*
+    #[test]
+    fn parse_property_chain() {
+        let parser = Parser::new(
+            "
+            get_average_attack_damage.def(attack,
+		        return(attack.damage.max.add(attack.damage.min).div(2))
+	        )
+            ",
+        );
+        let parsed = parser.parse().unwrap().to_tree_vec();
+        let expected = vec![tree! {
+            add {
+                Path(
+                    "player",
+                    [
+                        "weapon",
+                        "name",
+                        "damage"
+                    ]
+                ),
+            }
+        }];
+        println!("==GOT==\n");
+        dbg!(&parsed);
+        println!("==EXPECTED==\n");
+        dbg!(&expected);
+        assert!(expected == parsed)
+    }
+    */
+
+    #[test]
     fn parse_simple_map() {
         let parser = Parser::new("map.store([value_one: 1, value_two: 2, value_three: [1, 2, 3]])");
         let parsed = parser.parse().unwrap().to_tree_vec();

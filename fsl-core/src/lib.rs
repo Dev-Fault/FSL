@@ -367,7 +367,6 @@ impl FslInterpreter {
             let mut def_stack = data.ctx.def_stack.lock().unwrap();
             def_stack.clear();
         }
-
         for expression in expressions.unfiltered {
             let result = Self::interpret_command(data.clone(), &defs, expression).await;
             if let Err(e) = result {
@@ -2273,6 +2272,28 @@ mod interpreter {
             "4",
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn inner_def_in_command() {
+        assert_fsl!(
+            r#"
+                generate_character_name.def(
+                	random_name.def(
+                		random_entry([
+                		    "1",
+                		    "1"
+                		])
+                	)
+                
+                	random_entry([
+                		random_name()
+                	])
+                )
+                generate_character_name().print()
+            "#,
+            "1"
+        );
     }
 
     #[tokio::test]

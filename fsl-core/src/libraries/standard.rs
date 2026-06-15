@@ -2134,7 +2134,7 @@ pub fn random_range(command: Command, _: Arc<InterpreterData>) -> Result<Value, 
 }
 
 pub const RANDOM_ENTRY_RULES: &CommandSignature =
-    &CommandSignature::Positional(&[ArgRule::Mutable(ArgPos::Index(0))]);
+    &CommandSignature::Positional(&[ArgRule::Literal(ArgPos::Index(0))]);
 pub const RANDOM_ENTRY: &str = "random_entry";
 pub fn random_entry(command: Command, data: Arc<InterpreterData>) -> Result<Value, SpannedError> {
     let mut command = command;
