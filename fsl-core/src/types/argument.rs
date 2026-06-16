@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::{
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
-    potential_future,
     potential_futures::{PotentialFuture, PotentialFutureResult, SpannedPotentialFutureResult},
     source_str::SourceStr,
     span::Span,
@@ -759,24 +758,6 @@ impl Argument {
         value
             .map_result(move |v| v.to_inner(data))
             .span_future(self.span)
-    }
-
-    pub async fn to_list_indexer(
-        &mut self,
-        data: Arc<InterpreterData>,
-    ) -> Result<Vec<usize>, SpannedError> {
-        let kind = std::mem::take(&mut self.kind);
-        let value = potential_future!(kind.into_value(self.span, data.clone())?);
-        value.to_list_indexer(data.clone()).await.span(self.span)
-    }
-
-    pub async fn to_map_indexer(
-        &mut self,
-        data: Arc<InterpreterData>,
-    ) -> Result<Vec<SourceStr>, SpannedError> {
-        let kind = std::mem::take(&mut self.kind);
-        let value = potential_future!(kind.into_value(self.span, data.clone())?);
-        value.to_map_indexer(data.clone()).await.span(self.span)
     }
 
     pub fn to_command(

@@ -7,7 +7,7 @@ use std::{
 use crate::{
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
-    potential_future,
+    potential_futures::{PotentialFuture, PotentialFutureResult},
     source_str::SourceStr,
     span::Span,
     types::value::{Value, ValueError},
@@ -46,15 +46,33 @@ impl PartialEq for Map {
 }
 
 impl Map {
-    pub async fn resolve(self, data: Arc<InterpreterData>) -> Result<Map, ValueError> {
+    pub fn resolve(self, data: Arc<InterpreterData>) -> PotentialFutureResult<Map, ValueError> {
         match self {
-            Map::Resolved(_) => Ok(self),
+            Map::Resolved(_) => Ok(PotentialFuture::Sync(self)),
             Map::Unresolved(arc) => {
+                let mut pending_ops: Vec<_> = Vec::new();
                 let mut map = Arc::unwrap_or_clone(arc);
-                for (_, value) in map.iter_mut() {
-                    *value = potential_future!(std::mem::take(value).to_inner(data.clone())?);
+                for (key, value) in map.iter_mut() {
+                    let inner_value = std::mem::take(value).to_inner(data.clone())?;
+                    match inner_value {
+                        PotentialFuture::Sync(resolved_value) => {
+                            *value = resolved_value;
+                        }
+                        PotentialFuture::Async(pin) => {
+                            pending_ops.push((key.clone(), pin));
+                        }
+                    }
                 }
-                Ok(Map::Resolved(Arc::new(map)))
+                if pending_ops.len() > 0 {
+                    Ok(PotentialFuture::Async(Box::pin(async move {
+                        for (key, op) in pending_ops {
+                            map.insert(key, op.await?);
+                        }
+                        Ok(Map::Resolved(Arc::new(map)))
+                    })))
+                } else {
+                    Ok(PotentialFuture::Sync(Map::Resolved(Arc::new(map))))
+                }
             }
         }
     }

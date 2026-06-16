@@ -6,7 +6,7 @@ use std::{
 use crate::{
     data::InterpreterData,
     error::{RuntimeError, SpanError, SpannedError},
-    potential_future,
+    potential_futures::{PotentialFuture, PotentialFutureResult},
     span::Span,
     types::value::{Value, ValueError},
 };
@@ -57,15 +57,33 @@ impl IntoIterator for List {
 }
 
 impl List {
-    pub async fn resolve(self, data: Arc<InterpreterData>) -> Result<List, ValueError> {
+    pub fn resolve(self, data: Arc<InterpreterData>) -> PotentialFutureResult<List, ValueError> {
         match self {
-            List::Resolved(_) => Ok(self),
+            List::Resolved(_) => Ok(PotentialFuture::Sync(self)),
             List::Unresolved(arc) => {
+                let mut pending_ops: Vec<_> = Vec::new();
                 let mut values = Arc::unwrap_or_clone(arc);
-                for value in values.iter_mut() {
-                    *value = potential_future!(std::mem::take(value).to_inner(data.clone())?);
+                for (i, value) in values.iter_mut().enumerate() {
+                    let inner_value = std::mem::take(value).to_inner(data.clone())?;
+                    match inner_value {
+                        PotentialFuture::Sync(resolved_value) => {
+                            *value = resolved_value;
+                        }
+                        PotentialFuture::Async(pin) => {
+                            pending_ops.push((i, pin));
+                        }
+                    }
                 }
-                Ok(List::Resolved(Arc::new(values)))
+                if pending_ops.len() > 0 {
+                    Ok(PotentialFuture::Async(Box::pin(async move {
+                        for (i, op) in pending_ops {
+                            values[i] = op.await?;
+                        }
+                        Ok(List::Resolved(Arc::new(values)))
+                    })))
+                } else {
+                    Ok(PotentialFuture::Sync(List::Resolved(Arc::new(values))))
+                }
             }
         }
     }

@@ -3,12 +3,11 @@ use std::{pin::Pin, sync::Arc};
 use crate::{
     FslInterpreter, InterpreterData,
     error::{RuntimeError, SpannedError, ToSpannedError},
-    potential_future,
     potential_futures::{PotentialFuture, PotentialFutureResult},
     source_str::SourceStr,
     span::Span,
     types::{
-        LIST_KEY, MAP_KEY, ValueType,
+        ValueType,
         argument::Argument,
         command::Command,
         list::List,
@@ -487,12 +486,18 @@ impl Value {
             Value::Float(value) => Ok(PotentialFuture::Sync(value.to_string().into())),
             Value::Text(value) => Ok(PotentialFuture::Sync(value)),
             Value::Bool(value) => Ok(PotentialFuture::Sync(value.to_string().into())),
-            Value::List(value) => Ok(PotentialFuture::Async(Box::pin(async move {
-                Ok(value.resolve(data).await?.to_string().into())
-            }))),
-            Value::Map(value) => Ok(PotentialFuture::Async(Box::pin(async move {
-                Ok(value.resolve(data).await?.to_string().into())
-            }))),
+            Value::List(value) => match value.resolve(data)? {
+                PotentialFuture::Sync(list) => Ok(PotentialFuture::Sync(list.to_string().into())),
+                PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
+                    Ok(pin.await?.to_string().into())
+                }))),
+            },
+            Value::Map(value) => match value.resolve(data)? {
+                PotentialFuture::Sync(map) => Ok(PotentialFuture::Sync(map.to_string().into())),
+                PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
+                    Ok(pin.await?.to_string().into())
+                }))),
+            },
             Value::None => Err(self.conversion_err_to_type(to_type).into()),
             Value::Command(command) => command
                 .execute(data.clone())?
@@ -513,9 +518,7 @@ impl Value {
             | Value::Bool(_)
             | Value::Map(_)
             | Value::None => Err(self.conversion_err_to_type(to_type).into()),
-            Value::List(list) => Ok(PotentialFuture::Async(Box::pin(async move {
-                Ok(list.resolve(data).await?)
-            }))),
+            Value::List(list) => list.resolve(data),
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_list(data)),
@@ -535,9 +538,7 @@ impl Value {
             | Value::Bool(_)
             | Value::List(_)
             | Value::None => Err(self.conversion_err_to_type(to_type).into()),
-            Value::Map(map) => Ok(PotentialFuture::Async(Box::pin(async move {
-                Ok(map.resolve(data).await?)
-            }))),
+            Value::Map(map) => map.resolve(data),
             Value::Command(command) => command
                 .execute(data.clone())?
                 .map_result(|r| r.to_map(data)),
@@ -613,26 +614,34 @@ impl Value {
                     Err(self.conversion_err(valid_types).into())
                 }
             }
-            Value::List(_) => {
-                if valid_types.contains(&self.to_type()) {
-                    Ok(PotentialFuture::Async(Box::pin(async move {
-                        let result = self.to_list(data.clone())?;
-                        let list = potential_future!(result);
-                        Ok(Value::List(list))
-                    })))
+            Value::List(list) => {
+                if valid_types.contains(&ValueType::List) {
+                    match list.resolve(data)? {
+                        PotentialFuture::Sync(list) => Ok(PotentialFuture::Sync(Value::List(list))),
+                        PotentialFuture::Async(pin) => {
+                            Ok(PotentialFuture::Async(Box::pin(async move {
+                                let list = pin.await?;
+                                Ok(Value::List(list))
+                            })))
+                        }
+                    }
                 } else {
-                    Err(self.conversion_err(valid_types).into())
+                    Err(ValueType::List.conversion_errs(valid_types).into())
                 }
             }
-            Value::Map(_) => {
-                if valid_types.contains(&self.to_type()) {
-                    Ok(PotentialFuture::Async(Box::pin(async move {
-                        let result = self.to_map(data.clone())?;
-                        let map = potential_future!(result);
-                        Ok(Value::Map(map))
-                    })))
+            Value::Map(map) => {
+                if valid_types.contains(&ValueType::Map) {
+                    match map.resolve(data)? {
+                        PotentialFuture::Sync(map) => Ok(PotentialFuture::Sync(Value::Map(map))),
+                        PotentialFuture::Async(pin) => {
+                            Ok(PotentialFuture::Async(Box::pin(async move {
+                                let map = pin.await?;
+                                Ok(Value::Map(map))
+                            })))
+                        }
+                    }
                 } else {
-                    Err(self.conversion_err(valid_types).into())
+                    Err(ValueType::Map.conversion_errs(valid_types).into())
                 }
             }
             Value::Var(label) => {
@@ -661,16 +670,20 @@ impl Value {
             Value::Float(_) => Ok(PotentialFuture::Sync(self)),
             Value::Bool(_) => Ok(PotentialFuture::Sync(self)),
             Value::Text(_) => Ok(PotentialFuture::Sync(self)),
-            Value::List(_) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let result = self.to_list(data.clone())?;
-                let list = potential_future!(result);
-                Ok(Value::List(list))
-            }))),
-            Value::Map(_) => Ok(PotentialFuture::Async(Box::pin(async move {
-                let result = self.to_map(data.clone())?;
-                let map = potential_future!(result);
-                Ok(Value::Map(map))
-            }))),
+            Value::List(list) => match list.resolve(data)? {
+                PotentialFuture::Sync(list) => Ok(PotentialFuture::Sync(Value::List(list))),
+                PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
+                    let list = pin.await?;
+                    Ok(Value::List(list))
+                }))),
+            },
+            Value::Map(map) => match map.resolve(data)? {
+                PotentialFuture::Sync(map) => Ok(PotentialFuture::Sync(Value::Map(map))),
+                PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
+                    let map = pin.await?;
+                    Ok(Value::Map(map))
+                }))),
+            },
             Value::Var(label) => {
                 let value = data.vars.read().get_clone(&label)?;
                 value.to_inner(data)
@@ -682,47 +695,36 @@ impl Value {
         }
     }
 
-    // Attempts to convert value to a value that can be used to access indices in a map or list
-    pub fn to_list_indexer(
+    /// Reduces to either a literal value or a var
+    pub fn to_mutable(
         self,
         data: Arc<InterpreterData>,
-    ) -> ValueResult<Vec<usize>, ValueError> {
-        Box::pin(async move {
-            let accesor = potential_future!(self.to_inner_checked(LIST_KEY, data.clone())?);
-
-            match accesor {
-                Value::List(values) => {
-                    let values = values.resolve(data.clone()).await?.take();
-                    let mut indices = Vec::with_capacity(values.len());
-                    for value in values {
-                        indices.push(potential_future!(value.to_usize(data.clone())?));
-                    }
-                    Ok(indices)
-                }
-                _ => Ok(vec![potential_future!(accesor.to_usize(data.clone())?)]),
-            }
-        })
-    }
-
-    pub fn to_map_indexer(
-        self,
-        data: Arc<InterpreterData>,
-    ) -> ValueResult<Vec<SourceStr>, ValueError> {
-        Box::pin(async move {
-            let accesor = potential_future!(self.to_inner_checked(MAP_KEY, data.clone())?);
-
-            match accesor {
-                Value::List(values) => {
-                    let values = values.resolve(data.clone()).await?.take();
-                    let mut indices = Vec::with_capacity(values.len());
-                    for value in values {
-                        indices.push(potential_future!(value.to_text(data.clone())?));
-                    }
-                    Ok(indices)
-                }
-                _ => Ok(vec![potential_future!(accesor.to_text(data.clone())?)]),
-            }
-        })
+    ) -> PotentialFutureResult<Value, ValueError> {
+        match self {
+            Value::Int(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Float(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Bool(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Text(_) => Ok(PotentialFuture::Sync(self)),
+            Value::List(list) => match list.resolve(data)? {
+                PotentialFuture::Sync(list) => Ok(PotentialFuture::Sync(Value::List(list))),
+                PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
+                    let list = pin.await?;
+                    Ok(Value::List(list))
+                }))),
+            },
+            Value::Map(map) => match map.resolve(data)? {
+                PotentialFuture::Sync(map) => Ok(PotentialFuture::Sync(Value::Map(map))),
+                PotentialFuture::Async(pin) => Ok(PotentialFuture::Async(Box::pin(async move {
+                    let map = pin.await?;
+                    Ok(Value::Map(map))
+                }))),
+            },
+            Value::Var(_) => Ok(PotentialFuture::Sync(self)),
+            Value::Command(command) => command
+                .execute(data.clone())?
+                .map_result(|r| r.to_mutable(data)),
+            Value::None => Ok(PotentialFuture::Sync(self)),
+        }
     }
 
     pub fn to_command(self) -> Result<Command, ValueError> {

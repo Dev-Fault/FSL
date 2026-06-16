@@ -183,14 +183,14 @@ impl ValueType {
         }
     }
 
-    pub fn gen_conversion_err_to_type(&self, to: ValueType) -> RuntimeError {
+    pub fn conversion_err(&self, to: ValueType) -> RuntimeError {
         RuntimeError::InvalidConversion {
             from: self.to_string(),
             to: vec![to],
         }
     }
 
-    pub fn gen_conversion_err_to_types(&self, to: &[ValueType]) -> RuntimeError {
+    pub fn conversion_errs(&self, to: &[ValueType]) -> RuntimeError {
         RuntimeError::InvalidConversion {
             from: self.to_string(),
             to: to.to_vec(),

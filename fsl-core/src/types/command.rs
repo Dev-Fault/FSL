@@ -5,9 +5,9 @@ use futures::future::BoxFuture;
 
 use crate::{
     InterpreterData,
-    error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
+    error::{RuntimeError, SpannedError, ToSpannedError},
     potential_future,
-    potential_futures::{PotentialFuture, PotentialFutureResult},
+    potential_futures::{PotentialFuture, PotentialFutureResult, SpannedPotentialFutureResult},
     source_str::SourceStr,
     span::Span,
     types::{
@@ -379,23 +379,18 @@ impl Command {
         mut self,
         data: Arc<InterpreterData>,
     ) -> PotentialFutureResult<Self, SpannedError> {
-        enum PendingOp {
-            Literal(BoxFuture<'static, Result<Value, SpannedError>>),
-            Command(BoxFuture<'static, PotentialFutureResult<Value, SpannedError>>),
-            RootCommand(BoxFuture<'static, Result<Value, SpannedError>>),
-        }
-        let mut async_ops: Vec<_> = Vec::new();
+        let mut pending_ops: Vec<_> = Vec::new();
         for (i, arg) in self.args.iter_mut().enumerate() {
             match arg.resolve_to {
                 ArgRule::Literal(_) => {
-                    let value = match arg.to_inner(data.clone())? {
-                        PotentialFuture::Sync(value) => value,
+                    match arg.to_inner(data.clone())? {
+                        PotentialFuture::Sync(value) => {
+                            arg.replace_value(value);
+                        }
                         PotentialFuture::Async(pin) => {
-                            async_ops.push((i, (PendingOp::Literal(pin))));
-                            continue;
+                            pending_ops.push((i, pin));
                         }
                     };
-                    arg.replace_value(value);
                 }
                 ArgRule::Raw(_) => {
                     continue;
@@ -403,69 +398,35 @@ impl Command {
                 ArgRule::Mutable(_) => {
                     let span = arg.span;
                     if let ArgumentKind::Accessor(accessor) = &mut arg.kind {
-                        if accessor.root.value.is_command() {
-                            let root_value = std::mem::take(&mut accessor.root.value);
-                            let command = root_value.to_command().span(span)?;
-                            match command.execute(data.clone())? {
-                                PotentialFuture::Sync(value) => {
-                                    accessor.root.value = value;
-                                }
-                                PotentialFuture::Async(pin) => {
-                                    async_ops.push((
-                                        i,
-                                        PendingOp::RootCommand(Box::pin(async move {
-                                            let value = pin.await?;
-                                            Ok(value)
-                                        })),
-                                    ));
-                                }
+                        let root_value = std::mem::take(&mut accessor.root.value);
+                        match root_value.to_mutable(data.clone()).span_future(span)? {
+                            PotentialFuture::Sync(value) => {
+                                accessor.root.value = value;
                             }
-                        } else {
-                            arg.resolve_to = ArgRule::Raw(());
+                            PotentialFuture::Async(pin) => {
+                                pending_ops.push((i, pin));
+                            }
                         }
                     } else {
                         let value = arg.take_value();
-                        if value.is_command() {
-                            let data_clone = data.clone();
-                            async_ops.push((
-                                i,
-                                PendingOp::Command(Box::pin(async move {
-                                    let command = value.to_command().span(span)?;
-                                    Ok(command.execute(data_clone)?)
-                                })),
-                            ));
-                            continue;
+                        match value.to_mutable(data.clone()).span_future(span)? {
+                            PotentialFuture::Sync(value) => {
+                                arg.replace_value(value);
+                            }
+                            PotentialFuture::Async(pin) => {
+                                pending_ops.push((i, pin));
+                            }
                         }
-                        arg.replace_value(value);
                     }
                 }
             }
         }
-        if async_ops.len() > 0 {
+        if pending_ops.len() > 0 {
             Ok(PotentialFuture::Async(Box::pin(async move {
-                for (i, op) in async_ops {
-                    match op {
-                        PendingOp::Literal(pin) => {
-                            let arg = &mut self.args[i];
-                            let value = pin.await?;
-                            arg.replace_value(value);
-                        }
-                        PendingOp::Command(pin) => {
-                            let arg = &mut self.args[i];
-                            let value = potential_future!(pin.await?);
-                            arg.replace_value(value);
-                        }
-                        PendingOp::RootCommand(pin) => {
-                            let arg = &mut self.args[i];
-                            let value = pin.await?;
-                            match &mut arg.kind {
-                                ArgumentKind::Value(_) => unreachable!(),
-                                ArgumentKind::Accessor(accessor) => {
-                                    accessor.root.value = value;
-                                }
-                            }
-                        }
-                    }
+                for (i, op) in pending_ops {
+                    let arg = &mut self.args[i];
+                    let value = op.await?;
+                    arg.replace_value(value);
                 }
                 Ok(self)
             })))
