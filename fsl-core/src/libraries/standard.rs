@@ -18,7 +18,7 @@ use crate::{
     span::Span,
     types::{
         ANY, COLLECTION, INDEXABLE, MATH_RULES, NO_ARGS, NUMBER, ValueType,
-        argument::Argument,
+        argument::{Argument, Key},
         command::{ArgPos, ArgRule, Command, CommandSignature, ExpectedArgs},
         list::List,
         map::FslMap,
@@ -1242,7 +1242,7 @@ pub fn index(command: Command, data: Arc<InterpreterData>) -> Result<Value, Span
             }
         }
         Value::List(list) => {
-            let (i_span, i) = (i.span, i.into_list_indexer()?);
+            let (i_span, i) = (i.span, i.into_keys()?);
             list.get_nested_clone(&i, i_span)
         }
         _ => Err(value.conversion_err(INDEXABLE).span(span))?,
@@ -1264,12 +1264,12 @@ pub fn get(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
         let key = args.next().unwrap();
         arg.with(data.clone(), |value, span| match value {
             Value::Map(map) => {
-                let (key_span, key) = (key.span, key.into_map_indexer()?);
+                let (key_span, key) = (key.span, key.into_keys()?);
                 let get = map.get_nested_clone(&key, key_span)?;
                 Ok(get)
             }
             Value::List(list) => {
-                let (i_span, i) = (key.span, key.into_list_indexer()?);
+                let (i_span, i) = (key.span, key.into_keys()?);
                 let get = list.get_nested_clone(&i, i_span)?;
                 Ok(get)
             }
@@ -1307,12 +1307,12 @@ pub fn set(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spanne
 
         arg.with_mut(data.clone(), |value, span| match value {
             Value::Map(map) => {
-                let key = key.into_map_indexer()?;
+                let key = key.into_keys()?;
                 let to_set = map.set_nested(&key, to_set.take_value(), span)?;
                 Ok(to_set)
             }
             Value::List(list) => {
-                let key = key.into_list_indexer()?;
+                let key = key.into_keys()?;
                 let to_set = list.set_nested(&key, to_set.take_value(), span)?;
                 Ok(to_set)
             }
@@ -1384,11 +1384,11 @@ pub fn remove(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spa
                 Ok(Value::from(removed))
             }
             Value::List(list) => {
-                let removed = list.remove_nested(&indexer.into_list_indexer()?, span)?;
+                let removed = list.remove_nested(&indexer.into_keys()?, span)?;
                 Ok(removed)
             }
             Value::Map(map) => {
-                let removed = map.remove_nested(&indexer.into_map_indexer()?, span)?;
+                let removed = map.remove_nested(&indexer.into_keys()?, span)?;
                 Ok(removed)
             }
             _ => Err(value.conversion_err(&COLLECTION).span(span)),
@@ -1426,8 +1426,8 @@ pub fn swap(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spann
             Ok(())
         }
         Value::List(list) => {
-            let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_list_indexer()?);
-            let (b_pos_span, b_pos) = (b_pos.span, b_pos.into_list_indexer()?);
+            let (a_pos_span, a_pos) = (a_pos.span, a_pos.into_keys()?);
+            let (b_pos_span, b_pos) = (b_pos.span, b_pos.into_keys()?);
             let mut tmp = std::mem::take(list.get_nested_mut(&a_pos, span)?);
             let b = list.get_nested_mut(&b_pos, a_pos_span)?;
             std::mem::swap(b, &mut tmp);
@@ -1473,14 +1473,14 @@ pub fn replace(command: Command, data: Arc<InterpreterData>) -> Result<Value, Sp
             }
         }
         Value::List(list) => {
-            let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
+            let (i_span, i) = (indexer.span, indexer.into_keys()?);
             let replacement = replacement.take_value();
             let current = list.get_nested_mut(&i, i_span)?;
             let old = std::mem::replace(current, replacement);
             Ok(old)
         }
         Value::Map(map) => {
-            let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
+            let (i_span, i) = (indexer.span, indexer.into_keys()?);
             let replacement = replacement.take_value();
             let current = map.get_nested_mut(&i, i_span)?;
             let old = std::mem::replace(current, replacement);
@@ -1518,13 +1518,13 @@ pub fn insert(command: Command, data: Arc<InterpreterData>) -> Result<Value, Spa
             }
         }
         Value::List(list) => {
-            let (i_span, i) = (indexer.span, indexer.into_list_indexer()?);
+            let (i_span, i) = (indexer.span, indexer.into_keys()?);
             let to_insert = to_insert.take_value();
             list.insert_nested(&i, to_insert, i_span)?;
             Ok(())
         }
         Value::Map(map) => {
-            let (i_span, i) = (indexer.span, indexer.into_map_indexer()?);
+            let (i_span, i) = (indexer.span, indexer.into_keys()?);
             let to_insert = to_insert.take_value();
             map.insert_nested(&i, to_insert, i_span)?;
             Ok(())
@@ -1620,25 +1620,26 @@ pub fn range_replace(command: Command, data: Arc<InterpreterData>) -> Result<Val
     let mut command = command;
     let mut args = command.args.iter_mut();
     let text = args.next().unwrap();
-    let range = args.next().unwrap().into_list_indexer()?;
+    let range = args.next().unwrap().into_keys()?;
     let with = args.next().unwrap().into_str()?;
-
-    if range.len() != 2 {
-        return Err(RuntimeError::IndexOutOfBounds.span(command.span));
-    } else if range[0] > range[1] {
-        return Err(RuntimeError::InvalidRange.span(command.span));
-    }
+    let range = match (range.get(0), range.get(1)) {
+        (Some(Key::Index(l)), Some(Key::Index(r))) => *l..*r,
+        _ => {
+            return Err(RuntimeError::InvalidRange.span(command.span));
+        }
+    };
 
     text.with_mut(data.clone(), |value, span| match value {
         Value::Text(source_str) => {
-            if !source_str.is_char_boundary(range[0]) || !source_str.is_char_boundary(range[1]) {
+            if !source_str.is_char_boundary(range.start) || !source_str.is_char_boundary(range.end)
+            {
                 return Err(RuntimeError::InvalidArgument(
                     "slice of text must lie within char boundries".to_string(),
                 )
                 .span(command.span));
             }
             let mut string = source_str.to_string();
-            string.replace_range(range[0]..range[1], &with);
+            string.replace_range(range, &with);
             *value = Value::from(string);
             Ok(())
         }
@@ -5022,14 +5023,25 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_key() {
+    async fn invalid_key_list() {
         let err = test_interpreter_err_type(
             r#"
                 index([1, add(1, 1), 3], ["one"]).print()
             "#,
         )
         .await;
-        assert_runtime_err!(err, RuntimeError::InvalidConversion { .. })
+        assert_runtime_err!(err, RuntimeError::NotAccessible { .. })
+    }
+
+    #[tokio::test]
+    async fn invalid_key_map() {
+        let err = test_interpreter_err_type(
+            r#"
+                get([test: 1], 1).print()
+            "#,
+        )
+        .await;
+        assert_runtime_err!(err, RuntimeError::NotAccessible { .. })
     }
 
     #[tokio::test]

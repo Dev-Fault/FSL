@@ -193,6 +193,10 @@ pub enum RuntimeError {
     NotAMap {
         key: String,
     },
+    NotAccessible {
+        value: String,
+        key: String,
+    },
     FailedParse {
         value: String,
         valid_types: Vec<ValueType>,
@@ -358,6 +362,9 @@ impl std::fmt::Display for RuntimeError {
                 "invalid index for `{}` should be `{}`",
                 being_indexed, should_be
             ),
+            RuntimeError::NotAccessible { value, key } => {
+                &format!("value `{value}` is not accessible with key `{key}`")
+            }
         };
 
         write!(f, "{}", output)

@@ -2776,6 +2776,25 @@ mod interpreter {
     }
 
     #[tokio::test]
+    async fn mixed_list_map_access() {
+        assert_fsl!(
+            r#"
+            map.store([
+                thing: "thing",
+                thing2: [1,
+                    [
+                    thing3: "thing3",
+                    list: ["list", "list2"]
+                    ]
+                ]
+            ])
+            map.thing2.1.thing3.print()
+            "#,
+            "thing3"
+        );
+    }
+
+    #[tokio::test]
     async fn sizes() {
         dbg!(size_of::<i64>());
         dbg!(size_of::<f64>());

@@ -33,14 +33,33 @@ pub struct Accessor {
     pub segments: Vec<AccessorSegment>,
 }
 
+#[derive(Debug, Clone)]
+pub enum Key {
+    String(SourceStr),
+    Index(usize),
+}
+
+impl std::fmt::Display for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Key::String(source_str) => {
+                write!(f, "{}", source_str)
+            }
+            Key::Index(i) => {
+                write!(f, "{}", i)
+            }
+        }
+    }
+}
+
 pub enum Indexer {
-    List(Vec<usize>),
+    List(Vec<Key>),
     Text(usize),
-    Map(Vec<SourceStr>),
+    Map(Vec<Key>),
 }
 
 impl Indexer {
-    pub fn to_list_indexer(self) -> Result<Vec<usize>, RuntimeError> {
+    pub fn to_list_indexer(self) -> Result<Vec<Key>, RuntimeError> {
         match self {
             Indexer::List(items) => Ok(items),
             _ => Err(RuntimeError::InvalidIndex {
@@ -50,7 +69,7 @@ impl Indexer {
         }
     }
 
-    pub fn to_map_indexer(self) -> Result<Vec<SourceStr>, RuntimeError> {
+    pub fn to_map_indexer(self) -> Result<Vec<Key>, RuntimeError> {
         match self {
             Indexer::Map(items) => Ok(items),
             _ => Err(RuntimeError::InvalidIndex {
@@ -359,30 +378,34 @@ impl Accessor {
             ValueType::Map => {
                 let mut indexer = Vec::with_capacity(self.segments.len());
                 for segment in &self.segments {
-                    let key = match &segment.value {
-                        Value::Text(text) => text.clone(),
-                        Value::Var(label) => label.clone(),
-                        _ => segment.value.clone().into_str().span(segment.span)?,
+                    match &segment.value {
+                        Value::Text(text) => indexer.push(Key::String(text.clone())),
+                        Value::Var(label) => indexer.push(Key::String(label.clone())),
+                        Value::Int(_) => indexer.push(Key::Index(
+                            segment.value.clone().into_usize().span(segment.span)?,
+                        )),
+                        _ => {
+                            let str = segment.value.clone().into_str().span(segment.span)?;
+                            indexer.push(Key::String(str));
+                        }
                     };
-                    indexer.push(key);
                 }
                 Ok(Indexer::Map(indexer))
             }
             ValueType::List => {
                 let mut indexer = Vec::with_capacity(self.segments.len());
                 for segment in &self.segments {
-                    let key = match &segment.value {
-                        Value::Int(i) => Ok(*i as usize),
-                        Value::Var(label) => {
-                            let value = data.vars.read().get_clone(&label).span(segment.span)?;
-                            value.into_usize().span(segment.span)
+                    match &segment.value {
+                        Value::Text(text) => indexer.push(Key::String(text.clone())),
+                        Value::Var(label) => indexer.push(Key::String(label.clone())),
+                        Value::Int(_) => indexer.push(Key::Index(
+                            segment.value.clone().into_usize().span(segment.span)?,
+                        )),
+                        _ => {
+                            let str = segment.value.clone().into_str().span(segment.span)?;
+                            indexer.push(Key::String(str));
                         }
-                        _ => Err(segment
-                            .value
-                            .conversion_err(&[ValueType::Int])
-                            .span(segment.span)),
-                    }?;
-                    indexer.push(key);
+                    };
                 }
                 Ok(Indexer::List(indexer))
             }
@@ -801,12 +824,8 @@ impl Argument {
         self.take_value().into_usize().span(self.span)
     }
 
-    pub fn into_list_indexer(&mut self) -> Result<Vec<usize>, SpannedError> {
-        self.take_value().into_list_indexer().span(self.span)
-    }
-
-    pub fn into_map_indexer(&mut self) -> Result<Vec<SourceStr>, SpannedError> {
-        self.take_value().into_map_indexer().span(self.span)
+    pub fn into_keys(&mut self) -> Result<Vec<Key>, SpannedError> {
+        self.take_value().into_keys().span(self.span)
     }
 
     pub fn into_list(&mut self) -> Result<List, SpannedError> {

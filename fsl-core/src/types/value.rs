@@ -8,7 +8,7 @@ use crate::{
     span::Span,
     types::{
         ValueType,
-        argument::Argument,
+        argument::{Argument, Key},
         command::Command,
         list::List,
         map::{FslMap, Map},
@@ -102,33 +102,24 @@ impl Value {
         }
     }
 
-    pub fn into_list_indexer(self) -> Result<Vec<usize>, RuntimeError> {
+    pub fn into_key(self) -> Result<Key, RuntimeError> {
         match self {
-            Value::Int(i) => Ok(vec![i as usize]),
-            Value::List(values) => {
-                let values = values.take();
-                let mut indices = Vec::with_capacity(values.len());
-                for value in values {
-                    indices.push(value.into_usize()?);
-                }
-                Ok(indices)
-            }
-            _ => Err(self.conversion_err(&[ValueType::Int, ValueType::List])),
+            Value::Int(_) => Ok(Key::Index(self.into_usize()?)),
+            _ => Ok(Key::String(self.into_str()?)),
         }
     }
 
-    pub fn into_map_indexer(self) -> Result<Vec<SourceStr>, RuntimeError> {
+    pub fn into_keys(self) -> Result<Vec<Key>, RuntimeError> {
         match self {
-            Value::Text(source_str) => Ok(vec![source_str]),
             Value::List(values) => {
                 let values = values.take();
                 let mut indices = Vec::with_capacity(values.len());
                 for value in values {
-                    indices.push(value.into_str()?);
+                    indices.push(value.into_key()?);
                 }
                 Ok(indices)
             }
-            _ => Err(self.conversion_err(&[ValueType::Int, ValueType::List])),
+            _ => Ok(vec![self.into_key()?]),
         }
     }
 
