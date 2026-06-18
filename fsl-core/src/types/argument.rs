@@ -36,7 +36,43 @@ pub struct Accessor {
 #[derive(Debug, Clone)]
 pub enum Key {
     String(SourceStr),
+    Var(VarKey),
     Index(usize),
+}
+
+impl Key {
+    pub fn into_usize(&self) -> Option<usize> {
+        match self {
+            Key::String(_) => None,
+            Key::Var(var_key) => {
+                let value = var_key.resolve().ok()?;
+                let key = value.into_usize().ok()?;
+                Some(key)
+            }
+            Key::Index(i) => Some(*i),
+        }
+    }
+
+    pub fn into_str(&self) -> Option<SourceStr> {
+        match self {
+            Key::String(str) => Some(str.clone()),
+            Key::Var(var_key) => Some(var_key.label.clone()),
+            Key::Index(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VarKey {
+    pub label: SourceStr,
+    data: Arc<InterpreterData>,
+}
+
+impl VarKey {
+    pub fn resolve(&self) -> Result<Value, RuntimeError> {
+        let vars = self.data.vars.read();
+        vars.get_clone(&self.label)
+    }
 }
 
 impl std::fmt::Display for Key {
@@ -47,6 +83,9 @@ impl std::fmt::Display for Key {
             }
             Key::Index(i) => {
                 write!(f, "{}", i)
+            }
+            Key::Var(var_key) => {
+                write!(f, "{}", var_key.label)
             }
         }
     }
@@ -380,7 +419,12 @@ impl Accessor {
                 for segment in &self.segments {
                     match &segment.value {
                         Value::Text(text) => indexer.push(Key::String(text.clone())),
-                        Value::Var(label) => indexer.push(Key::String(label.clone())),
+                        Value::Var(label) => {
+                            indexer.push(Key::Var(VarKey {
+                                label: label.clone(),
+                                data: data.clone(),
+                            }));
+                        }
                         Value::Int(_) => indexer.push(Key::Index(
                             segment.value.clone().into_usize().span(segment.span)?,
                         )),
@@ -397,7 +441,12 @@ impl Accessor {
                 for segment in &self.segments {
                     match &segment.value {
                         Value::Text(text) => indexer.push(Key::String(text.clone())),
-                        Value::Var(label) => indexer.push(Key::String(label.clone())),
+                        Value::Var(label) => {
+                            indexer.push(Key::Var(VarKey {
+                                label: label.clone(),
+                                data: data.clone(),
+                            }));
+                        }
                         Value::Int(_) => indexer.push(Key::Index(
                             segment.value.clone().into_usize().span(segment.span)?,
                         )),

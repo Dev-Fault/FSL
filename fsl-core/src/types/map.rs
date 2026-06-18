@@ -94,6 +94,26 @@ impl Map {
         }
     }
 
+    fn resolve_key(&self, key: &Key) -> Result<SourceStr, RuntimeError> {
+        match key {
+            Key::String(key) => Ok(key.clone()),
+            Key::Index(i) => {
+                return Err(RuntimeError::NotAccessible {
+                    value: self.to_string(),
+                    key: i.to_string(),
+                });
+            }
+            Key::Var(var_key) => match self.get(&var_key.label) {
+                Some(_) => Ok(var_key.label.clone()),
+                None => {
+                    let v = var_key.resolve()?;
+                    let key = v.into_str()?;
+                    Ok(key)
+                }
+            },
+        }
+    }
+
     pub fn set_nested(
         &mut self,
         keys: &[Key],
@@ -102,8 +122,9 @@ impl Map {
     ) -> Result<Value, SpannedError> {
         match keys {
             [] => Err(RuntimeError::MissingKey.span(span)),
-            [key] => match key {
-                Key::String(key) => match self.get(key) {
+            [key] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get(&key) {
                     Some(_) => {
                         let return_value = self.insert(key.clone(), value);
                         Ok(return_value.unwrap_or(Value::None))
@@ -112,15 +133,11 @@ impl Map {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => match self.get_mut(key) {
+            }
+            [key, rest @ ..] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get_mut(&key) {
                     Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, span),
                     Some(Value::List(inner_list)) => inner_list.set_nested(rest, value, span),
                     Some(v) => Err(RuntimeError::NotAccessible {
@@ -132,32 +149,22 @@ impl Map {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
+            }
         }
     }
 
     pub fn remove_nested(&mut self, keys: &[Key], span: Span) -> Result<Value, SpannedError> {
         match keys {
             [] => Err(RuntimeError::MissingKey).span(span),
-            [key] => match key {
-                Key::String(key) => {
-                    let return_value = self.remove(key);
-                    Ok(return_value.unwrap_or(Value::None))
-                }
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
-                }
-                .span(span)),
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => match self.get_mut(key) {
+            [key] => {
+                let key = self.resolve_key(key).span(span)?;
+                let return_value = self.remove(&key);
+                Ok(return_value.unwrap_or(Value::None))
+            }
+            [key, rest @ ..] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get_mut(&key) {
                     Some(Value::Map(inner_map)) => inner_map.remove_nested(rest, span),
                     Some(Value::List(inner_list)) => inner_list.remove_nested(rest, span),
                     Some(v) => Err(RuntimeError::NotAccessible {
@@ -169,13 +176,8 @@ impl Map {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
+            }
         }
     }
 
@@ -187,19 +189,14 @@ impl Map {
     ) -> Result<Value, SpannedError> {
         match keys {
             [] => Err(RuntimeError::MissingKey).span(span),
-            [key] => match key {
-                Key::String(key) => {
-                    let return_value = self.insert(key.clone(), value);
-                    Ok(return_value.unwrap_or(Value::None))
-                }
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
-                }
-                .span(span)),
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => match self.get_mut(key) {
+            [key] => {
+                let key = self.resolve_key(key).span(span)?;
+                let return_value = self.insert(key.clone(), value);
+                Ok(return_value.unwrap_or(Value::None))
+            }
+            [key, rest @ ..] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get_mut(&key) {
                     Some(Value::Map(inner_map)) => inner_map.insert_nested(rest, value, span),
                     Some(Value::List(inner_list)) => inner_list.insert_nested(rest, value, span),
                     Some(v) => Err(RuntimeError::NotAccessible {
@@ -211,35 +208,27 @@ impl Map {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
+            }
         }
     }
 
     pub fn get_nested_clone(&self, keys: &[Key], span: Span) -> Result<Value, SpannedError> {
         match keys {
             [] => Err(RuntimeError::MissingKey).span(span),
-            [key] => match key {
-                Key::String(key) => match self.get(key).cloned() {
+            [key] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get(&key).cloned() {
                     Some(value) => Ok(value),
                     None => Err(RuntimeError::NonExistantKey {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => match self.get(key) {
+            }
+            [key, rest @ ..] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get(&key) {
                     Some(Value::Map(inner_map)) => inner_map.get_nested_clone(rest, span),
                     Some(Value::List(inner_list)) => inner_list.get_nested_clone(rest, span),
                     Some(v) => Err(RuntimeError::NotAccessible {
@@ -251,35 +240,27 @@ impl Map {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
+            }
         }
     }
 
     pub fn get_nested(&self, keys: &[Key], span: Span) -> Result<&Value, SpannedError> {
         match keys {
             [] => Err(RuntimeError::MissingKey).span(span),
-            [key] => match key {
-                Key::String(key) => match self.get(key) {
+            [key] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get(&key) {
                     Some(value) => Ok(value),
                     None => Err(RuntimeError::NonExistantKey {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => match self.get(key) {
+            }
+            [key, rest @ ..] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get(&key) {
                     Some(Value::Map(inner_map)) => inner_map.get_nested(rest, span),
                     Some(Value::List(inner_list)) => inner_list.get_nested(rest, span),
                     Some(v) => Err(RuntimeError::NotAccessible {
@@ -291,35 +272,27 @@ impl Map {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
+            }
         }
     }
 
     pub fn get_nested_mut(&mut self, keys: &[Key], span: Span) -> Result<&mut Value, SpannedError> {
         match keys {
             [] => Err(RuntimeError::MissingKey).span(span),
-            [key] => match key {
-                Key::String(key) => match self.get_mut(key) {
+            [key] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get_mut(&key) {
                     Some(value) => Ok(value),
                     None => Err(RuntimeError::NonExistantKey {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => match self.get_mut(key) {
+            }
+            [key, rest @ ..] => {
+                let key = self.resolve_key(key).span(span)?;
+                match self.get_mut(&key) {
                     Some(Value::Map(inner_map)) => inner_map.get_nested_mut(rest, span),
                     Some(Value::List(inner_list)) => inner_list.get_nested_mut(rest, span),
                     Some(v) => Err(RuntimeError::NotAccessible {
@@ -331,13 +304,8 @@ impl Map {
                         key: key.to_string(),
                     }
                     .span(span)),
-                },
-                Key::Index(i) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: i.to_string(),
                 }
-                .span(span)),
-            },
+            }
         }
     }
 }

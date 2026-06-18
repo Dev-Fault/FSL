@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     data::InterpreterData,
-    error::{RuntimeError, SpanError, SpannedError, ToSpannedError},
+    error::{RuntimeError, SpanError, SpannedError},
     potential_futures::{PotentialFuture, PotentialFutureResult},
     span::Span,
     types::{
@@ -108,66 +108,69 @@ impl List {
     pub fn get_nested_clone(&self, indices: &[Key], span: Span) -> Result<Value, SpannedError> {
         match indices {
             [] => Err(RuntimeError::MissingIndex).span(span),
-            [key] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => {
-                    let result = self.get(*key).cloned();
-                    match result {
-                        Some(value) => Ok(value),
-                        None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                    }
-                }
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => match self.get(*key) {
+            [key] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                self.get(i)
+                    .cloned()
+                    .ok_or(RuntimeError::IndexOutOfBounds)
+                    .span(span)
+            }
+            [key, rest @ ..] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get(i) {
                     Some(Value::List(inner_list)) => inner_list.get_nested_clone(rest, span),
                     Some(Value::Map(inner_map)) => inner_map.get_nested_clone(rest, span),
                     Some(_) => Err(RuntimeError::NotIndexable).span(span),
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
+                }
+            }
         }
     }
 
     pub fn get_nested(&self, indices: &[Key], span: Span) -> Result<&Value, SpannedError> {
         match indices {
             [] => Err(RuntimeError::MissingIndex).span(span),
-            [key] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => {
-                    let result = self.get(*key);
-                    match result {
-                        Some(value) => Ok(value),
-                        None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                    }
-                }
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => match self.get(*key) {
+            [key] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                self.get(i).ok_or(RuntimeError::IndexOutOfBounds).span(span)
+            }
+            [key, rest @ ..] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get(i) {
                     Some(Value::List(inner_list)) => inner_list.get_nested(rest, span),
                     Some(Value::Map(inner_map)) => inner_map.get_nested(rest, span),
                     Some(_) => Err(RuntimeError::NotIndexable).span(span),
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
+                }
+            }
         }
     }
 
@@ -178,30 +181,35 @@ impl List {
     ) -> Result<&mut Value, SpannedError> {
         match indices {
             [] => Err(RuntimeError::MissingIndex).span(span),
-            [key] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => match self.get_mut(*key) {
-                    Some(i) => Ok(i),
-                    None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => match self.get_mut(*key) {
+            [key] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                self.get_mut(i)
+                    .ok_or(RuntimeError::IndexOutOfBounds)
+                    .span(span)
+            }
+            [key, rest @ ..] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get_mut(i) {
                     Some(Value::List(inner_list)) => inner_list.get_nested_mut(rest, span),
                     Some(Value::Map(inner_map)) => inner_map.get_nested_mut(rest, span),
                     Some(_) => Err(RuntimeError::NotIndexable).span(span),
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
+                }
+            }
         }
     }
 
@@ -213,64 +221,76 @@ impl List {
     ) -> Result<Value, SpannedError> {
         match indices {
             [] => Err(RuntimeError::MissingIndex).span(span),
-            [key] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => match self.get_mut(*key) {
+            [key] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get_mut(i) {
                     Some(v) => {
                         let old = std::mem::take(v);
                         *v = value;
                         Ok(old)
                     }
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
                 }
-                .span(span)),
-                Key::Index(key) => match self.get_mut(*key) {
+            }
+            [key, rest @ ..] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get_mut(i) {
                     Some(Value::List(inner_list)) => inner_list.set_nested(rest, value, span),
                     Some(Value::Map(inner_map)) => inner_map.set_nested(rest, value, span),
                     Some(_) => Err(RuntimeError::NotIndexable).span(span),
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
+                }
+            }
         }
     }
 
     pub fn remove_nested(&mut self, indices: &[Key], span: Span) -> Result<Value, SpannedError> {
         match indices {
             [] => Err(RuntimeError::MissingIndex).span(span),
-            [key] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => match self.get(*key) {
-                    Some(_) => Ok(self.remove(*key)),
+            [key] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get(i) {
+                    Some(_) => Ok(self.remove(i)),
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
                 }
-                .span(span)),
-                Key::Index(key) => match self.get_mut(*key) {
+            }
+            [key, rest @ ..] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get_mut(i) {
                     Some(Value::List(inner_list)) => inner_list.remove_nested(rest, span),
                     Some(Value::Map(inner_map)) => inner_map.remove_nested(rest, span),
                     Some(_) => Err(RuntimeError::NotIndexable).span(span),
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
+                }
+            }
         }
     }
 
@@ -282,28 +302,32 @@ impl List {
     ) -> Result<Value, SpannedError> {
         match indices {
             [] => Err(RuntimeError::MissingIndex).span(span),
-            [key] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
+            [key] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                if i <= self.len() {
+                    self.insert(i, value_to_insert);
+                    Ok(Value::None)
+                } else {
+                    Err(RuntimeError::IndexOutOfBounds).span(span)
                 }
-                .span(span)),
-                Key::Index(key) => {
-                    if *key <= self.len() {
-                        self.insert(*key, value_to_insert);
-                        Ok(Value::None)
-                    } else {
-                        Err(RuntimeError::IndexOutOfBounds).span(span)
-                    }
-                }
-            },
-            [key, rest @ ..] => match key {
-                Key::String(key) => Err(RuntimeError::NotAccessible {
-                    value: self.to_string(),
-                    key: key.to_string(),
-                }
-                .span(span)),
-                Key::Index(key) => match self.get_mut(*key) {
+            }
+            [key, rest @ ..] => {
+                let i = key
+                    .into_usize()
+                    .ok_or(RuntimeError::NotAccessible {
+                        value: self.to_string(),
+                        key: key.to_string(),
+                    })
+                    .span(span)?;
+
+                match self.get_mut(i) {
                     Some(Value::List(inner_list)) => {
                         inner_list.insert_nested(rest, value_to_insert, span)
                     }
@@ -312,8 +336,8 @@ impl List {
                     }
                     Some(_) => Err(RuntimeError::NotIndexable).span(span),
                     None => Err(RuntimeError::IndexOutOfBounds).span(span),
-                },
-            },
+                }
+            }
         }
     }
 }

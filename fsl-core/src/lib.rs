@@ -2795,6 +2795,41 @@ mod interpreter {
     }
 
     #[tokio::test]
+    async fn var_list_access() {
+        assert_fsl!(
+            r#"
+            matrix.store([
+                [1, 2, 3],
+                [4, 5, 6],
+                [7, 8, 9],
+            ])
+            row.store(1)
+            column.store(1)
+            matrix.row.column.print()
+            "#,
+            "5"
+        );
+    }
+
+    #[tokio::test]
+    async fn var_map_access() {
+        assert_fsl!(
+            r#"
+            player.store([
+                health: 100,
+                strength: 10,
+                dex: 10,
+            ])
+            stat.store("health")
+            dex.store("strength")
+            player.stat.print("\n")
+            player.dex.print("")
+            "#,
+            "100\n10"
+        );
+    }
+
+    #[tokio::test]
     async fn sizes() {
         dbg!(size_of::<i64>());
         dbg!(size_of::<f64>());
