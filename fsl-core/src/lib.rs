@@ -2812,6 +2812,21 @@ mod interpreter {
     }
 
     #[tokio::test]
+    async fn num_list_access() {
+        assert_fsl!(
+            r#"
+            matrix.store([
+                [1, 2, 3],
+                [4, 5, 6],
+                [7, 8, 9],
+            ])
+            matrix.1.1.print()
+            "#,
+            "5"
+        );
+    }
+
+    #[tokio::test]
     async fn var_map_access() {
         assert_fsl!(
             r#"

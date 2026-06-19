@@ -232,7 +232,7 @@ impl<'c> Token<'c> {
 
     pub fn line_number(&self) -> usize {
         let slice = &self.source[..self.location];
-        
+
         slice.lines().count().max(1)
     }
 
@@ -285,6 +285,7 @@ enum Context<'c> {
     Float(Token<'c>),
     SingleLineComment,
     MultiLineComment(Token<'c>),
+    NumericChain(Token<'c>),
     None,
 }
 
@@ -295,6 +296,7 @@ pub enum LexError<'c> {
     InvalidIdentifier(Token<'c>),
     UnclosedString(Token<'c>),
     UnclosedComment(Token<'c>),
+    UnterminatedChain(Token<'c>),
 }
 
 impl<'c> Display for LexError<'c> {
@@ -343,6 +345,14 @@ impl<'c> Display for LexError<'c> {
                     token.line()
                 )
             }
+            LexError::UnterminatedChain(token) => {
+                write!(
+                    f,
+                    "Unterminated chain detected\n{}: {}",
+                    token.line_number(),
+                    token.line()
+                )
+            }
         }
     }
 }
@@ -357,6 +367,7 @@ pub struct Lexer<'c> {
     context: Context<'c>,
     pending: Option<Token<'c>>,
     partial: &'c str,
+    prev: Token<'c>,
 }
 
 impl<'c> Lexer<'c> {
@@ -368,6 +379,7 @@ impl<'c> Lexer<'c> {
             context: Context::None,
             pending: None,
             partial: "",
+            prev: Token::default(),
         }
     }
 
@@ -378,6 +390,7 @@ impl<'c> Lexer<'c> {
             Context::SingleLineComment => true,
             Context::MultiLineComment(_) => true,
             Context::None => false,
+            Context::NumericChain(_) => false,
         }
     }
 
@@ -388,6 +401,7 @@ impl<'c> Lexer<'c> {
             Context::SingleLineComment => true,
             Context::MultiLineComment(_) => true,
             Context::None => false,
+            Context::NumericChain(_) => false,
         }
     }
 
@@ -398,6 +412,7 @@ impl<'c> Lexer<'c> {
             Context::SingleLineComment => false,
             Context::MultiLineComment(_) => true,
             Context::None => true,
+            Context::NumericChain(_) => false,
         }
     }
 
@@ -407,6 +422,18 @@ impl<'c> Lexer<'c> {
             Context::Float(_) => false,
             Context::SingleLineComment => true,
             Context::MultiLineComment(_) => false,
+            Context::None => false,
+            Context::NumericChain(_) => false,
+        }
+    }
+
+    pub fn ignore_dot(&self) -> bool {
+        match self.context {
+            Context::String(_) => true,
+            Context::Float(_) => true,
+            Context::SingleLineComment => true,
+            Context::MultiLineComment(_) => true,
+            Context::NumericChain(_) => false,
             Context::None => false,
         }
     }
@@ -502,24 +529,40 @@ impl<'c> Iterator for Lexer<'c> {
                         }
                     }
                 }
-                DOT if self.no_context() => {
+                DOT if !self.ignore_dot() => {
                     let token = Token::symbol(self.source, &self.source[i..i + ch.len_utf8()], i);
                     self.pending = Some(token);
-                    if !self.partial.is_empty() {
+
+                    let next_is_digit = self.rest.peek().is_some_and(|(_, c)| c.is_ascii_digit());
+
+                    let token = if !self.partial.is_empty() {
+                        if matches!(self.prev.token_type, TokenType::Identifier(_)) {
+                            self.context = Context::NumericChain(self.prev);
+                        }
+
                         let token = Token::parse(self.source, self.partial, self.location);
+
                         if matches!(token.token_type, TokenType::Number(_))
-                            && self.rest.peek().is_some_and(|(_, c)| c.is_ascii_digit())
+                            && next_is_digit
+                            && !matches!(self.context, Context::NumericChain(_))
                         {
                             // Don't update self.location so that _ => branch includes dot in partial skipping need to recombine float later
                             self.context = Context::Float(token);
                             self.pending.take();
                             continue;
                         }
+
                         self.flush_partial();
                         token
                     } else {
                         self.pending.take().unwrap()
+                    };
+
+                    if !next_is_digit {
+                        self.context = Context::None;
                     }
+
+                    token
                 }
                 CLOSED_PAREN | CLOSED_BRACKET | COMMA if self.no_context() => {
                     if !self.partial.is_empty() {
@@ -567,24 +610,23 @@ impl<'c> Iterator for Lexer<'c> {
                                 &self.source[self.location..(i + ch.len_utf8()) + QUOTE.len_utf8()];
                             continue;
                         }
-                    } else if matches!(self.context, Context::Float(_))
-                        && ch.is_whitespace() {
-                            self.context = Context::None;
-                            let token =
-                                match Token::number(self.source, self.partial, self.location) {
-                                    Ok(token) => token,
-                                    Err(e) => {
-                                        return Some(Err(e));
-                                    }
-                                };
-                            self.flush_partial();
-                            self.location += ch.len_utf8();
-                            return Some(Ok(token));
-                        }
+                    } else if matches!(self.context, Context::Float(_)) && ch.is_whitespace() {
+                        self.context = Context::None;
+                        let token = match Token::number(self.source, self.partial, self.location) {
+                            Ok(token) => token,
+                            Err(e) => {
+                                return Some(Err(e));
+                            }
+                        };
+                        self.flush_partial();
+                        self.location += ch.len_utf8();
+                        return Some(Ok(token));
+                    }
                     self.partial = &self.source[self.location..i + ch.len_utf8()];
                     continue;
                 }
             };
+            self.prev = token;
             self.location += 1;
             return Some(Ok(token));
         }
@@ -598,6 +640,9 @@ impl<'c> Iterator for Lexer<'c> {
             }
             Context::MultiLineComment(comment) => {
                 return Some(Err(LexError::UnclosedComment(comment)));
+            }
+            Context::NumericChain(chain_head) => {
+                return Some(Err(LexError::UnterminatedChain(chain_head)));
             }
             Context::SingleLineComment => {}
             Context::None => {}
@@ -940,6 +985,10 @@ mod tests {
             (Symbol, "("),
             (Symbol, ")")
         ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
         assert!(tokens == expected);
     }
 
@@ -1228,6 +1277,30 @@ mod tests {
             (Number, "-4.5"),
             (Symbol, ")")
         ];
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_dot_accessor() {
+        let lexer = Lexer::new("list.0.1.2.get()");
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Identifier, "list"),
+            (Symbol, "."),
+            (Number, "0"),
+            (Symbol, "."),
+            (Number, "1"),
+            (Symbol, "."),
+            (Number, "2"),
+            (Symbol, "."),
+            (Command, "get"),
+            (Symbol, "("),
+            (Symbol, ")")
+        ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
         assert!(tokens == expected);
     }
 }
