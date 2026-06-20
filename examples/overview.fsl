@@ -185,8 +185,12 @@ switch(add(1, 1),
 # FSL supports a list type that can contain mixed data
 list.store([1, "two", 3, true])
 
-# To get individual values from lists we can use:
+# To get individual values from lists we can use dot syntax:
+say(list.1) # output: two
+# Or use the index command
 say(list.index(1)) # output: two
+# Note: the index command always clones the value at that index
+# Using dot syntax is usually better
 # To replace a value we can use:
 list.replace(3, "four")
 say(list) # output: [1, two, 3, four]
@@ -197,6 +201,23 @@ list.push(4)
 say(list) # output: [1, two, 3, 4]
 list.swap(0, 3)
 say(list) # output: [4, two, 3, 1]
+
+# Nested lists
+# Lists in fsl can be arbitrarly nested
+# This makes it very easy to create matrices
+
+matrix.store([
+	[1,2,3],
+	[4,5,6],
+	[7,8,9],
+])
+
+# Getting a value out of the matrix is simple with dot syntax:
+matrix.1.1.say() # output: 5
+# It can also be useful to access lists through variables
+row.store(2)
+column.store(0)
+matrix.row.column.say() # output: 7
 
 # Maps
 
@@ -211,20 +232,19 @@ say(user.get("user_name")) # output: some_user_name_105
 # To set an entry in a map we can do:
 user.set("user_name", "new user name") 
 # FSL supports using the . symbol to make accessing map entries easier
-user.user_name.get().say() # output: new user name
+user.user_name.say() # output: new user name
 player.store([weapon: [name: "sword"]])
-player.weapon.name.get().say() # output: sword
-# In this case . is doing something subtle
-# The previous command is interpreted as:
+player.weapon.name.say() # output: sword
+# Dots save us from needing to do the following:
 say(get(player, ["weapon", "name"])) # output: sword
-# As you can see, generally . is far more readable and recommended for map access
+# As you can see, generally dot syntax is far more readable and recommended for map access
 
 # Maps and lists can be arbitrarily nested and mixed
 nested.store([
 	names: ["John", "Jake", "Joseph"],
 	weapons: ["Sword", [name: "Sword", damage: 5]]
 ])
-nested.weapons.get().index(1).damage.get().say() # output: 5
+nested.weapons.1.damage.say() # output: 5
 
 # Functions/Commands
 
