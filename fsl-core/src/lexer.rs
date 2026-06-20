@@ -457,6 +457,7 @@ impl<'c> Iterator for Lexer<'c> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(pending) = self.pending.take() {
+            self.prev = pending;
             return Some(Ok(pending));
         }
 
@@ -536,7 +537,9 @@ impl<'c> Iterator for Lexer<'c> {
                     let next_is_digit = self.rest.peek().is_some_and(|(_, c)| c.is_ascii_digit());
 
                     let token = if !self.partial.is_empty() {
-                        if matches!(self.prev.token_type, TokenType::Identifier(_)) {
+                        if matches!(self.prev.token_type, TokenType::Identifier(_))
+                            || matches!(self.prev.token_type, TokenType::Symbol("."))
+                        {
                             self.context = Context::NumericChain(self.prev);
                         }
 
@@ -627,7 +630,7 @@ impl<'c> Iterator for Lexer<'c> {
                 }
             };
             self.prev = token;
-            self.location += 1;
+            self.location += ch.len_utf8();
             return Some(Ok(token));
         }
 
@@ -1292,6 +1295,56 @@ mod tests {
             (Number, "1"),
             (Symbol, "."),
             (Number, "2"),
+            (Symbol, "."),
+            (Command, "get"),
+            (Symbol, "("),
+            (Symbol, ")")
+        ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_dot_accessor_with_string() {
+        let lexer = Lexer::new(r#"map."list".1.2.get()"#);
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Identifier, "map"),
+            (Symbol, "."),
+            (Symbol, "\""),
+            (String, "list"),
+            (Symbol, "\""),
+            (Symbol, "."),
+            (Number, "1"),
+            (Symbol, "."),
+            (Number, "2"),
+            (Symbol, "."),
+            (Command, "get"),
+            (Symbol, "("),
+            (Symbol, ")")
+        ];
+        println!("\n===GOT===\n");
+        dbg!(&tokens);
+        println!("\n===EXPECTED===\n");
+        dbg!(&expected);
+        assert!(tokens == expected);
+    }
+
+    #[test]
+    fn tokenize_dot_accessor_with_string_2() {
+        let lexer = Lexer::new(r#"map."list".0.get()"#);
+        let tokens = lexer.map(|t| t.unwrap().token_type).collect::<Vec<_>>();
+        let expected = tokens![
+            (Identifier, "map"),
+            (Symbol, "."),
+            (Symbol, "\""),
+            (String, "list"),
+            (Symbol, "\""),
+            (Symbol, "."),
+            (Number, "0"),
             (Symbol, "."),
             (Command, "get"),
             (Symbol, "("),
